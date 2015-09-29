@@ -13,6 +13,13 @@ Embryo:
 - lisp princ, terpri
 - datatypes: string, atom, int, cons, prim
 - fake eval
+- mark/sweep GC
+
+## features
+- mutal/self tail recursion optimization using "immediate" thunks
+- GC
+- eval/neval primitive functions, no need for macros
+- cheap to embed
 
 ## how to build
 
