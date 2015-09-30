@@ -30,6 +30,9 @@
 //   2.5x slower than lua, didn't actually measure actual lua time
 //   evalGC now lookup vars too => 4780
 //   bindEvalList (combined evallist + bindlist) => 4040ms!
+//   ... => 4010ms
+//
+//   slight increase if change the MAX_ALLOC to 512 but it keeps 17K free! => 4180ms
 
 //
 // RAW C esp8266 - printf("10,000,000 LOOP (100x lua) TIME=%d\r\n", tm); ===> 50ms
@@ -175,8 +178,8 @@ int tag_size[MAX_TAGS] = { 0, sizeof(string), sizeof(conss), sizeof(intint), siz
 
 // essentially total number of cons+atom+prim
 // TODO: remove ATOM since they are never GC:ed! (thunk are special too, not tracked)
-#define MAX_ALLOCS 1024
-//#define MAX_ALLOCS 512 // keeps 17K free
+//#define MAX_ALLOCS 1024
+#define MAX_ALLOCS 512 // keeps 17K free
 //#define MAX_ALLOCS 256 // keeps 21K free
 
 int allocs_count = 0;
@@ -667,7 +670,6 @@ static char nextx() {
     if (!input) return 0;
     if (!*input) {
         // TODO: leak? ownership of pointers
-        free(input);
         input = NULL;
         return 0;
     }
@@ -700,6 +702,7 @@ static lisp readInt() {
         c = next();
     }
     nextChar = c;
+//    printf("MKINT=%d\n", v); 
     return mkint(v);
 }
 
@@ -812,19 +815,18 @@ lisp princ(lisp x) {
     return x;
 }
 
-void indent(int n) {
+static void indent(int n) {
     n *= 2;
     while (n-- > 0) putchar(' ');
 }
 
-int level = 0;
+static int level = 0;
 
-lisp lambdaapply(lisp f, lisp args, lisp env);
-lisp funcapply(lisp f, lisp args, lisp env);
+static lisp funcapply(lisp f, lisp args, lisp env);
 
 lisp evalGC(lisp e, lisp env);
 
-lisp eval_hlp(lisp e, lisp env) {
+static lisp eval_hlp(lisp e, lisp env) {
     if (!e) return e;
     char tag = TAG(e);
     if (tag == atom_TAG) {
@@ -839,7 +841,6 @@ lisp eval_hlp(lisp e, lisp env) {
     lisp orig = car(e);
     lisp f = orig;
     tag = TAG(f);
-    //if (tag == prim_TAG && f == 
     while (f && tag!=prim_TAG && tag!=thunk_TAG && tag!=func_TAG && tag!=immediate_TAG) {
         f = evalGC(f, env);
         tag = TAG(f);
@@ -847,7 +848,11 @@ lisp eval_hlp(lisp e, lisp env) {
     if (f != orig) {
         // "macro expansion" lol (replace with implementation)
         // TODO: not safe if found through variable (like all!)
-        // TODO: keep on atom ptr to primitive function/global
+        // TODO: keep on atom ptr to primitive function/global, also not good?
+        // DEF(F,...) will then break many local passed variables
+        // maybe must search all list till find null, then can look on symbol :-(
+        // but that's everytime? actually, not it's a lexical scope!
+        // TODO: only replace if not found in ENV and is on an ATOM!
         setcar(e, f);
     }
 
@@ -860,16 +865,17 @@ lisp eval_hlp(lisp e, lisp env) {
     return nil;
 }
 
-void mymark(lisp x) {
+static void mymark(lisp x) {
     if (dogc) mark(x);
 }
 
-void mygc() {
+static void mygc() {
     if (dogc) gc();
 }
 
-int blockGC = 0;
+static int blockGC = 0;
 
+// this is a safe eval to call from anywhere, it will not GC
 lisp eval(lisp e, lisp env) {
     blockGC++;
     lisp r = evalGC(e, env);
@@ -877,15 +883,16 @@ lisp eval(lisp e, lisp env) {
     return r;
 }
 
-lisp stack[64];
+static lisp stack[64];
 
-int trace = 0;
+static int trace = 0;
 
 lisp evalGC(lisp e, lisp env) {
     if (!e) return e;
     char tag = TAG(e);
+    // look up variable
     if (tag == atom_TAG) {
-        lisp v = assoc(e, env); // look up variable
+        lisp v = assoc(e, env); 
         if (v) return cdr(v);
         printf("Undefined symbol: "); princ(e); terpri();
         return nil;
@@ -897,14 +904,14 @@ lisp evalGC(lisp e, lisp env) {
         #ifdef TEST
           exit(1);
         #endif
+        return nil;
     }
 
     stack[level] = e;
 
+    // TODO: move this to function
     if (!blockGC && needGC()) {
-        mymark(env); // TODO: important
-
-        // print stack
+        mymark(env);
         if (trace) printf("%d STACK: ", level);
         int i;
         for(i=0; i<64; i++) {
@@ -916,10 +923,7 @@ lisp evalGC(lisp e, lisp env) {
             }
         }
         if (trace) terpri();
-        // TODO: better mark all shit first!
-        mygc(); // not safe here, setq for example calls eval, it should not do gc as it builds cons at same time...
-        // evallist the same issue, TODO: maybe an eval that doesn't GC? and only gc here and "up"
-
+        mygc(); 
     }
 
     if (trace) { indent(level); printf("---> "); princ(e); terpri(); }
@@ -930,14 +934,12 @@ lisp evalGC(lisp e, lisp env) {
     while (r && TAG(r) == immediate_TAG) {
         lisp tofree = r;
         r = eval_hlp(ATTR(thunk, r, e), ATTR(thunk, r, env));
-        //mark(ATTR(thunk, r, e)); mark(ATTR(thunk, r, env));
-        //r = eval(ATTR(thunk, r, e), ATTR(thunk, r, env));
         // immediates are immediately consumed after evaluation, so they can be free:d directly
-        // TODO: move into eval_hlp?
         tofree->tag = 0;
         sfree((void*)tofree, sizeof(thunk));
-        used_count--;
+        used_count--; // TODO: move to sfree?
     }
+
     --level;
     if (trace) { indent(level); princ(r); printf(" <--- "); princ(e); terpri(); }
     stack[level] = nil;
@@ -946,15 +948,17 @@ lisp evalGC(lisp e, lisp env) {
 
 lisp iff(lisp env, lisp exp, lisp thn, lisp els) {
     // evalGC is safe here as we don't construct any structes, yet
+    // TODO: how did we get here? primapply does call evallist thus created something...
+    // but we pass ENV on so it should be safe..., it'll mark it!
     return evalGC(exp, env) ? mkimmediate(thn, env) : mkimmediate(els, env);
 }
 
+// essentially this is a quote but it stores the environment so it's a closure!
 lisp lambda(lisp env, lisp all) {
-    // TODO: we just removed lambda and now adding it back,
-    // do better calling convention? retain name/full form of no-eval function?
     return mkfunc(all, env);
 }
 
+// use bindEvalList unless NLAMBDA
 lisp bindlist(lisp fargs, lisp args, lisp env) {
     // TODO: not recurse!
     if (!fargs) return env;
@@ -972,30 +976,21 @@ lisp bindEvalList(lisp fargs, lisp args, lisp env, lisp extend) {
     return extend;
 }
 
-lisp bindEvalList_rec(lisp fargs, lisp args, lisp env, lisp extend) {
-    // TODO: not recurse!
-    if (!fargs) return extend;
-    lisp b = cons(car(fargs), eval(car(args), env));
-    return bindEvalList(cdr(fargs), cdr(args), env, cons(b, extend));
-}
-
 // TODO: nlambda?
 lisp funcapply(lisp f, lisp args, lisp env) {
     lisp lenv = ATTR(thunk, f, env);
     lisp l = ATTR(thunk, f, e);
     //printf("FUNCAPPLY:"); princ(f); printf(" body="); princ(l); printf(" args="); princ(args); printf(" env="); princ(lenv); terpri();
-    lisp fargs = car(l); // skip #lambda
-    //args = evallist(args, env);
-    //lenv = bindlist(fargs, args, lenv);
+    lisp fargs = car(l); // skip #lambda // TODO: check if NLAMBDA!
     lenv = bindEvalList(fargs, args, env, lenv);
-    lisp prog = car(cdr(l)); // skip #lambda (...) GET IGNORE
+    lisp prog = car(cdr(l)); // skip #lambda (...) TODO: implicit PROGN? how to do?
     return mkimmediate(prog, lenv);
 }
 
 // User, macros, assume a "globaL" env variable implicitly, and updates it
 #define SETQ(sname, val) env = setq(symbol(#sname), val, env)
 #define DEF(fname, sbody) env = setq(symbol(#fname), read(#sbody), env)
-#define EVAL(what, env) ({ eval(read(#what), env); terpri(); })
+//#define EVAL(what) ({ eval(read(#what), env); terpri(); }) // TODO: no good!
 #define PRIM(fname, argn, fun) env = setq(symbol(#fname), mkprim(#fname, argn, fun), env)
 
 // returns an env with functions
@@ -1005,20 +1000,15 @@ lisp lispinit() {
     // free up and start over...
     dogc = 0;
 
+    // TODO: this is a leak!!!
     allocs_count = 0;
-    mark_clean();
 
+    mark_clean();
     mark(nil);
     gc();
 
-    int i;
-    if (0)
-    for(i = 0; i<MAX_ALLOCS; i++) {
-        allocs[i] = nil;
-    }
-
     t = symbol("t");
-    // nil = symbol("nil"); // LOL? TODO:? that wouldn't make sense?
+    // nil = symbol("nil"); // LOL? TODO:? that wouldn't make sense? then it would be taken as true!
     LAMBDA = mkprim("lambda", -16, lambda);
 
     SETQ(lambda, LAMBDA);
@@ -1069,12 +1059,24 @@ lisp lispinit() {
 void newLispTest(lisp env) {
     dogc = 1;
 
-    princ(env);
-    princ(read("(foo bar 42)"));
+    printf("ENV= "); princ(env); terpri();
+    princ(read("(foo bar 42)")); terpri();
+    princ(mkint(3)); terpri();
+    princ(read("4711")); terpri();
+    princ(read("303")); terpri();
+    princ(eval(read("3"), env)); terpri();
+    princ(evalGC(read("33"), env)); terpri();
+    //princ(eval(read("(333)"), env)); terpri(); // TODO: crashes!!!???
+
+    // TODO: should nil be a symbol? grrr, eval to nil, no better not because (x) will be true!
+    // TODO: means reader should be special...
+    princ(evalGC(read("nil"), env)); terpri();
+    // TODO: should t be a symbol? grrr, eval to t?
+    princ(evalGC(read("t"), env)); terpri();
+    princ(read("(+ 333 444)")); terpri();
+    princ(eval(read("(+ 33 44)"), env)); terpri();
 
     printf("\n\n----------------------TAIL OPT AA BB!\n");
-    princ(read("(+ 333 444)"));
-    princ(evalGC(read("(+ 33 44)"), env));
     DEF(bb, (lambda (b) (+ b 3)));
     DEF(aa, (lambda (a) (bb a)));
     printf("\nTEST 10="); princ(eval(read("(aa 7)"), env)); terpri();
