@@ -52,22 +52,26 @@
 #include <string.h>
 #include <stdarg.h>
 
-// 'pretty"
-// all lispy symbols are required to start with tag
-
 // TODO: use pointer to store some tag data, use this for exteded types
-// last bits:
+// last bits (3 as it allocates in at least 8 bytes boundaries):
 // ----------
-// 00 = integer << 2
-// 01 = cons
-// 10 = 
-// 11 = extended type, remove bits to get pointer assumes 4 byte boundary
+// 000 = normal pointer, generic extended lisp data/struct - DONE
+// 001 = integer << 1 - DONE
+// -- byte[8] lispheap[MAX_HEAP], then still need byte[8] lisptag[MAX_HEAP]
+// 010 = lispheap, cons == 8 bytes, 2 cells
+// 100 = lispheap, atom == name + primptr, not same as value
+// 110 = 
+
+// inline atoms? 32 bits = 6 * 5 bits = 30 bits = 6 "chars" x10, but then atom cannot have ptr
 
 // TODO: move all defs into this:
 #include "lisp.h"
 
+// use for list(mkint(1), symbol("foo"), mkint(3), END);
+lisp END = (lisp) -1; 
+
+// global symbol variables, set in lispinit()
 lisp nil = NULL;
-lisp END = (lisp) -1;
 lisp t = NULL;
 lisp LAMBDA = NULL;
 
@@ -79,6 +83,7 @@ typedef struct {
     char tag;
     char xx;
     short index;
+
     char* p; // TODO: make it inline, not second allocation
 } string;
 
@@ -88,6 +93,7 @@ typedef struct {
     char tag;
     char xx;
     short index;
+
     lisp car;
     lisp cdr;
 } conss;
@@ -98,6 +104,7 @@ typedef struct {
     char tag;
     char xx;
     short index;
+
     int v;
 } intint; // TODO: handle overflow...
 
@@ -106,7 +113,8 @@ typedef struct {
     char tag;
     char xx;
     short index;
-    signed char n;
+
+    signed char n; // TODO: maybe could use xx tag above?
     void* f;
     char* name; // TODO should be char name[1]; // inline allocation!, or actually should point to an ATOM
 } prim;
@@ -119,6 +127,7 @@ typedef struct atom {
     char tag;
     char xx;
     short index;
+
     struct atom* next;
     char* name; // TODO should be char name[1]; // inline allocation!
 } atom;
@@ -129,6 +138,7 @@ typedef struct thunk {
     char tag;
     char xx;
     short index;
+
     lisp e;
     lisp env;
     // This needs be same as immediate
@@ -139,6 +149,7 @@ typedef struct immediate {
     char tag;
     char xx;
     short index;
+
     lisp e;
     lisp env;
     // This needs be same as thunk
@@ -150,6 +161,7 @@ typedef struct func {
     char tag;
     char xx;
     short index;
+
     lisp e;
     lisp env;
     // This needs be same as thunk
@@ -161,7 +173,12 @@ int tag_bytes[MAX_TAGS] = {0};
 char* tag_name[MAX_TAGS] = { "TOTAL", "string", "cons", "int", "prim", "atom", "thunk", "immediate", "func", 0 };
 int tag_size[MAX_TAGS] = { 0, sizeof(string), sizeof(conss), sizeof(intint), sizeof(prim), sizeof(thunk), sizeof(immediate), sizeof(func) };
 
+// essentially total number of cons+atom+prim
+// TODO: remove ATOM since they are never GC:ed! (thunk are special too, not tracked)
 #define MAX_ALLOCS 1024
+//#define MAX_ALLOCS 512 // keeps 17K free
+//#define MAX_ALLOCS 256 // keeps 21K free
+
 int allocs_count = 0;
 void* allocs[MAX_ALLOCS] = { 0 };
 unsigned int used[MAX_ALLOCS/32 + 1] = { 0 };
@@ -199,10 +216,12 @@ int reuse() {
     return -1;
 }
 
+// total number of things in use
 int used_count = 0;
 
+// SLOT salloc/sfree, reuse mallocs of same size instead of free, saved 20% speed
 #define SALLOC_MAX_SIZE 32
-void* alloc_slot[SALLOC_MAX_SIZE] = {0};
+void* alloc_slot[SALLOC_MAX_SIZE] = {0}; // TODO: probably too many sizes...
 
 void* salloc(int bytes) {
     if (bytes > SALLOC_MAX_SIZE) return malloc(bytes);
@@ -219,6 +238,7 @@ void sfree(void** p, int bytes) {
     alloc_slot[bytes] = p;
 }
 
+// call this malloc using ALLOC(typename) macro
 void* myMalloc(int bytes, int tag) {
     used_count++;
     tag_count[tag]++;
@@ -226,24 +246,24 @@ void* myMalloc(int bytes, int tag) {
     tag_count[0]++;
     tag_bytes[0] += bytes;
 
+    // use for heap debugging, put in offending addresses
     //if (allocs_count == 269) { printf("\n==============ALLOC: %d bytes of tag %s ========================\n", bytes, tag_name[tag]); }
-    //if (allocs_count == 270) { printf("\n==============ALLOC: %d bytes of tag %d %s ========================\n", bytes, tag, tag_name[tag]); }
     //if ((int)p == 0x08050208) { printf("\n============================== ALLOC trouble pointer %d bytes of tag %d %s ===========\n", bytes, ag, tag_name[tag]); }
 
     void* p = salloc(bytes);
 
-    // dangerous optimization
+    // thunk optimization, they are given back shortly after created so need to be kept track of
     if (tag == immediate_TAG) {
-        // do not record, do not GC, they'll be GC:ed automatically as invoked once!
         ((lisp)p)->index = -1;
         return p;
     }
+
     int pos = reuse();
     if (pos < 0) {
         pos = allocs_count;
         allocs_count++;
     }
-    //if ((int)p == 0x0804e528) { printf("\n=POS=%d pointer=0x%x tag %d %s\n", pos, (unsigned int)p, tag, tag_name[tag]); }
+
     allocs[pos] = p;
     ((lisp)p)->index = pos;
 
@@ -261,7 +281,7 @@ void mark_clean() {
     memset(used, 0, sizeof(used));
 }
 
-// you better mark stuff you want to keep first...
+// set to 1 to get GC tracing messages
 int traceGC = 0;
 
 int needGC() {
@@ -286,7 +306,7 @@ void gc() {
         }
         int u = (used[i/32] >> i%32) & 1;
         if (u) {
-//            printf("%d used=%d  ::  ", i, u); princ(p); terpri();
+            // printf("%d used=%d  ::  ", i, u); princ(p); terpri();
         } else {
             count++;
             if (1) {
@@ -305,7 +325,7 @@ void gc() {
 }
 
 void reportAllocs() {
-//    gc();
+    // gc();
     terpri();
     printf("--- Allocation stats ---\n");
     int i;
@@ -320,9 +340,7 @@ void reportAllocs() {
 // make a string from POINTER (inside other string) by copying LEN bytes
 lisp mklenstring(char *s, int len) {
     string* r = ALLOC(string);
-    r->p = malloc(len+1);
-    strncpy(r->p, s, len);
-    r->p[len] = 0; // make sure!
+    r->p = strndup(s, len);
     return (lisp)r;
 }
 
@@ -332,6 +350,7 @@ lisp mkstring(char *s) {
     return (lisp)r;
 }
 
+// macros car/cdr save 5%
 lisp carr(lisp x) { return x && IS(x, conss) ? ATTR(conss, x, car) : nil; }
 #define car(x) ({ lisp _x = (x); _x && IS(_x, conss) ? ATTR(conss, _x, car) : nil; })
 
@@ -352,16 +371,16 @@ lisp list(lisp first, ...) {
     va_list ap;
     lisp r = nil;
     // points to cell where cdr is next pos
-    lisp cur = r;
+    lisp last = r;
     lisp x;
 
     va_start(ap, first);
     for (x = first; x != (lisp)-1; x = va_arg(ap, lisp)) {
         putchar('['); princ(x); putchar(']');
-        lisp cx = cons(x, nil);
-        if (!r) r = cx;
-        setcdr(cur, cx);
-        cur = cx;
+        lisp nw = cons(x, nil);
+        if (!r) r = nw;
+        setcdr(last, nw);
+        last = nw;
     }
     va_end(ap);
 
@@ -370,6 +389,8 @@ lisp list(lisp first, ...) {
 
 lisp mkint(int v) {
     return MKINT(v);
+
+    // TODO: add "bigint" or minusint...
     intint* r = ALLOC(intint);
     r->v = v;
     return (lisp)r;
@@ -377,6 +398,8 @@ lisp mkint(int v) {
 
 int getint(lisp x) {
     return INTP(x) ? GETINT(x) : 0;
+
+    // TODO: add "bigint" or minusint...
     return IS(x, intint) ? ATTR(intint, x, v) : 0;
 }
 
@@ -391,7 +414,7 @@ lisp mkprim(char* name, int n, void *f) {
 lisp eval(lisp e, lisp env);
 lisp eq(lisp a, lisp b);
 
-// returns binding, so you can change the cdr == value
+// lookup binding of atom variable name (not work for int names)
 lisp assoc(lisp name, lisp env) {
     while (env) {
         lisp bind = car(env);
@@ -415,50 +438,56 @@ lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
     int n = ATTR(prim, ff, n);
     int an = abs(n);
 
+    if (n == 2) { // eq/plus etc
+        lisp (*fp)(lisp,lisp) = ATTR(prim, ff, f);
+        return (*fp)(eval(car(args), env), eval(car(cdr(args)), env));
+    }
+    if (n == -3) { // if...
+        lisp (*fp)(lisp,lisp,lisp,lisp) = ATTR(prim, ff, f);
+        return (*fp)(env, car(args), car(cdr(args)), car(cdr(cdr(args))));
+    }
     if (n == 1) {
         lisp (*fp)(lisp) = ATTR(prim, ff, f);
         return (*fp)(eval(car(args), env));
-    }
-    if (n == 2) {
-        lisp (*fp)(lisp,lisp) = ATTR(prim, ff, f);
-        return (*fp)(eval(car(args), env), eval(car(cdr(args)), env));
     }
     if (n == 3) {
         lisp (*fp)(lisp,lisp,lisp) = ATTR(prim, ff, f);
         return (*fp)(eval(car(args), env), eval(car(cdr(args)), env), eval(car(cdr(cdr(args))),env));
     }
-    if (n == -3) {
-        lisp (*fp)(lisp,lisp,lisp,lisp) = ATTR(prim, ff, f);
-        return (*fp)(env, car(args), car(cdr(args)), car(cdr(cdr(args))));
-    }
-    if (n == -16) {
+    if (n == -16) { // lambda, quite uncommon
         lisp (*fp)(lisp,lisp,lisp) = ATTR(prim, ff, f);
         return (*fp)(env, args, all);
     }
+    // don't do evalist, but allocate array, better for GC
     if (an > 0 && an <= 4) {
-        lisp argv[n];
+        if (n < 0) an++; // add one for neval and initial env
+        lisp argv[an];
         int i;
         for(i = 0; i < n; i++) {
+            // if noeval, put env first
+            if (i == 0 && n < 0) { 
+                argv[0] = env;
+                continue;
+            }
             lisp a = car(args);
             if (a && n > 0) a = eval(a, env);
             argv[i] = a;
             args = cdr(args);
         }
         lisp (*fp)() = ATTR(prim, ff, f);
-        switch (n) {
+        switch (an) {
         case 1: return fp(argv[0]);
         case 2: return fp(argv[0], argv[1]);
         case 3: return fp(argv[0], argv[1], argv[2]);
         case 4: return fp(argv[0], argv[1], argv[2], argv[3]);
         }
     }
-    
-    // normal apply = eval list
+    // above is all optimiziations
+
+    // prepare arguments
     if (n >= 0) {
         args = evallist(args, env);
-    } else if (n > -16) { // -1 .. -15
-        // no eval/autoquote arguemnts/"macro"
-        // calling convention is first arg is current environment
+    } else if (n > -16) { // -1 .. -15 no-eval lambda, put env first
         args = cons(env, args);
     }
 
@@ -478,25 +507,41 @@ lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
 
 lisp symbol_list = NULL;
 
-lisp mkmkatom(char* s, lisp list) {
+// don't call this directly, call symbol
+lisp secretMkAtom(char* s) {
     atom* r = ALLOC(atom);
     r->name = s;
-    r->next = (atom*)list;
+    // link it in first
+    r->next = (atom*)symbol_list;
+    symbol_list = (lisp)r;
     return (lisp)r;
 }
 
-// linear search during 'read'
-// TODO: fix if problem...
-lisp symbol(char *s) {
+lisp find_symbol(char *s, int len) {
     atom* cur = (atom*)symbol_list;
     while (cur) {
-        if (strcmp(s, cur->name) == 0) return (lisp)cur;
+        if (strncmp(s, cur->name, len) == 0) return (lisp)cur;
         cur = cur->next;
     }
-    symbol_list = mkmkatom(s, symbol_list);
-    return symbol_list;
+    return NULL;
 }
 
+// linear search to intern the string
+// will always return same atom
+lisp symbol(char* s) {
+    lisp sym = find_symbol(s, strlen(s));
+    if (sym) return sym;
+    return secretMkAtom(s);
+}
+
+// create a copy of partial string if not found
+lisp symbolCopy(char* start, int len) {
+    lisp sym = find_symbol(start, len);
+    if (sym) return sym;
+    return secretMkAtom(strndup(start, len));
+}
+
+// TODO: not used??? this can be used to implement generators
 lisp mkthunk(lisp e, lisp env) {
     thunk* r = ALLOC(thunk);
     r->e = e;
@@ -504,8 +549,10 @@ lisp mkthunk(lisp e, lisp env) {
     return (lisp)r;
 }
 
-// an immediate is a continuation returned that will be called by eval directly to yield another value
-// this implements continuation based evaluation thus maybe alllowing tail recursion...
+// an immediate is a continuation returned that will be called by eval directly to yield a value
+// this implements continuation based evaluation thus maybe allowing tail recursion...
+// these are used to avoid stack growth on self/mutal recursion functions
+// if, lambda, progn etc return these instead of calling eval on the tail
 lisp mkimmediate(lisp e, lisp env) {
     immediate* r = ALLOC(immediate); //(thunk*)mkthunk(e, env); // inherit from func_TAG
     //r->tag = immediate_TAG;
@@ -515,9 +562,9 @@ lisp mkimmediate(lisp e, lisp env) {
 }
 
 
+// these are formed by evaluating a lambda
 lisp mkfunc(lisp e, lisp env) {
-    func* r = ALLOC(func); //(thunk*)mkthunk(e, env); // inherit from func_TAG
-    //r->tag = func_TAG;
+    func* r = ALLOC(func);
     r->e = e;
     r->env = env;
     return (lisp)r;
@@ -525,55 +572,48 @@ lisp mkfunc(lisp e, lisp env) {
 
 ////////////////////////////// GC
 
-// silly inefficient, as it loops to find pointer in array, lol
-// better just store the bit in the tag field?
-// or add extra char of data to allocated stuffs
-void mark_deep(lisp x, int deep) {
-    int i =  0;
-    while (i < allocs_count) {
-        if (!x) return;
-        if (INTP(x)) return;
+void mark_deep(lisp next, int deep) {
+    while (next) {
+        if (INTP(next)) return;
 
-        int index = x->index;
-        if (index > 0) i = index;
+        // optimization, we store index position in element
+        int index = next->index;
+        if (index < 0) return; // no tracked here
 
-        lisp p = allocs[i];
-        if (p) {
-            if (p == x) {
-                if (IS_USED(i)) {
-                    //printf("already Marked %i deep %i :: ", i, deep); princ(p); terpri();
-                    return; // no need mark again or follow pointers
-                }
-                SET_USED(i);
-                //printf("Marked %i deep %i :: ", i, deep); princ(p); terpri();
+        lisp p = allocs[index];
+        if (!p || p != next) {
+            printf("mark_deep.ERROR: index %d doesn't contain pointer.\n", index);
+            //printf("pppp = 0x%u and next = 0x%u \n", p, next);
+            /* princ(next); */
+            /* return; */
+        } 
+        
+        if (IS_USED(index)) return;
 
-                // only atom and conss contains pointers...
-                if (IS(p, atom)) {
-                    x = (lisp)ATTR(atom, (void*)p, next);
-                    i = -1; // start over at 0
-                } else if (IS(p, conss)) {
-                    mark_deep(car(p), deep+1);
-                    // don't recurse on rest, just loop
-                    x = cdr(p);
-                    i = -1; // start over at 0
-                } else if (IS(p, thunk) || IS(p, immediate) || IS(p, func)) {
-                    // should we switch? which one is most likely to become deep?
-                    mark_deep(ATTR(thunk, p, e), deep+1);
-                    x = ATTR(thunk, p, env);
-                    i = -1; // start over at 0
-                } else return; // found pointer but nothing more to do
-            }
+        SET_USED(index);
+        //printf("Marked %i deep %i :: ", index, deep); princ(p); terpri();
+            
+        // follow pointers, recurse on one end, or set next for continue
+        if (IS(p, atom)) {
+            next = (lisp)ATTR(atom, (void*)p, next);
+        } else if (IS(p, conss)) {
+            mark_deep(car(p), deep+1);
+            next = cdr(p);
+        } else if (IS(p, thunk) || IS(p, immediate) || IS(p, func)) {
+            mark_deep(ATTR(thunk, p, e), deep+1);
+            next = ATTR(thunk, p, env);
         }
-
-        i++;
     }
 }
 
 void mark(lisp x) {
     mark_deep(x, 1);
-    mark_deep(symbol_list, 0); // never deallocate atoms!!!
+
     mark_deep(nil, 1);
     mark_deep(LAMBDA, 1);
+
+    // TODO: remove these from array?
+    mark_deep(symbol_list, 0); // never deallocate atoms!!! 
 }
 
 ///--------------------------------------------------------------------------------
@@ -590,8 +630,7 @@ lisp eq(lisp a, lisp b) {
     char ta = TAG(a);
     char tb = TAG(b);
     if (ta != tb) return nil;
-    // only integer is 'atom' needs to be eq that follow pointer
-    // TODO: string???
+    // only int needs to be eq with other int even if on heap...
     if (ta != intint_TAG) return nil;
     if (getint(a) == getint(b)) return t;
     return nil;
@@ -603,10 +642,6 @@ lisp equal(lisp a, lisp b) { return eq(a, b) ? t : symbol("*EQUAL-NOT-DEFINED*")
 //    return nenv;
 //}
 lisp setq(lisp name, lisp v, lisp env) {
-    int old = dogc;
-    dogc = 0;
-
-    mark(name); mark(v); mark(env); // make sure next eval doesn't remove "v"
     lisp bind = assoc(name, env);
     if (!bind) {
         bind = cons(name, nil);
@@ -614,24 +649,16 @@ lisp setq(lisp name, lisp v, lisp env) {
     }
     v = eval(v, env); // evaluate using new env containing right env with binding to self
     setcdr(bind, v); // create circular dependency on it's own defininition symbol by redefining
-
-    dogc = old;
-
     return env;
 }
 
-#define SETQ(sname, val) env = setq(symbol(#sname), val, env)
-//#define DEF(fname, sbody) env = setq(symbol(#fname), read(#sbody), env)
-#define DEF(fname, sbody) env = setq(symbol(#fname), read(#sbody), env)
-#define EVAL(what, env) eval(read(#what), env)
-#define PRIM(fname, argn, fun) env = setq(symbol(#fname), mkprim(#fname, argn, fun), env)
-
 ///--------------------------------------------------------------------------------
 // lisp reader
-char *input = NULL;
-char nextChar = 0;
 
-char nextx() {
+static char *input = NULL;
+static char nextChar = 0;
+
+static char nextx() {
     if (nextChar != 0) {
         char c = nextChar;
         nextChar = 0;
@@ -647,7 +674,7 @@ char nextx() {
     return *(input++);
 }
 
-char next() {
+static char next() {
     if (0) {
         char c = nextx();
         printf(" [next == %d] ", c);
@@ -657,14 +684,14 @@ char next() {
     }
 }
 
-void skipSpace() {
+static void skipSpace() {
     char c = next();
     while (c && c == ' ') c = next();
     nextChar = c;
 }
 
 // TODO: negative number
-lisp readInt() {
+static lisp readInt() {
     char c = next();
     int v = 0;
     if (!c) return nil;
@@ -676,7 +703,7 @@ lisp readInt() {
     return mkint(v);
 }
 
-lisp readString() {
+static lisp readString() {
     char* start = input;
     char c = next();
     while (c && c != '"') c = next();
@@ -685,7 +712,7 @@ lisp readString() {
     return mklenstring(start, len);
 }
 
-lisp readAtom() {
+static lisp readAtom() {
     // TODO: broken if ungetc used before...?
     char* start = input - 1;
     int len = 0;
@@ -695,13 +722,12 @@ lisp readAtom() {
         len++;
     }
     nextChar = c;
-
-    return symbol(strndup(start, len));
+    return symbolCopy(start, len);
 }
 
-lisp readx();
+static lisp readx();
 
-lisp readList() {
+static lisp readList() {
     skipSpace();
 
     char c = next();
@@ -720,7 +746,7 @@ lisp readList() {
     return cons(a, readList());
 }
 
-lisp readx() {
+static lisp readx() {
     skipSpace();
     char c = next();
     if (!c) return NULL;
@@ -746,6 +772,8 @@ lisp read(char *s) {
     return readx();
 }
 
+// TODO: prin1 that quotes so it/strings can be read back again
+// print that prin1 with newline
 lisp princ(lisp x) {
     if (x == nil) {
         printf("nil");
@@ -763,6 +791,7 @@ lisp princ(lisp x) {
     // longer blocks
     else if (tag == conss_TAG) {
         putchar('(');
+        princ(car(x));
         lisp d = cdr(x);
         while (d && gettag(d) == conss_TAG) {
             putchar(' ');
@@ -777,7 +806,9 @@ lisp princ(lisp x) {
     } else {
         printf("*UnknownTag:%d*", tag);
     }
-    fflush(stdout);
+    // is need on esp, otherwise it's buffered and comes some at a time...
+    // TODO: check performance implications
+    fflush(stdout); 
     return x;
 }
 
@@ -913,10 +944,6 @@ lisp evalGC(lisp e, lisp env) {
     return r;
 }
 
-void lispF(char* name, int n, void* f) {
-    // TODO: do something...
-}
-
 lisp iff(lisp env, lisp exp, lisp thn, lisp els) {
     // evalGC is safe here as we don't construct any structes, yet
     return evalGC(exp, env) ? mkimmediate(thn, env) : mkimmediate(els, env);
@@ -965,59 +992,72 @@ lisp funcapply(lisp f, lisp args, lisp env) {
     return mkimmediate(prog, lenv);
 }
 
-void lispinit() {
+// User, macros, assume a "globaL" env variable implicitly, and updates it
+#define SETQ(sname, val) env = setq(symbol(#sname), val, env)
+#define DEF(fname, sbody) env = setq(symbol(#fname), read(#sbody), env)
+#define EVAL(what, env) ({ eval(read(#what), env); terpri(); })
+#define PRIM(fname, argn, fun) env = setq(symbol(#fname), mkprim(#fname, argn, fun), env)
+
+// returns an env with functions
+lisp lispinit() {
+    lisp env = nil;
+
     // free up and start over...
     dogc = 0;
 
     allocs_count = 0;
     mark_clean();
+
+    mark(nil);
+    gc();
+
     int i;
+    if (0)
     for(i = 0; i<MAX_ALLOCS; i++) {
         allocs[i] = nil;
     }
-
-
 
     t = symbol("t");
     // nil = symbol("nil"); // LOL? TODO:? that wouldn't make sense?
     LAMBDA = mkprim("lambda", -16, lambda);
 
-    // 1K lines lisp - https://github.com/rui314/minilisp/blob/master/minilisp.c
-    // quote
-    lispF("cons", 2, cons);
-    lispF("car", 1, carr);
-    lispF("cdr", 1, cdrr);
-// setq
-// define
-// defun
-// defmacro
-    lispF("setcar", 2, setcar);
-    lispF("setcdr", 2, setcdr);
-// while
-// gensym
-    lispF("+", 2, plus);
-    lispF("-", 2, minus);
-    lispF("*", 2, times); // extra
-    lispF("*", 2, divide); // extra
-    lispF("<", 2, lessthan); 
-// macroexpand
-    //lispF("lambda", -16, lambda);
-    //lispF("if", 3, iff);
-    lispF("=", 2, equal);
-    lispF("eq", 2, eq);
-    lispF("princ", 1, princ); // println
-    lispF("terpri", 0, terpri); // extra
+    SETQ(lambda, LAMBDA);
+    PRIM(+, 2, plus);
+    PRIM(-, 2, minus);
+    PRIM(*, 2, times);
+    // PRIM("/", 2, divide);
+    PRIM(eq, 2, eq);
+    PRIM(=, 2, eq);
+    PRIM(<, 2, lessthan);
+    PRIM(if, -3, iff);
+    PRIM(terpri, 0, terpri);
+    PRIM(princ, 1, princ);
 
-    // -- all extras
-    lispF("read", 1, read);
-    lispF("symbol", 0, symbol); 
-    lispF("eval", 1, eval);
-    //lispF("apply", 1, apply);
-    //lispF("evallist", 2, evallist);
+    PRIM(cons, 2, cons);
+    PRIM(car, 1, carr);
+    PRIM(cdr, 1, cdrr);
+    PRIM(setcar, 2, setcar);
+    PRIM(setcdr, 2, setcdr);
+    PRIM(assoc, 2, assoc);
+    // PRIM(quote, -16, quote);
+    // PRIM(list, 16, listlist);
 
-    // -- special
-    lispF("if", -3, iff);
-    lispF("lambda", -16, lambda);
+    PRIM(eval, -1, eval);
+    PRIM(evallist, 2, evallist);
+
+    PRIM(read, 1, read);
+
+    // setq
+    // define
+    // defun
+    // defmacro
+    // while
+    // gensym
+
+    // another small lisp in 1K lines
+    // - https://github.com/rui314/minilisp/blob/master/minilisp.c
+
+    return env;
 }
 
  void tread(char* s) {
@@ -1026,20 +1066,11 @@ void lispinit() {
     terpri();
 }
     
-void newLispTest() {
+void newLispTest(lisp env) {
     dogc = 1;
 
+    princ(env);
     princ(read("(foo bar 42)"));
-    lisp env = nil;
-    SETQ(lambda, LAMBDA);
-    PRIM(+, 2, plus);
-    PRIM(-, 2, minus);
-    PRIM(*, 2, times);
-    PRIM(eq, 2, eq);
-    PRIM(=, 2, eq);
-    PRIM(if, -3, iff);
-    PRIM(terpri, 0, terpri);
-    PRIM(princ, 1, princ);
 
     printf("\n\n----------------------TAIL OPT AA BB!\n");
     princ(read("(+ 333 444)"));
@@ -1059,9 +1090,9 @@ void newLispTest() {
     gc();
 }
 
-void lisptest() {
+void lisptest(lisp env) {
     printf("------------------------------------------------------\n");
-    newLispTest();
+    newLispTest(env);
     return;
 
     printf("\n---string: "); princ(mkstring("foo"));
@@ -1101,7 +1132,7 @@ void lisptest() {
 
     printf("\neval-a: ");
     lisp a = symbol("a");
-    lisp env = cons(cons(a, mkint(5)), nil);;
+    env = cons(cons(a, mkint(5)), nil);;
     princ(eval(a, env));
 
     printf("\nchanged neval-a: ");
@@ -1199,7 +1230,7 @@ void lisptest() {
 //    reportAllocs();
 //    printf("SIZEOF int = %d\nSIZEOF ptr = %d\n", sizeof(int), sizeof(int*));
     } else {
-        newLispTest();
+        newLispTest(env);
     }
     printf("\n========================================================END=====================================================\n");
 }
