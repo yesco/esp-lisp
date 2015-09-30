@@ -73,6 +73,11 @@ To connect to it and run it.
 - regression tests for types and functions
 - simple web interface (ala http://john.freml.in/teepeedee2-vs-picolisp)
 - speed regression test suite (tail recursion and http://software-lab.de/radical.pdf)
+- add functionality ala nodemcu see http://www.nodemcu.com/docs/
+- want nodemcu spiffs style filesystem on flash
+- hardware io functions: spi i2c
+- put lisp functions in ROM at compile time, see below for inspiriation
+- get display functions ala nodemcu
 
 ## Readings idea for embedded ROM lisps
 
