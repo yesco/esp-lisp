@@ -9,6 +9,8 @@
 // - full closures
 // - lexical binding
 
+// RAW C esp8266 - printf("10,000,000 LOOP (100x lua) TIME=%d\r\n", tm); ===> 50ms
+
 // Lua time 100,000 => 2s
 // ----------------------
 //   s=0; for i=1,100000 do s=s+i end; print(s);
@@ -43,8 +45,27 @@
 //
 //   slight increase if change the MAX_ALLOC to 512 but it keeps 17K free! => 4180ms
 
+// (fibo 24)
+//   lua: 3s
+//   esp-lisp: 5s
 //
-// RAW C esp8266 - printf("10,000,000 LOOP (100x lua) TIME=%d\r\n", tm); ===> 50ms
+// (fibo 30)
+//   x61 lisp: 4.920s
+//   opt: 2.67s
+//
+// time echo "function fibo(n) if n < 2 then return 1; else return fibo(n-1) + fibo(n-2); end end print(fibo(35)); " | lua
+//   14930352, real 0m6.006s, user 0m3.653s
+
+// lua fibo 32 
+//   3524578, real 0m1.992s, user 0m0.903s
+//
+// time ./a.out
+//   3524578, real 0m19.353s, user 0m12.353s
+//
+// time ./opt
+//   3524578, real 0m3.549s, user 0m2.253s
+//  
+// 2.5x slower than lua interpreting instead of compiling to byte code!!!
 //
 
 #include <unistd.h>
@@ -86,6 +107,10 @@
 
 // TODO: move all defs into this:
 #include "lisp.h"
+
+// set to 1 to get GC tracing messages
+static int traceGC = 0;
+static int trace = 0;
 
 // use for list(mkint(1), symbol("foo"), mkint(3), END);
 lisp END = (lisp) -1; 
@@ -197,8 +222,8 @@ int tag_size[MAX_TAGS] = { 0, sizeof(string), sizeof(conss), sizeof(intint), siz
 // TODO: remove ATOM since they are never GC:ed! (thunk are special too, not tracked)
 //#define MAX_ALLOCS 819200 // (fibo 22)
 //#define MAX_ALLOCS 8192
-//#define MAX_ALLOCS 1024
-#define MAX_ALLOCS 512 // keeps 17K free
+#define MAX_ALLOCS 1024
+//#define MAX_ALLOCS 512 // keeps 17K free
 //#define MAX_ALLOCS 256 // keeps 21K free
 //#define MAX_ALLOCS 128 // keeps 21K free
 
@@ -241,21 +266,27 @@ int reuse() {
 
 // total number of things in use
 int used_count = 0;
+int used_bytes = 0;
 
 // SLOT salloc/sfree, reuse mallocs of same size instead of free, saved 20% speed
 #define SALLOC_MAX_SIZE 32
 void* alloc_slot[SALLOC_MAX_SIZE] = {0}; // TODO: probably too many sizes...
 
 void* salloc(int bytes) {
-    if (bytes > SALLOC_MAX_SIZE) return malloc(bytes);
     void** p = alloc_slot[bytes];
-    if (!p) return malloc(bytes);
+    if (!p || bytes >= SALLOC_MAX_SIZE) {
+        used_bytes += bytes;
+        return malloc(bytes);
+    }
     alloc_slot[bytes] = *p;
     return p;
 }
 
 void sfree(void** p, int bytes) {
-    if (bytes > SALLOC_MAX_SIZE) return free(p);
+    if (bytes >= SALLOC_MAX_SIZE) {
+        used_bytes -= bytes;
+        return free(p);
+    }
     void* n = alloc_slot[bytes];
     *p = n;
     alloc_slot[bytes] = p;
@@ -304,18 +335,26 @@ void mark_clean() {
     memset(used, 0, sizeof(used));
 }
 
-// set to 1 to get GC tracing messages
-int traceGC = 1;
-
 int needGC() {
     return (used_count < MAX_ALLOCS * 0.8) ? 0 : 1;
 }
 
-void gc() {
-    if (!needGC()) return; // not yet
+atom* symbol_list = NULL;
+
+void mark(lisp x);
+
+lisp mem_usage(int count) {
+    if (traceGC) printf(" [GC freed %d used=%d bytes=%d]\n", count, used_count, used_bytes);
+    return nil;
+}
+
+lisp gc() {
+    mark(nil); mark((lisp)symbol_list); // TODO: remove?
+
+    // if not need let's not gc
+    if (!needGC()) return mem_usage(0); 
 
     int count = 0;
-    if (traceGC) printf(" [GC...");
     int i ;
     for(i = 0; i < allocs_count; i++) {
         lisp p = allocs[i];
@@ -344,7 +383,8 @@ void gc() {
         }
     }
     mark_clean();
-    if (traceGC) printf("freed %d used=%d] ", count, used_count);
+
+    return mem_usage(count);
 }
 
 void reportAllocs() {
@@ -533,8 +573,6 @@ lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
     return r;
 }
 
-atom* symbol_list = NULL;
-
 // don't call this directly, call symbol
 lisp secretMkAtom(char* s) {
     atom* r = ALLOC(atom);
@@ -636,12 +674,6 @@ void mark_deep(lisp next, int deep) {
 
 void mark(lisp x) {
     mark_deep(x, 1);
-
-    mark_deep(nil, 1);
-    mark_deep(LAMBDA, 1);
-
-    // TODO: remove these from array?
-    mark_deep((lisp)symbol_list, 0); // never deallocate atoms!!! 
 }
 
 ///--------------------------------------------------------------------------------
@@ -870,6 +902,11 @@ static lisp getvar(lisp e, lisp env) {
     return nil;
 }
 
+// cache function
+lisp IF_PRIM;
+lisp PLUS_PRIM;
+lisp iff(lisp,lisp,lisp,lisp);
+
 static lisp eval_hlp(lisp e, lisp env) {
     if (!e) return e;
     char tag = TAG(e);
@@ -880,6 +917,13 @@ static lisp eval_hlp(lisp e, lisp env) {
     lisp orig = car(e);
     lisp f = orig;
     tag = TAG(f);
+    if (1 && tag == prim_TAG) {
+        lisp d1 = cdr(e);
+        lisp d2 = cdr(d1);
+        if (f == PLUS_PRIM) return plus(evalGC(car(d1), env), evalGC(car(d2), env));
+        if (f == IF_PRIM) return iff(env, car(d1), car(d2), car(cdr(d2)));
+        //if (IF_PRIM) return evalGC(car(a1), env) ? mkimmediate(car(a2), env) : mkimmediate(car(cdr(a2)), env);
+    }
     while (f && tag!=prim_TAG && tag!=thunk_TAG && tag!=func_TAG && tag!=immediate_TAG) {
         f = evalGC(f, env);
         tag = TAG(f);
@@ -900,7 +944,7 @@ static lisp eval_hlp(lisp e, lisp env) {
     if (tag == thunk_TAG) return f; // ignore args
 
     printf("%%ERROR.lisp - don't know how to evaluate f="); princ(f); printf("  ");
-    printf(" ENV="); princ(env); terpri();
+    //printf(" ENV="); princ(env); terpri();
     return nil;
 }
 
@@ -928,8 +972,6 @@ static struct stack {
     lisp e;
     lisp env;
 } stack[MAX_STACK];
-
-static int trace = 0;
 
 lisp evalGC(lisp e, lisp env) {
     if (!e) return e;
@@ -969,12 +1011,27 @@ lisp evalGC(lisp e, lisp env) {
 
     if (trace) { indent(level); printf("---> "); princ(e); terpri(); }
     level++;
-    if (trace) { indent(level+1); printf("p=%u %i ", (unsigned int)env, env->index); printf(" ENV= "); princ(env); terpri(); }
+    //if (trace) { indent(level+1); printf(" ENV= "); princ(env); terpri(); }
+    if (trace) {
+        indent(level+1);
+        printf(" ENV ");
+        lisp xx = env;
+        while (xx && car(car(xx))) {
+            lisp b = car(xx);
+            //princ(b); putchar(' ');
+            princ(car(b)); putchar('='); princ(cdr(b)); putchar(' ');
+            xx = cdr(xx);
+        }
+        terpri();
+    }
 
     lisp r = eval_hlp(e, env);
     while (r && TAG(r) == immediate_TAG) {
         lisp tofree = r;
-        r = eval_hlp(ATTR(thunk, r, e), ATTR(thunk, r, env));
+        if (trace) // make it visible
+            r = evalGC(ATTR(thunk, r, e), ATTR(thunk, r, env));
+        else
+            r = eval_hlp(ATTR(thunk, r, e), ATTR(thunk, r, env));
         // immediates are immediately consumed after evaluation, so they can be free:d directly
         tofree->tag = 0;
         sfree((void*)tofree, sizeof(thunk));
@@ -983,6 +1040,7 @@ lisp evalGC(lisp e, lisp env) {
 
     --level;
     if (trace) { indent(level); princ(r); printf(" <--- "); princ(e); terpri(); }
+
     stack[level].e = nil;
     stack[level].env = nil;
     return r;
@@ -1059,14 +1117,15 @@ lisp lispinit() {
     LAMBDA = mkprim("lambda", -16, lambda);
 
     SETQc(lambda, LAMBDA);
-    PRIM(+, 2, plus);
+    SETQ(t, 1);
+    PRIM(+, 2, plus); PLUS_PRIM = eval(symbol("+"), env);
     PRIM(-, 2, minus);
     PRIM(*, 2, times);
     // PRIM("/", 2, divide);
     PRIM(eq, 2, eq);
     PRIM(=, 2, eq);
     PRIM(<, 2, lessthan);
-    PRIM(if, -3, iff);
+    PRIM(if, -3, iff); IF_PRIM = eval(symbol("if"), env);
     PRIM(terpri, 0, terpri);
     PRIM(princ, 1, princ);
 
@@ -1094,6 +1153,8 @@ lisp lispinit() {
     // defmacro
     // while
     // gensym
+
+    PRIM(gc, 0, gc);
 
     // another small lisp in 1K lines
     // - https://github.com/rui314/minilisp/blob/master/minilisp.c
@@ -1153,7 +1214,7 @@ void help() {
         s = s->next;
     }
     terpri();
-    printf("Commands: hello help.\n");
+    printf("Commands: hello/help/trace on/trace off/gc on/gc off\n");
     terpri();
 }
 
@@ -1169,8 +1230,18 @@ void readeval(lisp env) {
             hello();
         } else if (strcmp(ln, "help") == 0 || ln[0] == '?') {
             help();
+        } else if (strcmp(ln, "gc on") == 0) {
+            traceGC = 1;
+        } else if (strcmp(ln, "gc off") == 0) {
+            traceGC = 0;
+        } else if (strcmp(ln, "trace on") == 0) {
+            trace = 1;
+        } else if (strcmp(ln, "trace on") == 0) {
+            trace = 0;
         } else if (strlen(ln) > 0) {
             princ(evalGC(reads(ln), env)); terpri();
+            mark(env);
+            gc();
         }
 
         free(ln);
@@ -1194,15 +1265,19 @@ void newLispTest(lisp env) {
 //    printf("fibo %d = %d\n", n, fibo(n));
 //    return;
 
-    //readeval();
+    //readeval(env);
     //return;
 
     dogc = 1;
 
-    DEF(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
-    readeval(env);
+//    env = cons( cons(symbol("aa"),mkint(77)) , cons( cons(nil, nil) , env) );
+    env = cons( cons(nil, nil) , env);
 
-//    princ(evalGC(reads("(fibo 30)"), env)); terpri();
+    DEF(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
+    //printf("GLOBALENV: "); princ(env); terpri();
+    princ(evalGC(reads("(fibo 32)"), env)); terpri();
+//    readeval(env);
+
     return;
 
     printf("\n\n----------------------CLOSURE GENERATOR\n");
