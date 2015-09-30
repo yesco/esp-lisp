@@ -681,11 +681,19 @@ void mark(lisp x) {
 ///--------------------------------------------------------------------------------
 // Primitives
 
+lisp nullp(lisp a) { return a ? nil : t; }
+lisp consp(lisp a) { return IS(a, conss) ? t : nil; }
+lisp atomp(lisp a) { return IS(a, conss) ? nil : t; }
+lisp symbolp(lisp a) { return IS(a, atom) ? t : nil; } // rename struct atom to symbol?
+lisp numberp(lisp a) { return IS(a, intint) ? t : nil; } // TODO: extend with float/real
+lisp integerp(lisp a) { return IS(a, intint) ? t : nil; }
+
+lisp lessthan(lisp a, lisp b) { return getint(a) < getint(b) ?  t : nil; }
+
 lisp plus(lisp a, lisp b) { return mkint(getint(a) + getint(b)); }
 lisp minus(lisp a, lisp b) { return mkint(getint(a) - getint(b)); }
 lisp times(lisp a, lisp b) { return mkint(getint(a) * getint(b)); }
 lisp divide(lisp a, lisp b) { return mkint(getint(a) / getint(b)); }
-lisp lessthan(lisp a, lisp b) { return getint(a) < getint(b) ?  t : nil; }
 lisp terpri() { printf("\n"); return nil; }
 lisp eq(lisp a, lisp b) {
     if (a == b) return t;
@@ -1113,13 +1121,22 @@ lisp lispinit() {
     SETQc(lambda, LAMBDA);
     SETQ(t, 1);
     SETQ(nil, nil);
+
+    PRIM(null?, 1, nullp);
+    PRIM(cons?, 1, consp);
+    PRIM(atom?, 1, atomp);
+    PRIM(symbol?, 1, symbolp);
+    PRIM(number?, 1, numberp);
+    PRIM(integer?, 1, integerp);
+
+    PRIM(<, 2, lessthan);
+
     PRIM(+, 2, plus);
     PRIM(-, 2, minus);
     PRIM(*, 2, times);
     // PRIM("/", 2, divide);
     PRIM(eq, 2, eq);
     PRIM(=, 2, eq);
-    PRIM(<, 2, lessthan);
     PRIM(if, -3, iff);
     PRIM(terpri, 0, terpri);
     PRIM(princ, 1, princ);
@@ -1129,11 +1146,13 @@ lisp lispinit() {
     PRIM(cdr, 1, cdrr);
     PRIM(setcar, 2, setcar);
     PRIM(setcdr, 2, setcdr);
+
+    PRIM(list, 16, _quote);
     PRIM(assoc, 2, assoc);
     // PRIM(quote, -16, quote);
     // PRIM(list, 16, listlist);
 
-    PRIM(eval, -1, eval);
+    PRIM(eval, 1, eval);
     PRIM(evallist, 2, evallist);
 
     PRIM(read, 1, read);
