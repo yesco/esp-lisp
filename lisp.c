@@ -23,9 +23,8 @@
 // 10 = 
 // 11 = extended type, remove bits to get pointer assumes 4 byte boundary
 
-typedef struct {
-    char tag;
-} *lisp;
+// TODO: move all defs into this:
+#include "lisp.h"
 
 lisp NIL = NULL;
 lisp t = NULL;
@@ -39,8 +38,70 @@ typedef struct {
     char* p; // TODO: make it inline, not second allocation
 } string;
 
+#define MAX_TAGS 16
+int tag_count[MAX_TAGS] = {0};
+int tag_bytes[MAX_TAGS] = {0};
+char* tag_name[MAX_TAGS] = { "TOTAL", "string", "cons", "int", "prim", "atom", 0 };
+
+#define MAX_ALLOCS 1024
+int allocs_count = 0;
+void* allocs[MAX_ALLOCS] = { 0 };
+unsigned int used[MAX_ALLOCS/32 + 1] = { 0 };
+    
+#define SET_USED(i) ({int _i = (i); used[_i/32] |= 1 << _i%32;})
+#define IS_USED(i) ({int _i = (i); (used[_i/32] >> _i%32) & 1;})
+
+void* myMalloc(int bytes, int tag) {
+    tag_count[tag]++;
+    tag_bytes[tag] += bytes;
+    tag_count[0]++;
+    tag_bytes[0] += bytes;
+
+    void* p = malloc(bytes);
+    allocs[allocs_count] = p;
+    allocs_count++;
+    if (allocs_count >= MAX_ALLOCS) {
+        printf("Exhaused myMalloc array!\n");
+        #ifdef TEST
+          exit(1);
+        #endif
+    }
+    return p;
+}
+
+void gc() {
+    printf("\nGC...\n");
+    int i ;
+    for(i = 0; i < allocs_count; i++) {
+        lisp p = allocs[i];
+        if (!p) continue;
+        
+        int u = (used[i/32] >> i%32) & 1;
+        if (u) {
+            printf("%d used=%d  ::  ", i, u); princ(p); terpri();
+        } else {
+            printf("%d FREE! ", i);
+            free(p);
+            allocs[i] = NULL;
+        }
+    }
+}
+
+void reportAllocs() {
+    gc();
+    terpri();
+    printf("--- Allocation stats ---\n");
+    int i;
+    for(i = 0; i<16; i++) {
+        if (tag_count[i] > 0)
+            printf("%7s: %3d allocations of %5d bytes\n", tag_name[i], tag_count[i], tag_bytes[i]);
+        tag_count[i] = 0;
+        tag_bytes[i] = 0;
+    }
+}
+
 #define TAG(x) (x ? ((lisp)x)->tag : 0 )
-#define ALLOC(type) ({type* x = malloc(sizeof(type)); x->tag = type ## _TAG; x;})
+#define ALLOC(type) ({type* x = myMalloc(sizeof(type), type ## _TAG); x->tag = type ## _TAG; x;})
 #define ATTR(type, x, field) ((type*)x)->field
 #define IS(x, type) (x && TAG(x) == type ## _TAG)
 
@@ -99,8 +160,8 @@ int getint(lisp x) { return IS(x, intint) ? ATTR(intint, x, v) : 0; }
 typedef struct {
     char tag;
     char n;
-    char* name;
     void* f;
+    char* name; // TODO should be char name[1]; // inline allocation!, or actually should point to an ATOM
 } prim;
 
 lisp mkprim(char* name, int n, void *f) {
@@ -110,10 +171,6 @@ lisp mkprim(char* name, int n, void *f) {
     r->f = f;
     return (lisp)r;
 }
-
-// TODO: remove
-lisp princ(lisp x);
-lisp terpri();
 
 lisp eval(lisp e, lisp env);
 lisp eq(lisp a, lisp b);
@@ -144,8 +201,7 @@ lisp primapply(lisp ff, lisp args, lisp env) {
     lisp (*fp)(lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp) = ATTR(prim, ff, f);
     // with C calling convention it's ok, but maybe not most efficient...
     lisp r = fp(car(a), car(b), car(c), car(d), car(e), car(f), car(g), car(h), car(i), car(j));
-    princ(cons(ff, args));
-    printf(" -> "); princ(r); printf("\n");
+    //princ(cons(ff, args)); printf(" -> "); princ(r); printf("\n");
 
     return r;
 }
@@ -163,11 +219,14 @@ lisp oldprimapply(lisp ff, lisp args) {
 
 lisp symbol_list = NULL;
 
+// TODO: somehow an atom is very similar to a conss cell.
+// it has two pointers, next/cdr, diff is first pointer points a naked string/not lisp string. Maybe it should?
+// TODO: if we make this a 2-cell or 1-cell lisp? or maybe atoms should have no property list or value, just use ENV for that
 #define atom_TAG 5
 typedef struct atom {
     char tag;
-    char* name;
     struct atom* next;
+    char* name; // TODO should be char name[1]; // inline allocation!
 } atom;
 
 lisp mkmkatom(char* s, lisp list) {
@@ -187,6 +246,42 @@ lisp symbol(char *s) {
     }
     symbol_list = mkmkatom(s, symbol_list);
     return symbol_list;
+}
+
+////////////////////////////// GC
+
+// silly inefficient, as it loops to find pointer in array, lol
+// better just store the bit in the tag field?
+// or add extra char of data to allocated stuffs
+void mark_deep(void* x, int deep) {
+    int i =  0;
+    while (i < allocs_count) {
+        lisp p = allocs[i];
+        if (p) {
+            if (p == x) {
+                if (IS_USED(i)) return; // no need mark again or follow pointers
+                SET_USED(i); printf("Marked %i deep %i :: ", i, deep); princ(p); terpri();
+
+                // only atom and conss contains pointers...
+                if (TAG(p) == atom_TAG) {
+                    x = ATTR(atom, p, next);
+                    i = -1;
+                } else if (TAG(p) == conss_TAG) {
+                    mark_deep(car(p), deep+1);
+                    // don't recurse on rest, just loop
+                    x = cdr(p);
+                    i = -1;
+                } else return; // found pointer but nothing more to do
+            }
+        }
+
+        i++;
+    }
+}
+
+void mark(void* x) {
+    mark_deep(x, 1);
+    mark_deep(symbol_list, 0); // never deallocate atoms!!!
 }
 
 ///--------------------------------------------------------------------------------
@@ -336,7 +431,6 @@ lisp princ(lisp x) {
         while (d && gettag(d) == conss_TAG) {
             putchar(' ');
             princ(car(d));
-            // TODO: remove recursion, otherwise blow up stack
             d = cdr(d);
         }
         if (d) {
@@ -350,12 +444,26 @@ lisp princ(lisp x) {
     return NIL;
 }
 
-lisp eval(lisp e, lisp env) {
+void indent(int n) {
+    n *= 2;
+    while (n-- > 0) putchar(' ');
+}
+
+int level = 0;
+
+lisp eval_hlp(lisp e, lisp env) {
     if (e == NIL) return e;
     if (IS(e, atom)) return cdr(assoc(e, env));
     if (!IS(e, conss)) return e; // all others are literal (for now)
     lisp f = eval(car(e), env);
     return primapply(f, cdr(e), env);
+}
+
+lisp eval(lisp e, lisp env) {
+    indent(level++); printf("---> "); princ(e); terpri();
+    lisp r = eval_hlp(e, env);
+    indent(--level); princ(r); printf(" <--- "); princ(e); terpri();
+    return r;
 }
 
 void lispF(char* name, int n, void* f) {
@@ -428,7 +536,9 @@ void lisptest() {
     lisp tim = mkprim("times", 2, times);
     lisp pp = cons(plu, cons(mkint(3), cons(mkint(4), NIL)));
     lisp tt = cons(tim, cons(mkint(3), cons(mkint(4), NIL)));
-    eval(cons(plu, cons(pp, cons(tt, NIL))), NIL);
+    lisp xx = cons(plu, cons(pp, cons(tt, NIL)));
+    mark(xx);
+    eval(xx, NIL);
 
     printf("\neval-a: ");
     lisp a = symbol("a");
@@ -436,7 +546,10 @@ void lisptest() {
     princ(eval(a, env));
 
     printf("\nchanged neval-a: ");
+    mark(a);
     princ(eval(a, cons(cons(a, mkint(77)), env)));
 
-    terpri();
+    reportAllocs();
 }
+
+
