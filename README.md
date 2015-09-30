@@ -22,7 +22,7 @@ It's one step away from being useful.
 
 - esp-lisp is interpreted so it's about 2x slower than lua that is compiled and use lots of memory
 
-It's about 1200 lines of code.
+It's about 1000+ lines of code.
 
 ## features
 

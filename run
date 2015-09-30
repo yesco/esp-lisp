@@ -1,6 +1,6 @@
 # from norvig http://norvig.com/lispy.html
 echo "--- Lines of code ---"
-grep "^\s*[^#\s]" lisp.c | wc
+grep -v "^\s*//" lisp.c | grep -v "^/\*" | grep -v "^$" | wc
 echo
 cp tlisp.ccc tlisp.c && gcc -O2 -DTEST=1 tlisp.c lisp.c -o opt ; rm tlisp.c
 cp tlisp.ccc tlisp.c && gcc -g -pg -DTEST=1 tlisp.c lisp.c && time ./a.out ; rm tlisp.c
