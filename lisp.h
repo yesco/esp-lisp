@@ -5,7 +5,7 @@ typedef struct {
 } *lisp;
 
 void reportAllocs();
-void lispinit();
+lisp lispinit();
 void lisptest();
 
 lisp princ(lisp x);
