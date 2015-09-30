@@ -39,7 +39,12 @@ int dogc = 0;
 
 int gettag(lisp x) { return x->tag; }
 
+
 #define string_TAG 1
+#define conss_TAG 2
+
+#define immediate_TAG 7
+
 typedef struct {
     char tag;
     char* p; // TODO: make it inline, not second allocation
@@ -87,7 +92,7 @@ void* myMalloc(int bytes, int tag) {
     if ((int)p == 0x08050208) {
         printf("\n============================== ALLOC trouble pointer %d bytes of tag %d %s ===========\n", bytes, tag, tag_name[tag]);
     }
-    if (tag == 6 /* immediate_TAG */) { // TODO: fix this number!!!
+    if (tag == immediate_TAG) {
         // do not record, do not GC, they'll be GC:ed automatically as invoked once!
         return p;
     }
@@ -96,8 +101,8 @@ void* myMalloc(int bytes, int tag) {
         pos = allocs_count;
         allocs_count++;
     }
-    if ((int)p == 0x08050208) {
-        printf("\n=POS=%d pointer=0x%x\n", pos, p);
+    if ((int)p == 0x0804e528) {
+        printf("\n=POS=%d pointer=0x%x tag %d %s\n", pos, p, tag, tag_name[tag]);
     }
     allocs[pos] = p;
     if (allocs_count >= MAX_ALLOCS) {
@@ -123,13 +128,20 @@ void gc() {
         lisp p = allocs[i];
         if (!p) continue;
         
+        if ((int)p == 0x0804e528) {
+            printf("\nGC----------------------%d ERROR! p=0x%x  ", i, p); princ(p); terpri();
+        }
+
+        if (TAG(p) > 8 || TAG(p) == 0) {
+            printf("\nGC----------------------%d ILLEGAL TAG! %d p=0x%x  ", i, TAG(p), p); princ(p); terpri();
+        }
         int u = (used[i/32] >> i%32) & 1;
         if (u) {
 //            printf("%d used=%d  ::  ", i, u); princ(p); terpri();
         } else {
 //            printf("%d FREE! ", i);
             count++;
-            if (0) {
+            if (1) {
                 free(p);
             } else {
                 printf("FREE: "); princ(p); terpri();
@@ -172,7 +184,6 @@ lisp mkstring(char *s) {
 }
 
 // conss name in order to be able to have a function named 'cons()'
-#define conss_TAG 2
 typedef struct {
     char tag;
     lisp car;
@@ -347,8 +358,6 @@ lisp mkthunk(lisp e, lisp env) {
     return (lisp)r;
 }
 
-#define immediate_TAG 7
-
 typedef struct immediate {
     char tag;
     lisp e;
@@ -412,9 +421,6 @@ void mark_deep(void* x, int deep) {
                     i = -1; // start over at 0
                 } else if (IS(p, thunk) || IS(p, immediate) || IS(p, func)) {
                     // should we switch? which one is most likely to become deep?
-                    printf("MARKDEEP FUNC: "); princ(p); terpri();
-                    lisp ee = ATTR(thunk, p, e);
-                    printf("----func: %d %s ", TAG(ee), tag_name[TAG(ee)]); princ(ee); terpri();
                     mark_deep(ATTR(thunk, p, e), deep+1);
                     x = ATTR(thunk, p, env);
                     i = -1; // start over at 0
@@ -652,14 +658,13 @@ lisp funcapply(lisp f, lisp args, lisp env);
 lisp evalGC(lisp e, lisp env);
 
 lisp eval_hlp(lisp e, lisp env) {
-    //if (e == nil) return e;
+    if (!e || (!IS(e, atom) && !IS(e, conss))) return e;
     if (IS(e, atom)) {
         lisp v = assoc(e, env); // look up variable
         if (v) return cdr(v);
         printf("Undefined symbol: "); princ(e); terpri();
         return nil;
     }
-    //if (!IS(e, conss)) return e; // all others are literal (for now)
 
     //printf("EVAL FUNC:"); princ(env); terpri();
     lisp f = evalGC(car(e), env);
