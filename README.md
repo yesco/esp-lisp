@@ -28,30 +28,30 @@ Embryo:
 
 In a directory:
 
-1. Get https://github.com/SuperHouse/esp-open-rtos (and all it wants)
-2. Build it.
+- Get https://github.com/SuperHouse/esp-open-rtos (and all it wants)
+- Build it.
 
 This is temporary, we need to patch in for read/write to get readline interactive on device!
 
-2.2. (temp) patch it for IO read using uart https://github.com/SuperHouse/esp-open-rtos/pull/31
-2.5. (temp) instructions on https://help.github.com/articles/checking-out-pull-requests-locally/
-2.7. (temp) esp-open-rtos> git fetch origin pull/ID/head:uart
-2.9. (temp) esp-open-rtos> git checkout uart
-2.9.5 (temp) buid it...
+- (temp) patch it for IO read using uart https://github.com/SuperHouse/esp-open-rtos/pull/31
+- (temp) instructions on https://help.github.com/articles/checking-out-pull-requests-locally/
+- (temp) esp-open-rtos> git fetch origin pull/ID/head:uart
+- (temp) esp-open-rtos> git checkout uart
+- (temp) buid it...
 
-3. Get https://github.com/yesco/esp-lisp
+- Get https://github.com/yesco/esp-lisp
 
 These will now be in the same directory.
 
-4. esp-lisp> ./run
+- esp-lisp> ./run
 
 That will compile and run it on your desktop, it will also make the flash for the esp.
 
-5. esp-lisp> make flash
+- esp-lisp> make flash
 
 Flashes it to your esp-8266 device.
 
-6. esp-lisp> ./mcu
+- esp-lisp> ./mcu
 
 To connect to it and run it.
 
