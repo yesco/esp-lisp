@@ -1263,7 +1263,7 @@ void readeval(lisp env) {
             traceGC = 0;
         } else if (strcmp(ln, "trace on") == 0) {
             trace = 1;
-        } else if (strcmp(ln, "trace on") == 0) {
+        } else if (strcmp(ln, "trace off") == 0) {
             trace = 0;
         } else if (strlen(ln) > 0) { // lisp
             princ(evalGC(reads(ln), &env)); terpri();
