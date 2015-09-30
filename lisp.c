@@ -28,14 +28,10 @@ typedef struct {
 } *lisp;
 
 lisp NIL = NULL;
-
-lisp symbol(char*);
-
 lisp t = NULL;
 
-int gettag(lisp x) {
-    return *(char*)x;
-}
+int gettag(lisp x) { return x->tag; }
+
 
 #define string_TAG 1
 typedef struct {
@@ -43,10 +39,14 @@ typedef struct {
     char* p; // TODO: make it inline, not second allocation
 } string;
 
+#define TAG(x) (x ? ((lisp)x)->tag : 0 )
+#define ALLOC(type) ({type* x = malloc(sizeof(type)); x->tag = type ## _TAG; x;})
+#define ATTR(type, x, field) ((type*)x)->field
+#define IS(x, type) (x && TAG(x) == type ## _TAG)
+
 // make a string from POINTER (inside other string) by copying LEN bytes
 lisp mklenstring(char *s, int len) {
-    string* r = malloc(sizeof(string));
-    r->tag = string_TAG;
+    string* r = ALLOC(string);
     r->p = malloc(len+1);
     strncpy(r->p, s, len);
     r->p[len] = 0; // make sure!
@@ -54,21 +54,12 @@ lisp mklenstring(char *s, int len) {
 }
 
 lisp mkstring(char *s) {
-    string* r = malloc(sizeof(string));
-    r->tag = string_TAG;
+    string* r = ALLOC(string);
     r->p = s;
     return (lisp)r;
 }
 
-lisp mkatom(char *s) {
-    // TODO: wrong, same atoms not EQ!
-    return (lisp)mkstring(s);
-}
-
-lisp symbol(char *s) {
-    return mkatom(s);
-}
-
+// conss name in order to be able to have a function named 'cons()'
 #define conss_TAG 2
 typedef struct {
     char tag;
@@ -77,32 +68,16 @@ typedef struct {
 } conss;
 
 lisp cons(lisp a, lisp b) {
-    conss* r = malloc(sizeof(conss));
-    r->tag = conss_TAG;
+    conss* r = ALLOC(conss);
     r->car = a;
     r->cdr = b;
     return (lisp)r;
 }
 
-lisp car(lisp x) {
-    if (!x) return NIL;
-    return (lisp)((conss*)x)->car;
-}
-
-lisp cdr(lisp x) {
-    if (!x) return NIL;
-    return (lisp)((conss*)x)->cdr;
-}
-
-lisp setcar(lisp x, lisp v) {
-    if (gettag(x) == conss_TAG) ((conss*)x)->car = v;
-    return v;
-}
-
-lisp setcdr(lisp x, lisp v) {
-    if (gettag(x) == conss_TAG) ((conss*)x)->cdr = v;
-    return v;
-}
+lisp car(lisp x) { return x ? ATTR(conss, x, car) : NIL; }
+lisp cdr(lisp x) { return x ? ATTR(conss, x, cdr) : NIL; }
+lisp setcar(lisp x, lisp v) { return IS(x, conss) ? ATTR(conss, x, car) = v : NIL; return v; }
+lisp setcdr(lisp x, lisp v) { return IS(x, conss) ? ATTR(conss, x, cdr) = v : NIL; return v; }
 
 #define intint_TAG 3
 // TODO: store inline in pointer
@@ -112,16 +87,12 @@ typedef struct {
 } intint;
 
 lisp mkint(int v) {
-    intint* r = malloc(sizeof(intint));
-    r->tag = intint_TAG;
+    intint* r = ALLOC(intint);
     r->v = v;
     return (lisp)r;
 }
 
-int getint(lisp x) {
-    if (gettag(x) == intint_TAG) return ((intint*)x)->v;
-    return 0;
-}
+int getint(lisp x) { return IS(x, intint) ? ATTR(intint, x, v) : 0; }
 
 #define prim_TAG 4
 
@@ -133,76 +104,115 @@ typedef struct {
 } prim;
 
 lisp mkprim(char* name, int n, void *f) {
-    prim* r = malloc(sizeof(prim));
-    r->tag = prim_TAG;
+    prim* r = ALLOC(prim);
     r->name = name;
     r->n = n;
     r->f = f;
     return (lisp)r;
 }
 
-char* primname(lisp x) {
-    return ((prim*)x)->name;
-}
-
-///--------------------------------------------------------------------------------
-
-lisp plus(lisp a, lisp b) {
-    return mkint(getint(a) + getint(b));
-}
-
-lisp minus(lisp a, lisp b) {
-    return mkint(getint(a) - getint(b));
-}
- 
-lisp times(lisp a, lisp b) {
-    return mkint(getint(a) * getint(b));
-}
-
-lisp divide(lisp a, lisp b) {
-    return mkint(getint(a) / getint(b));
-}
-
-lisp lessthan(lisp a, lisp b) {
-    return getint(a) < getint(b) ?  t : NIL;
-}
-    
-lisp eq(lisp a, lisp b) {
-    return a == b ? t : NIL;
-}
-
-lisp equal(lisp a, lisp b) {
-    if (eq(a, b)) return t;
-    return symbol("*EQUAL-NOT-DEFINED*");
-}
-
+// TODO: remove
 lisp princ(lisp x);
 lisp terpri();
 
-///--------------------------------------------------------------------------------
-lisp primapply(lisp ff, lisp args) {
-    lisp (*fp)(lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp) = ((prim*)ff)->f;
+lisp eval(lisp e, lisp env);
+lisp eq(lisp a, lisp b);
 
-    lisp a = args;
-    lisp b = cdr(a);
-    lisp c = cdr(b);
-    lisp d = cdr(c);
-    lisp e = cdr(d);
-    lisp f = cdr(e);
-    lisp g = cdr(f);
-    lisp h = cdr(g);
-    lisp i = cdr(h);
-    lisp j = cdr(i);
+// returns binding, so you can change the cdr == value
+lisp assoc(lisp name, lisp env) {
+    while (env) {
+        lisp bind = car(env);
+        if (eq(car(bind), name)) return bind;
+        env = cdr(env);
+    }
+    return NIL;
+}
 
-    // actually this works because of C calling convention, however, it's pretty expensive
-    // and wasteful, replace by standard switch?
+lisp evallist(lisp e, lisp env) {
+    if (!e) return e;
+    // TODO: don't recurse!
+    return cons(eval(car(e), env), evallist(cdr(e), env));
+}
+
+lisp primapply(lisp ff, lisp args, lisp env) {
+    int n = ATTR(prim, ff, n);
+    // normal apply = eval list
+    if (n >= 0) {
+        args = evallist(args, env);
+    }
+    lisp a = args, b = cdr(a), c = cdr(b), d = cdr(c), e = cdr(d), f = cdr(e), g = cdr(f), h = cdr(g), i = cdr(h), j = cdr(i);
+    lisp (*fp)(lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp) = ATTR(prim, ff, f);
+    // with C calling convention it's ok, but maybe not most efficient...
     lisp r = fp(car(a), car(b), car(c), car(d), car(e), car(f), car(g), car(h), car(i), car(j));
     princ(cons(ff, args));
     printf(" -> "); princ(r); printf("\n");
 
-    return NIL;
+    return r;
 }
 
+lisp oldprimapply(lisp ff, lisp args) {
+    lisp a = args, b = cdr(a), c = cdr(b), d = cdr(c), e = cdr(d), f = cdr(e), g = cdr(f), h = cdr(g), i = cdr(h), j = cdr(i);
+    lisp (*fp)(lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp) = ATTR(prim, ff, f);
+    // with C calling convention it's ok, but maybe not most efficient...
+    lisp r = fp(car(a), car(b), car(c), car(d), car(e), car(f), car(g), car(h), car(i), car(j));
+    princ(cons(ff, args));
+    printf(" -> "); princ(r); printf("\n");
+
+    return r;
+}
+
+lisp symbol_list = NULL;
+
+#define atom_TAG 5
+typedef struct atom {
+    char tag;
+    char* name;
+    struct atom* next;
+} atom;
+
+lisp mkmkatom(char* s, lisp list) {
+    atom* r = ALLOC(atom);
+    r->name = s;
+    r->next = (atom*)list;
+    return (lisp)r;
+}
+
+// linear search during 'read'
+// TODO: fix if problem...
+lisp symbol(char *s) {
+    atom* cur = (atom*)symbol_list;
+    while (cur) {
+        if (strcmp(s, cur->name) == 0) return (lisp)cur;
+        cur = cur->next;
+    }
+    symbol_list = mkmkatom(s, symbol_list);
+    return symbol_list;
+}
+
+///--------------------------------------------------------------------------------
+// Primitives
+
+lisp plus(lisp a, lisp b) { return mkint(getint(a) + getint(b)); }
+lisp minus(lisp a, lisp b) { return mkint(getint(a) - getint(b)); }
+lisp times(lisp a, lisp b) { return mkint(getint(a) * getint(b)); }
+lisp divide(lisp a, lisp b) { return mkint(getint(a) / getint(b)); }
+lisp lessthan(lisp a, lisp b) { return getint(a) < getint(b) ?  t : NIL; }
+lisp terpri() { printf("\n"); return NIL; }
+lisp eq(lisp a, lisp b) {
+    if (a == b) return t;
+    char ta = TAG(a);
+    char tb = TAG(b);
+    if (ta != tb) return NIL;
+    // only integer is 'atom' needs to be eq that follow pointer
+    // TODO: string???
+    if (ta != intint_TAG) return NIL;
+    if (getint(a) == getint(b)) return t;
+    return NIL;
+}
+lisp equal(lisp a, lisp b) { return eq(a, b) ? t : symbol("*EQUAL-NOT-DEFINED*"); }
+
+///--------------------------------------------------------------------------------
+// lisp reader
 char *input = NULL;
 char nextChar = 0;
 
@@ -306,22 +316,18 @@ lisp read(char *s) {
     return readx();
 }
 
-lisp terpri() {
-    printf("\n");
-    return NIL;
-}
-
 lisp princ(lisp x) {
     if (x == NIL) {
         printf("NIL");
         return NIL;
     }
 
-    char tag = gettag(x);
+    char tag = TAG(x);
     // simple one liners
-    if (tag == string_TAG) printf("%s", ((string*)x)->p);
-    else if (tag == intint_TAG) printf("%d", ((intint*)x)->v);
-    else if (tag == prim_TAG) printf("#prim:%s", primname(x));
+    if (tag == string_TAG) printf("%s", ATTR(string, x, p));
+    else if (tag == intint_TAG) printf("%d", ATTR(intint, x, v));
+    else if (tag == prim_TAG) printf("#prim:%s", ATTR(prim, x, name));
+    else if (tag == atom_TAG) printf("%s", ATTR(atom, x, name));
     // longer blocks
     else if (tag == conss_TAG) {
         putchar('(');
@@ -344,33 +350,13 @@ lisp princ(lisp x) {
     return NIL;
 }
 
-void eval(lisp e) {
-    lisp f = car(e);
-    //lisp a = car(cdr(e));
-    //lisp b = car(cdr(cdr(e)));
-    //lisp args[2] = {a, b};
-    //args = e;
-
-    primapply(f, cdr(e));
+lisp eval(lisp e, lisp env) {
+    if (e == NIL) return e;
+    if (IS(e, atom)) return cdr(assoc(e, env));
+    if (!IS(e, conss)) return e; // all others are literal (for now)
+    lisp f = eval(car(e), env);
+    return primapply(f, cdr(e), env);
 }
-
-void seval(char *e) {
-    princ(read("foo"));
-    //char* x = malloc(100);
-    //char *fgets(char *s, int size, FILE *stream);
-    //x = fgets(x, 99, stdin);
-//    int c = getchar();
-//    printf("input: %d\n", c);
-    printf("eval: %s\n", e);
-
-    char* r = malloc(100);
-    r[0] = 'f';
-    r[1] = 'o';
-    r[2] = 'o';
-    r[3] = 0;
-    printf("--> %s\n", r);
-}
-
 
 void lispF(char* name, int n, void* f) {
     // TODO: do something...
@@ -404,8 +390,12 @@ void lispinit() {
     lispF("princ", 1, princ); // println
     lispF("terpri", 0, terpri); // extra
 
-    lispF("read", 1, read); // extra
-    lispF("symbol", 0, symbol); // extra
+    // -- all extras
+    lispF("read", 1, read);
+    lispF("symbol", 0, symbol); 
+    lispF("eval", 1, eval);
+    //lispF("apply", 1, apply);
+    //lispF("evallist", 2, evallist);
 }
 
 void lisptest() {
@@ -427,10 +417,26 @@ void lisptest() {
     printf("\nread-a---1: "); princ(read("(A)"));
     printf("\nread-ab--12: "); princ(read("(A B)"));
     printf("\nread-abc-123: "); princ(read("(A B C)"));
+    printf("\nread-3=3: "); princ(eq(mkint(3), mkint(3)));
+    printf("\nread-3=4: "); princ(eq(mkint(3), mkint(4)));
+    printf("\nread-a=a: "); princ(eq(symbol("a"), symbol("a")));
+    printf("\nread-a=b: "); princ(eq(symbol("a"), symbol("b")));
+    printf("\nread-a=a: "); princ(eq(symbol("a"), symbol("a")));
     printf("\n");
 
-    seval("(+ 3 4)");
-    
-    eval(cons(mkprim("plus", 2, plus), cons(mkint(3), cons(mkint(4), NIL))));
-    eval(cons(mkprim("times", 2, times), cons(mkint(3), cons(mkint(4), NIL))));
+    lisp plu = mkprim("plus", 2, plus);
+    lisp tim = mkprim("times", 2, times);
+    lisp pp = cons(plu, cons(mkint(3), cons(mkint(4), NIL)));
+    lisp tt = cons(tim, cons(mkint(3), cons(mkint(4), NIL)));
+    eval(cons(plu, cons(pp, cons(tt, NIL))), NIL);
+
+    printf("\neval-a: ");
+    lisp a = symbol("a");
+    lisp env = cons(cons(a, mkint(5)), NIL);;
+    princ(eval(a, env));
+
+    printf("\nchanged neval-a: ");
+    princ(eval(a, cons(cons(a, mkint(77)), env)));
+
+    terpri();
 }
