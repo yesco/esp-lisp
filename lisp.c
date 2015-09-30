@@ -11,19 +11,28 @@
 //   ==> painful slow!
 //   NO INT alloc => 4500ms
 //   needGC() function, block mark => 1070ms
+//
 // lisp.c (tail 10000 0)
 //   => 9380, 9920, 10500
+//   reuse() looped always from 0, made it round-robin => 3000... 4200... 4000ms!
+//   mark_deep() + p->index=i ===> 1500-2000ms
+//   car/cdr macro, on desktop 6.50 -> 4.5s for for 1M loop for esp => 1400-1800
 //
 // RAW C esp8266 - printf("10,000,000 LOOP (100x lua) TIME=%d\r\n", tm); ===> 50ms
+//
 
 #ifndef TEST
   #include "espressif/esp_common.h"
   //#include "FreeRTOS.h" // just for MEM FREE QUESTION
+  #define LOOP 9999
+  #define LOOPTAIL "(tail 9999 0)"
 #endif
 
 #ifdef TEST
   #include <stdlib.h>
   #include <stdio.h>
+  #define LOOP 999999
+  #define LOOPTAIL "(tail 999999 0)"
 #endif
 
 #include <string.h>
@@ -51,10 +60,6 @@ lisp LAMBDA = NULL;
 // if non nil enables continous GC
 int dogc = 0;
 
-
-int gettag(lisp x) { return x->tag; }
-
-
 #define string_TAG 1
 #define conss_TAG 2
 #define intint_TAG 3
@@ -63,6 +68,8 @@ int gettag(lisp x) { return x->tag; }
 
 typedef struct {
     char tag;
+    char xx;
+    short index;
     char* p; // TODO: make it inline, not second allocation
 } string;
 
@@ -92,11 +99,19 @@ unsigned int used[MAX_ALLOCS/32 + 1] = { 0 };
 
 void reportAllocs();
 
+int gettag(lisp x) {
+    return TAG(x);
+    return x->tag;
+}
+
 // any slot with no value/nil can be reused
+int reuse_pos = 0;
 int reuse() {
-    int i ;
-    for(i = 0; i < allocs_count; i++) {
-        if (!allocs[i]) return i;
+    int n = allocs_count;
+    while(n--) {
+        if (!allocs[reuse_pos]) return reuse_pos;
+        reuse_pos++;
+        if (reuse_pos >= allocs_count) reuse_pos = 0;
     }
     return -1;
 }
@@ -119,6 +134,7 @@ void* myMalloc(int bytes, int tag) {
     // dangerous optimization
     if (tag == immediate_TAG) {
         // do not record, do not GC, they'll be GC:ed automatically as invoked once!
+        ((lisp)p)->index = -1;
         return p;
     }
     int pos = reuse();
@@ -128,6 +144,8 @@ void* myMalloc(int bytes, int tag) {
     }
     //if ((int)p == 0x0804e528) { printf("\n=POS=%d pointer=0x%x tag %d %s\n", pos, (unsigned int)p, tag, tag_name[tag]); }
     allocs[pos] = p;
+    ((lisp)p)->index = pos;
+
     if (allocs_count >= MAX_ALLOCS) {
         printf("Exhaused myMalloc array!\n");
         reportAllocs();
@@ -216,9 +234,17 @@ lisp mkstring(char *s) {
 // conss name in order to be able to have a function named 'cons()'
 typedef struct {
     char tag;
+    char xx;
+    short index;
     lisp car;
     lisp cdr;
 } conss;
+
+lisp carr(lisp x) { return x && IS(x, conss) ? ATTR(conss, x, car) : nil; }
+#define car(x) ({ lisp _x = (x); _x && IS(_x, conss) ? ATTR(conss, _x, car) : nil; })
+
+lisp cdrr(lisp x) { return x && IS(x, conss) ? ATTR(conss, x, cdr) : nil; }
+#define cdr(x) ({ lisp _x = (x); _x && IS(_x, conss) ? ATTR(conss, _x, cdr) : nil; })
 
 lisp cons(lisp a, lisp b) {
     conss* r = ALLOC(conss);
@@ -227,8 +253,6 @@ lisp cons(lisp a, lisp b) {
     return (lisp)r;
 }
 
-lisp car(lisp x) { return x && IS(x, conss) ? ATTR(conss, x, car) : nil; }
-lisp cdr(lisp x) { return x && IS(x, conss) ? ATTR(conss, x, cdr) : nil; }
 lisp setcar(lisp x, lisp v) { return IS(x, conss) ? ATTR(conss, x, car) = v : nil; return v; }
 lisp setcdr(lisp x, lisp v) { return IS(x, conss) ? ATTR(conss, x, cdr) = v : nil; return v; }
 
@@ -255,6 +279,8 @@ lisp list(lisp first, ...) {
 // TODO: store inline in pointer
 typedef struct {
     char tag;
+    char xx;
+    short index;
     int v;
 } intint;
 
@@ -274,6 +300,8 @@ int getint(lisp x) {
 
 typedef struct {
     char tag;
+    char xx;
+    short index;
     signed char n;
     void* f;
     char* name; // TODO should be char name[1]; // inline allocation!, or actually should point to an ATOM
@@ -351,6 +379,8 @@ lisp symbol_list = NULL;
 #define atom_TAG 5
 typedef struct atom {
     char tag;
+    char xx;
+    short index;
     struct atom* next;
     char* name; // TODO should be char name[1]; // inline allocation!
 } atom;
@@ -378,6 +408,8 @@ lisp symbol(char *s) {
 #define thunk_TAG 6
 typedef struct thunk {
     char tag;
+    char xx;
+    short index;
     lisp e;
     lisp env;
     // This needs be same as immediate
@@ -392,6 +424,8 @@ lisp mkthunk(lisp e, lisp env) {
 
 typedef struct immediate {
     char tag;
+    char xx;
+    short index;
     lisp e;
     lisp env;
     // This needs be same as thunk
@@ -411,6 +445,8 @@ lisp mkimmediate(lisp e, lisp env) {
 
 typedef struct func {
     char tag;
+    char xx;
+    short index;
     lisp e;
     lisp env;
     // This needs be same as thunk
@@ -429,9 +465,15 @@ lisp mkfunc(lisp e, lisp env) {
 // silly inefficient, as it loops to find pointer in array, lol
 // better just store the bit in the tag field?
 // or add extra char of data to allocated stuffs
-void mark_deep(void* x, int deep) {
+void mark_deep(lisp x, int deep) {
     int i =  0;
     while (i < allocs_count) {
+        if (!x) return;
+        if (INTP(x)) return;
+
+        int index = x->index;
+        if (index > 0) i = index;
+
         lisp p = allocs[i];
         if (p) {
             if (p == x) {
@@ -444,7 +486,7 @@ void mark_deep(void* x, int deep) {
 
                 // only atom and conss contains pointers...
                 if (IS(p, atom)) {
-                    x = ATTR(atom, p, next);
+                    x = (lisp)ATTR(atom, (void*)p, next);
                     i = -1; // start over at 0
                 } else if (IS(p, conss)) {
                     mark_deep(car(p), deep+1);
@@ -464,7 +506,7 @@ void mark_deep(void* x, int deep) {
     }
 }
 
-void mark(void* x) {
+void mark(lisp x) {
     mark_deep(x, 1);
     mark_deep(symbol_list, 0); // never deallocate atoms!!!
     mark_deep(nil, 1);
@@ -646,8 +688,7 @@ lisp princ(lisp x) {
         printf("nil");
         return x;
     }
-
-    char tag = TAG(x);
+    int tag = TAG(x);
     // simple one liners
     if (tag == string_TAG) printf("%s", ATTR(string, x, p));
     else if (tag == intint_TAG) printf("%d", getint(x));
@@ -659,7 +700,6 @@ lisp princ(lisp x) {
     // longer blocks
     else if (tag == conss_TAG) {
         putchar('(');
-        princ(car(x));
         lisp d = cdr(x);
         while (d && gettag(d) == conss_TAG) {
             putchar(' ');
@@ -855,8 +895,8 @@ void lispinit() {
     // 1K lines lisp - https://github.com/rui314/minilisp/blob/master/minilisp.c
     // quote
     lispF("cons", 2, cons);
-    lispF("car", 1, car);
-    lispF("cdr", 1, cdr);
+    lispF("car", 1, carr);
+    lispF("cdr", 1, cdrr);
 // setq
 // define
 // defun
@@ -899,6 +939,7 @@ void lispinit() {
 void newLispTest() {
     dogc = 1;
 
+    princ(read("(foo bar 42)"));
     lisp env = nil;
     SETQ(lambda, LAMBDA);
     PRIM(+, 2, plus);
@@ -922,7 +963,7 @@ void newLispTest() {
 
     DEF(tail, (lambda (n s) (if (eq n 0) s (tail (- n 1) (+ s 1)))));
     printf("2====\n");
-    printf("\nTEST 9999="); princ(evalGC(read("(tail 9999 0)"), env)); terpri();
+    printf("\nTEST %d=", LOOP); princ(evalGC(read(LOOPTAIL), env)); terpri();
 
     mark(env); // TODO: move into GC()
     gc();
