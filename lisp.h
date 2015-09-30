@@ -1,0 +1,2 @@
+void lispinit();
+void lisptest();

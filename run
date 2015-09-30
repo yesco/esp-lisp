@@ -1,0 +1,5 @@
+mv tlisp.ccc tlisp.c && gcc -DTEST=1 tlisp.c lisp.c && ./a.out ; mv tlisp.c tlisp.ccc ; rm a.out
+echo
+echo "----------------------------------------------------------------------"
+echo
+source add-path && make
