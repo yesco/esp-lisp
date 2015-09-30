@@ -12,6 +12,7 @@
 #endif
 
 #include <string.h>
+#include <stdarg.h>
 
 // 'pretty"
 // all lispy symbols are required to start with tag
@@ -140,6 +141,25 @@ lisp car(lisp x) { return x && IS(x, conss) ? ATTR(conss, x, car) : nil; }
 lisp cdr(lisp x) { return x && IS(x, conss) ? ATTR(conss, x, cdr) : nil; }
 lisp setcar(lisp x, lisp v) { return IS(x, conss) ? ATTR(conss, x, car) = v : nil; return v; }
 lisp setcdr(lisp x, lisp v) { return IS(x, conss) ? ATTR(conss, x, cdr) = v : nil; return v; }
+
+lisp list(lisp first, ...) {
+    va_list ap;
+    lisp r = nil;
+    // points to cell where cdr is next pos
+    lisp cur = r;
+    lisp x;
+
+    va_start(ap, first);
+    for (x = first; x != (lisp)-1; x = va_arg(ap, lisp)) {
+        lisp cx = cons(x, nil);
+        if (!r) r = cx;
+        setcdr(cur, cx);
+        cur = cx;
+    }
+    va_end(ap);
+
+    return r;
+}
 
 #define intint_TAG 3
 // TODO: store inline in pointer
@@ -669,34 +689,34 @@ void lisptest() {
     lisp LA = mkprim("lambda", -16, lambda);
     printf("\n\n--------------LAMBDA\n");
     eval(LA, nil); terpri();
-    eval(cons(LA, cons(mkint(7), nil)), nil);
+    eval(list(LA, mkint(7), -1), nil);
     lisp la = symbol("lambda");
-    lisp lenv = cons(  cons(la, LA),
-                      nil);
-    lisp l = cons(LA, cons( cons(symbol("n"), nil),
-                            cons(cons(plu, cons(mkint(39), cons(symbol("n"), nil))), nil)));
+    lisp lenv = list(cons(la, LA), -1);
+    lisp l = list(LA, list(symbol("n"), -1),
+                  list(plu, mkint(39), symbol("n"), -1),
+                  -1);
     l = eval(l, lenv);
-    eval(cons(l, cons(mkint(3), nil)), lenv); // looking up la giving LA doesn't work?
+    eval(list(l, mkint(3), -1), lenv); // looking up la giving LA doesn't work?
 
     lisp n = symbol("n");
     lisp EQ = mkprim("eq", 2, eq);
     lisp minuus = mkprim("minus", 2, minus);
-    lisp facexp = cons(EQ, cons(n, cons(mkint(0), nil)));
+    lisp facexp = list(EQ, n, mkint(0), -1);
     lisp facthn = mkint(1);
     lisp fc = symbol("fac");
-    lisp facrec = cons( fc, cons( cons(minuus, cons(n, cons(mkint(1), nil))), nil));
-    lisp facels = cons(tim, cons(n, cons( facrec, nil)));
+    lisp facrec = list(fc, list(minuus, n, mkint(1), -1), -1);
+    lisp facels = list(tim, n, facrec, -1);
     printf("\nfacels="); princ(facels); terpri();
-    lisp facif = cons(IF, cons(facexp, cons(facthn, cons(facels, nil))));
-    lisp fac = cons(LA, cons( cons(n, nil),
-                                            cons(facif, nil)));
+    lisp facif = list(IF, facexp, facthn, facels, -1);
+    lisp fac = list(LA, list(n, -1), facif, -1);
     lisp fenv = cons( cons(symbol("fac"), mkint(99)),
                       lenv);
     lisp FAC = eval(fac, fenv);
     lisp facbind = assoc(fc, fenv);
     setcdr(facbind, FAC); // create circular dependency on it's own defininition symbol by redefining
-    eval(cons(FAC, cons(mkint(6), nil)), fenv);
+    eval(list(FAC, mkint(6), -1), fenv);
 
+    princ(list(nil, mkstring("fihs"), mkint(1), symbol("fish"), mkint(2), mkint(3), mkint(4), nil, nil, nil, -1));
     //eval(read("(lambda (n) (if (eq n 0) 1 (fac (- n 1))))"), lenv);
 
 //    reportAllocs();
