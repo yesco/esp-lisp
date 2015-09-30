@@ -11,10 +11,10 @@
 
 #include "lisp.h"
 
-void task1(void *pvParameters)
+void lispTask(void *pvParameters)
 {
     xQueueHandle *queue = (xQueueHandle *)pvParameters;
-    printf("Hello from task1!\r\n");
+    printf("Hello from lispTask!\r\n");
     uint32_t count = 0;
     while(1) {
         vTaskDelay(300); // 3s
@@ -29,9 +29,9 @@ void task1(void *pvParameters)
     }
 }
 
-void task2(void *pvParameters)
+void recvTask(void *pvParameters)
 {
-    printf("Hello from task 2!\r\n");
+    printf("Hello from recvTask!\r\n");
     xQueueHandle *queue = (xQueueHandle *)pvParameters;
     while(1) {
         uint32_t count;
@@ -54,6 +54,6 @@ void user_init(void)
     lispinit();
 
     mainqueue = xQueueCreate(10, sizeof(uint32_t));
-    xTaskCreate(task1, (signed char *)"tsk1", 256, &mainqueue, 2, NULL);
-    xTaskCreate(task2, (signed char *)"tsk2", 256, &mainqueue, 2, NULL);
+    xTaskCreate(lispTask, (signed char *)"lispTask", 2048, &mainqueue, 2, NULL);
+    xTaskCreate(recvTask, (signed char *)"recvTask", 256, &mainqueue, 2, NULL);
 }
