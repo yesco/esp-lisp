@@ -235,10 +235,9 @@ unsigned int used[MAX_ALLOCS/32 + 1] = { 0 };
 #define IS_USED(i) ({int _i = (i); (used[_i/32] >> _i%32) & 1;})
 
 #define INTP(x) (((unsigned int)x) & 1)
-#define GETINT(x) (((unsigned int)x) >> 1)
-#define MKINT(i) ((lisp)(((i) << 1) + 1))
+#define GETINT(x) (((signed int)x) >> 1)
+#define MKINT(i) ((lisp)((((unsigned int)(i)) << 1) | 1))
 
-//#define TAG(x) (x ? ((lisp)x)->tag : 0 )
 #define TAG(x) (INTP(x) ? intint_TAG : (x ? ((lisp)x)->tag : 0 ))
 
 #define ALLOC(type) ({type* x = myMalloc(sizeof(type), type ## _TAG); x->tag = type ## _TAG; x;})
@@ -589,7 +588,8 @@ lisp secretMkAtom(char* s) {
 lisp find_symbol(char *s, int len) {
     atom* cur = (atom*)symbol_list;
     while (cur) {
-        if (strncmp(s, cur->name, len) == 0 && strlen(cur->name) == len) return (lisp)cur;
+        if (strncmp(s, cur->name, len) == 0 && strlen(cur->name) == len)
+	  return (lisp)cur;
         cur = cur->next;
     }
     return NULL;
@@ -799,15 +799,20 @@ static lisp readString() {
     return mklenstring(start, len);
 }
 
-static lisp readAtom(char c) {
-    char* start = input - 1;
+static lisp readAtom(char c, int o) {
+    // TODO: cleanup, ugly
+   if (!input) {
+       char s[2] = {'-', 0};
+       return symbolCopy(s, 1);
+    }
+    char* start = input - 1 + o;
     int len = 0;
     while (c && c!='(' && c!=')' && c!=' ' && c!='.') {
         len++;
-        c = next();
+	c = next();
     }
     nextChar = c;
-    return symbolCopy(start, len);
+    return symbolCopy(start, len-o);
 }
 
 static lisp readx();
@@ -837,9 +842,16 @@ static lisp readx() {
     if (!c) return NULL;
     if (c == '(') return readList();
     if (c == ')') return nil;
-    if (isdigit(c)) return mkint(readInt(c - '0'));;
+    if (isdigit(c)) return mkint(readInt(c - '0'));
+    if (c == '-') {
+        unsigned char n = next();
+        if (isdigit(n))
+            return mkint(-readInt(n - '0'));
+        else
+	  return readAtom(n, -1);
+    }
     if (c == '"') return readString();
-    return readAtom(c);
+    return readAtom(c, 0);
 }
 
 lisp reads(char *s) {
