@@ -3,8 +3,7 @@ Embroy for a ESP8266 lisp interpreter as alternative to lua on the nodemcu.
 
 ## why
 
-Lua is too much typing, a minimal closure or function on the nodemcu lua takes up about 600 bytes!
-I always wanted my own "lispmachine" anyway ;)
+Who doesn't need a lisp? I always wanted my own "lispmachine" anyway ;) It's ideally small and interactive for experimentation, very little typing, compared to lua for example.
 
 ## design goals
 
@@ -18,11 +17,9 @@ I always wanted my own "lispmachine" anyway ;)
 
 ## status
 
-It's one step away from being useful. 
+It's about 1000 lines of code.
 
-- esp-lisp is interpreted so it's about 2x slower than lua that is compiled and use lots of memory
-
-It's about 1000+ lines of code.
+It is just working [relase](https://github.com/yesco/esp-lisp/releases), just got a readline interface! See the docs in [wiki](https://github.com/yesco/esp-lisp/wiki) for simple examples.
 
 ## features
 
@@ -34,6 +31,11 @@ It's about 1000+ lines of code.
 - tail recursion optimization using "immediate" thunks, handles mutual/self recursion
 - eval/neval primitive functions, no need for macros
 - readline, with limited editing (backspace), similar to nodemcu lua
+- interpreted
+
+## performace
+
+The esp-lisp is interpreted, too keep the code small and simple. Compared to lua from the NodeMcu it's about 2x slower, but lua is compiled and uses lots of memory for functions (about 600 bytes for a simple call).
 
 ## how to build
 
