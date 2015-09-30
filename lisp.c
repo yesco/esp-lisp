@@ -31,6 +31,11 @@
 lisp nil = NULL;
 lisp END = (lisp) -1;
 lisp t = NULL;
+lisp LAMBDA = NULL;
+
+// if non nil enables continous GC
+int dogc = 0;
+
 
 int gettag(lisp x) { return x->tag; }
 
@@ -111,7 +116,8 @@ void mark_clean() {
 
 // you better mark stuff you want to keep first...
 void gc() {
-    printf("\nGC...\n");
+    int count = 0;
+    printf(" [GC...");
     int i ;
     for(i = 0; i < allocs_count; i++) {
         lisp p = allocs[i];
@@ -122,15 +128,19 @@ void gc() {
 //            printf("%d used=%d  ::  ", i, u); princ(p); terpri();
         } else {
 //            printf("%d FREE! ", i);
-            if (1) {
+            count++;
+            if (0) {
                 free(p);
             } else {
                 printf("FREE: "); princ(p); terpri();
+                // simulate free
+                p->tag = 66;
             }
             allocs[i] = NULL;
         }
     }
     mark_clean();
+    printf("%d] ", count);
 }
 
 void reportAllocs() {
@@ -252,12 +262,13 @@ lisp evallist(lisp e, lisp env) {
     return cons(eval(car(e), env), evallist(cdr(e), env));
 }
 
-lisp primapply(lisp ff, lisp args, lisp env) {
-    //printf("PRIMAPPLY "); princ(ff); princ(args); terpri();
+lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
+    printf("PRIMAPPLY "); princ(ff); princ(args); terpri();
     int n = ATTR(prim, ff, n);
     // normal apply = eval list
     if (n >= 0) {
         args = evallist(args, env);
+        printf("eval ARGS=> "); princ(args); terpri();
     } else if (n > -16) { // -1 .. -15
         // no eval/autoquote arguemnts/"macro"
         // calling convention is first arg is current environment
@@ -266,8 +277,8 @@ lisp primapply(lisp ff, lisp args, lisp env) {
 
     lisp r;
     if (abs(n) == 16) {
-        lisp (*fp)(lisp, lisp) = ATTR(prim, ff, f);
-        r = fp(env, args);
+        lisp (*fp)(lisp, lisp, lisp) = ATTR(prim, ff, f);
+        r = fp(env, args, all);
     } else {
         lisp a = args, b = cdr(a), c = cdr(b), d = cdr(c), e = cdr(d), f = cdr(e), g = cdr(f), h = cdr(g), i = cdr(h), j = cdr(i);
         // with C calling convention it's ok, but maybe not most efficient...
@@ -345,7 +356,6 @@ typedef struct immediate {
     // This needs be same as thunk
 } immediate;
 
-
 // an immediate is a continuation returned that will be called by eval directly to yield another value
 // this implements continuation based evaluation thus maybe alllowing tail recursion...
 lisp mkimmediate(lisp e, lisp env) {
@@ -357,9 +367,19 @@ lisp mkimmediate(lisp e, lisp env) {
 }
 
 #define func_TAG 8
+
+typedef struct func {
+    char tag;
+    lisp e;
+    lisp env;
+    // This needs be same as thunk
+} func;
+
 lisp mkfunc(lisp e, lisp env) {
-    thunk* r = (thunk*)mkthunk(e, env); // inherit from func_TAG
-    r->tag = func_TAG;
+    func* r = ALLOC(func); //(thunk*)mkthunk(e, env); // inherit from func_TAG
+    //r->tag = func_TAG;
+    r->e = e;
+    r->env = env;
     return (lisp)r;
 }
 
@@ -374,8 +394,12 @@ void mark_deep(void* x, int deep) {
         lisp p = allocs[i];
         if (p) {
             if (p == x) {
-                if (IS_USED(i)) return; // no need mark again or follow pointers
-                SET_USED(i); printf("Marked %i deep %i :: ", i, deep); princ(p); terpri();
+                if (IS_USED(i)) {
+                    //printf("already Marked %i deep %i :: ", i, deep); princ(p); terpri();
+                    return; // no need mark again or follow pointers
+                }
+                SET_USED(i);
+                //printf("Marked %i deep %i :: ", i, deep); princ(p); terpri();
 
                 // only atom and conss contains pointers...
                 if (IS(p, atom)) {
@@ -388,6 +412,9 @@ void mark_deep(void* x, int deep) {
                     i = -1; // start over at 0
                 } else if (IS(p, thunk) || IS(p, immediate) || IS(p, func)) {
                     // should we switch? which one is most likely to become deep?
+                    printf("MARKDEEP FUNC: "); princ(p); terpri();
+                    lisp ee = ATTR(thunk, p, e);
+                    printf("----func: %d %s ", TAG(ee), tag_name[TAG(ee)]); princ(ee); terpri();
                     mark_deep(ATTR(thunk, p, e), deep+1);
                     x = ATTR(thunk, p, env);
                     i = -1; // start over at 0
@@ -402,12 +429,14 @@ void mark_deep(void* x, int deep) {
 void mark(void* x) {
     mark_deep(x, 1);
     mark_deep(symbol_list, 0); // never deallocate atoms!!!
+    mark_deep(nil, 1);
+    mark_deep(LAMBDA, 1);
 }
 
 ///--------------------------------------------------------------------------------
 // Primitives
 
-lisp plus(lisp a, lisp b) { return mkint(getint(a) + getint(b)); }
+lisp plus(lisp a, lisp b) { printf("PLUS!"); princ(a); princ(b); terpri(); return mkint(getint(a) + getint(b)); }
 lisp minus(lisp a, lisp b) { return mkint(getint(a) - getint(b)); }
 lisp times(lisp a, lisp b) { return mkint(getint(a) * getint(b)); }
 lisp divide(lisp a, lisp b) { return mkint(getint(a) / getint(b)); }
@@ -431,15 +460,28 @@ lisp equal(lisp a, lisp b) { return eq(a, b) ? t : symbol("*EQUAL-NOT-DEFINED*")
 //    return nenv;
 //}
 lisp setq(lisp name, lisp v, lisp env) {
+    int old = dogc;
+    dogc = 0;
+
+    mark(name); mark(v); mark(env); // make sure next eval doesn't remove "v"
     lisp bind = assoc(name, env);
     if (!bind) {
         bind = cons(name, nil);
         env = cons(bind, env);
     }
-    v = eval(v, env); // evaluate using env containing right env with binding to self
+    v = eval(v, env); // evaluate using new env containing right env with binding to self
     setcdr(bind, v); // create circular dependency on it's own defininition symbol by redefining
+
+    dogc = old;
+
     return env;
 }
+
+#define SETQ(sname, val) env = setq(symbol(#sname), val, env)
+//#define DEF(fname, sbody) env = setq(symbol(#fname), read(#sbody), env)
+#define DEF(fname, sbody) printf("DEFINE:%s %s", #fname, #sbody); env = setq(symbol(#fname), read(#sbody), env)
+#define EVAL(what, env) eval(read(#what), env)
+#define PRIM(fname, argn, fun) env = setq(symbol(#fname), mkprim(#fname, argn, fun), env)
 
 ///--------------------------------------------------------------------------------
 // lisp reader
@@ -455,7 +497,7 @@ char nextx() {
     if (!input) return 0;
     if (!*input) {
         // TODO: leak? ownership of pointers
-        //free(input);
+        free(input);
         input = NULL;
         return 0;
     }
@@ -510,8 +552,8 @@ lisp readAtom() {
         len++;
     }
     nextChar = c;
-    // TODO: lookup atom, use linked list first...
-    return mklenstring(start, len);
+
+    return symbol(strndup(start, len));
 }
 
 lisp readx();
@@ -575,7 +617,7 @@ lisp princ(lisp x) {
     else if (tag == atom_TAG) printf("%s", ATTR(atom, x, name));
     else if (tag == thunk_TAG) { printf("#thunk["); princ(ATTR(thunk, x, e)); putchar(']'); }
     else if (tag == immediate_TAG) { printf("#immediate["); princ(ATTR(thunk, x, e)); putchar(']'); }
-    else if (tag == func_TAG) { printf("#func["); /* princ(ATTR(thunk, x, e)); */ putchar(']'); }
+    else if (tag == func_TAG) { printf("#func["); princ(ATTR(thunk, x, e)); putchar(']'); }
     // longer blocks
     else if (tag == conss_TAG) {
         putchar('(');
@@ -607,26 +649,33 @@ int level = 0;
 lisp lambdaapply(lisp f, lisp args, lisp env);
 lisp funcapply(lisp f, lisp args, lisp env);
 
+lisp evalGC(lisp e, lisp env);
+
 lisp eval_hlp(lisp e, lisp env) {
     //if (e == nil) return e;
-    if (IS(e, atom)) return cdr(assoc(e, env)); // look up variable
+    if (IS(e, atom)) {
+        lisp v = assoc(e, env); // look up variable
+        if (v) return cdr(v);
+        printf("Undefined symbol: "); princ(e); terpri();
+        return nil;
+    }
     //if (!IS(e, conss)) return e; // all others are literal (for now)
 
     //printf("EVAL FUNC:"); princ(env); terpri();
-    lisp f = eval(car(e), env);
+    lisp f = evalGC(car(e), env);
     //printf("NOT FUNC: "); princ(f); terpri();
-    while (f && !IS(f, prim) && !IS(f, thunk) && !IS(f, func)) {
-        f = eval(f, env);
+    while (f && !IS(f, prim) && !IS(f, thunk) && !IS(f, func) && !IS(f, immediate)) {
+        f = evalGC(f, env);
         //printf("GOT--: "); princ(f); terpri();
     }
-    if (IS(f, prim)) return primapply(f, cdr(e), env);
-    if (IS(f, thunk)) return eval(ATTR(thunk, f, e), ATTR(thunk, f, env)); // ignore arguments
+    if (IS(f, prim)) return primapply(f, cdr(e), env, e);
+    if (IS(f, thunk)) return f; // ignore args, higher level can call (evalGC)
     if (IS(f, func)) return funcapply(f, cdr(e), env);
-    printf("%%ERROR.lisp - don't know how to evaluate: "); princ(e); terpri();
+    printf("%%ERROR.lisp - don't know how to evaluate f="); princ(f); printf("  ");
+    princ(e); printf(" ENV="); princ(env); terpri();
     return nil;
 }
 
-int dogc = 0;
 void mymark(lisp x) {
     if (dogc) mark(x);
 }
@@ -635,9 +684,19 @@ void mygc() {
     if (dogc) gc();
 }
 
-lisp stack[64];
+int blockGC = 0;
+
 lisp eval(lisp e, lisp env) {
-    if (e == nil) return e;
+    blockGC++;
+    lisp r = evalGC(e, env);
+    blockGC--;
+    return r;
+}
+
+lisp stack[64];
+
+lisp evalGC(lisp e, lisp env) {
+    if (!e) return e;
     if (!IS(e, atom) && !IS(e, conss)) return e;
 
     if (level >= 64) {
@@ -647,21 +706,24 @@ lisp eval(lisp e, lisp env) {
         #endif
     }
 
-    mymark(env); // TODO: important
+    if (!blockGC) {
+        mymark(env); // TODO: important
 
-    stack[level] = e;
-    // print stack
-    printf("%d STACK: ", level); int i;
-    for(i=0; i<64; i++) {
-        if (!stack[i]) break;
-        printf(" %d: ", i);
-        princ(stack[i]);
-        mymark(stack[i]); // TODO: important
+        stack[level] = e;
+        // print stack
+        printf("%d STACK: ", level); int i;
+        for(i=0; i<64; i++) {
+            if (!stack[i]) break;
+            printf(" %d: ", i);
+            princ(stack[i]);
+            mymark(stack[i]); // TODO: important
+        }
+        terpri();
+
+        // TODO: better mark all shit first!
+        mygc(); // not safe here, setq for example calls eval, it should not do gc as it builds cons at same time...
+        // evallist the same issue, TODO: maybe an eval that doesn't GC? and only gc here and "up"
     }
-    terpri();
-
-    // TODO: better mark all shit first!
-    mygc();
 
     indent(level++); printf("---> "); princ(e); terpri();
     indent(level+1); printf(" ENV= "); princ(env); terpri();
@@ -669,10 +731,12 @@ lisp eval(lisp e, lisp env) {
     while (r && TAG(r) == immediate_TAG) {
         lisp tofree = r;
         r = eval_hlp(ATTR(thunk, r, e), ATTR(thunk, r, env));
+        //mark(ATTR(thunk, r, e)); mark(ATTR(thunk, r, env));
+        //r = eval(ATTR(thunk, r, e), ATTR(thunk, r, env));
         // immediates are immediately consumed after evaluation, so they can be free:d directly
         // TODO: move into eval_hlp?
         tofree->tag = 0;
-        //free(tofree);
+        free(tofree);
     }
     indent(--level); princ(r); printf(" <--- "); princ(e); terpri();
     stack[level] = nil;
@@ -684,19 +748,14 @@ void lispF(char* name, int n, void* f) {
 }
 
 lisp iff(lisp env, lisp exp, lisp thn, lisp els) {
-    // non-tail if
-    if (0) {
-        //printf("ENV="); princ(env); terpri();
-        // seems to work...
-        return eval(exp, env) ? eval(thn, env) : eval(els, env);
-    } else {
-        return eval(exp, env) ? mkimmediate(thn, env) : mkimmediate(els, env);
-    }
+    // evalGC is safe here as we don't construct any structes, yet
+    return evalGC(exp, env) ? mkimmediate(thn, env) : mkimmediate(els, env);
 }
 
-lisp lambda(lisp env, lisp rest) {
-    // TODO: hmm, we just removed #lambda and now we're adding it again..., move up???
-    return mkfunc(cons(mkprim("lambda", -16, lambda), rest), env);
+lisp lambda(lisp env, lisp all) {
+    // TODO: we just removed lambda and now adding it back,
+    // do better calling convention? retain name/full form of no-eval function?
+    return mkfunc(all, env);
 }
 
 lisp bindlist(lisp fargs, lisp args, lisp env) {
@@ -710,19 +769,27 @@ lisp bindlist(lisp fargs, lisp args, lisp env) {
 lisp funcapply(lisp f, lisp args, lisp env) {
     lisp lenv = ATTR(thunk, f, env);
     lisp l = ATTR(thunk, f, e);
-    printf("FUNCAPPLY:"); princ(f); princ(l); terpri();
-    lisp fargs = car(cdr(l)); // skip #lambda
+    printf("FUNCAPPLY:"); princ(f); printf(" body="); princ(l); printf(" args="); princ(args); printf(" env="); princ(lenv); terpri();
+    lisp fargs = car(l); // skip #lambda
     args = evallist(args, env);
     lenv = bindlist(fargs, args, lenv);
-    lisp prog = car(cdr(cdr(l))); // skip #lambda (...) GET IGNORE
+    lisp prog = car(cdr(l)); // skip #lambda (...) GET IGNORE
+    printf("HERE! prog="); princ(prog); terpri();
+    printf("HERE! fargs="); princ(fargs); terpri();
+    printf("HERE! args="); princ(args); terpri();
+    printf("HERE! env="); princ(lenv); terpri();
     // TODO: implicit progn? loop over cdr...
     //printf("MKIMMEDIATE: "); princ(prog); terpri();    
     return mkimmediate(prog, lenv);
+    // this doesn't handle tail recursion, but may be faster?
     return eval(prog, lenv);
 }
 
 void lispinit() {
     t = symbol("t");
+    // nil = symbol("nil"); // LOL? TODO:? that wouldn't make sense?
+    LAMBDA = mkprim("lambda", -16, lambda);
+
     // 1K lines lisp - https://github.com/rui314/minilisp/blob/master/minilisp.c
     // quote
     lispF("cons", 2, cons);
@@ -767,8 +834,41 @@ void lispinit() {
     terpri();
 }
     
+void newLispTest() {
+    dogc = 1;
+
+    lisp env = nil;
+    SETQ(lambda, LAMBDA);
+    PRIM(+, 2, plus);
+    PRIM(-, 2, minus);
+    PRIM(*, 2, times);
+    PRIM(eq, 2, eq);
+    PRIM(=, 2, eq);
+    PRIM(if, -4, iff);
+
+    printf("\n\n----------------------TAIL OPT AA BB!\n");
+    princ(read("(+ 333 444)"));
+    princ(evalGC(read("(+ 33 44)"), env));
+    DEF(bb, (lambda (b) (+ b 3)));
+    DEF(aa, (lambda (a) (bb a)));
+    eval(read("(aa 7)"), env);
+
+    printf("\n\n----------------------TAIL RECURSION!\n");
+    printf("1====\n");
+    DEF(tail, (lambda (n s) (if (eq n 0) s (tail (- n 1) (+ s 1)))));
+    printf("2====\n");
+    //evalGC(read("(tail 900 0)"), env); // OK, can tail recurses
+    evalGC(read("(if (tail 900 0) 999 666)"), env);
+
+    gc();
+}
+
 void lisptest() {
     printf("------------------------------------------------------\n");
+
+    newLispTest();
+    return;
+
     printf("\n---string: "); princ(mkstring("foo"));
     printf("\n---int: "); princ(mkint(42));
     printf("\n---cons: "); princ(cons(mkstring("bar"), mkint(99)));
@@ -864,47 +964,48 @@ void lisptest() {
 
     mark(nil); gc();
     mark(nil); gc();
-    dogc = 1;
-    
     printf("AFTER GC!\n");
 
-    lisp tl = symbol("tail");
-    lisp s = symbol("s");
+    if (0) {
+        dogc = 1;
+        lisp tl = symbol("tail");
+        lisp s = symbol("s");
 
-    LA = mkprim("lambda", -16, lambda);
-    EQ = mkprim("eq", 2, eq);
-    IF = mkprim("if", -4, iff);
-    minuus = mkprim("minus", 2, minus);
-    plu = mkprim("plus", 2, plus);
-    tim = mkprim("times", 2, times);
+        LA = mkprim("lambda", -16, lambda);
+        EQ = mkprim("eq", 2, eq);
+        IF = mkprim("if", -4, iff);
+        minuus = mkprim("minus", 2, minus);
+        plu = mkprim("plus", 2, plus);
+        tim = mkprim("times", 2, times);
 
-    lenv = list(cons(la, LA), END);
+        lenv = list(cons(la, LA), END);
 
-    fenv = lenv;
+        fenv = lenv;
 
-    lisp tail = list(LA, list(n, s, END),
-                     list(IF, list(EQ, n, mkint(0), END),
-                          s,
-                          list(tl, list(minuus, n, mkint(1), END), list(plu, s, mkint(1), END)), END),
-                     END);
-    lisp tailenv = setq(tl, tail, fenv);
-    printf("\n\n----------------------TAIL RECURSION!\n");
-    eval(list(tail, mkint(900), mkint(0), END), tailenv);
+        lisp tail = list(LA, list(n, s, END),
+                         list(IF, list(EQ, n, mkint(0), END),
+                              s,
+                              list(tl, list(minuus, n, mkint(1), END), list(plu, s, mkint(1), END)), END),
+                         END);
+        lisp tailenv = setq(tl, tail, fenv);
+        printf("\n\n----------------------TAIL RECURSION!\n");
+        eval(list(tail, mkint(900), mkint(0), END), tailenv);
     
-    printf("\n\n----------------------TAIL RECURSION!\n");
-    lisp aa = symbol("aa");
-    lisp bb = symbol("bb");
-    lisp BB = list(LA, list(n, END), list(plu, n, mkint(3), END), END);
-    lisp aenv = setq(bb, BB, fenv);
-    lisp AA = list(LA, list(n, END), list(bb, n, END), END);
-    aenv = setq(aa, AA, aenv);
-    eval(list(aa, mkint(7), END), aenv);
+        printf("\n\n----------------------TAIL RECURSION!\n");
+        lisp aa = symbol("aa");
+        lisp bb = symbol("bb");
+        lisp BB = list(LA, list(n, END), list(plu, n, mkint(3), END), END);
+        lisp aenv = setq(bb, BB, fenv);
+        lisp AA = list(LA, list(n, END), list(bb, n, END), END);
+        aenv = setq(aa, AA, aenv);
+        eval(list(aa, mkint(7), END), aenv);
     
-    //eval(read("(lambda (n) (if (eq n 0) 1 (fac (- n 1))))"), lenv);
+        //eval(read("(lambda (n) (if (eq n 0) 1 (fac (- n 1))))"), lenv);
 
 //    reportAllocs();
 //    printf("SIZEOF int = %d\nSIZEOF ptr = %d\n", sizeof(int), sizeof(int*));
+    } else {
+        newLispTest();
+    }
     printf("\n========================================================END=====================================================\n");
 }
-
-
