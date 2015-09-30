@@ -20,6 +20,7 @@
 //   hardcode primapply 2 parameters => 1100ms
 //   hardcode primapply 1,2,3,-3 (if),-16 => 860-1100ms
 //   slot alloc => 590,600 ms
+//   eq => ==, remove one eval, tag test => 540,550ms
 //
 // RAW C esp8266 - printf("10,000,000 LOOP (100x lua) TIME=%d\r\n", tm); ===> 50ms
 //
@@ -384,7 +385,10 @@ lisp eq(lisp a, lisp b);
 lisp assoc(lisp name, lisp env) {
     while (env) {
         lisp bind = car(env);
-        if (eq(car(bind), name)) return bind;
+        // only works for atom
+        if (car(bind)==name) return bind; 
+        // TODO: this is required for for example integer if BIGINT
+        // if (eq(car(bind), name)) return bind;
         env = cdr(env);
     }
     return nil;
@@ -791,30 +795,35 @@ lisp funcapply(lisp f, lisp args, lisp env);
 lisp evalGC(lisp e, lisp env);
 
 lisp eval_hlp(lisp e, lisp env) {
-    if (!e || (!IS(e, atom) && !IS(e, conss))) return e;
-    if (IS(e, atom)) {
+    if (!e) return e;
+    char tag = TAG(e);
+    if (tag == atom_TAG) {
         lisp v = assoc(e, env); // look up variable
         if (v) return cdr(v);
         printf("Undefined symbol: "); princ(e); terpri();
         return nil;
     }
+    if (tag != conss_TAG) return e;
 
-    //printf("EVAL FUNC:"); princ(env); terpri();
+    // find function
     lisp orig = car(e);
-    lisp f = evalGC(orig, env);
-    //printf("NOT FUNC: "); princ(f); terpri();
-    while (f && !IS(f, prim) && !IS(f, thunk) && !IS(f, func) && !IS(f, immediate)) {
+    lisp f = orig;
+    tag = TAG(f);
+    while (f && tag!=prim_TAG && tag!=thunk_TAG && tag!=func_TAG && tag!=immediate_TAG) {
         f = evalGC(f, env);
-        //printf("GOT--: "); princ(f); terpri();
+        tag = TAG(f);
     }
     if (f != orig) {
-        // nasty self code modification optimzation (saves lookup)
+        // "macro expansion" lol (replace with implementation)
         // TODO: not safe if found through variable (like all!)
+        // TODO: keep on atom ptr to primitive function/global
         setcar(e, f);
     }
-    if (IS(f, prim)) return primapply(f, cdr(e), env, e);
-    if (IS(f, thunk)) return f; // ignore args, higher level can call (evalGC)
-    if (IS(f, func)) return funcapply(f, cdr(e), env);
+
+    if (tag == prim_TAG) return primapply(f, cdr(e), env, e);
+    if (tag == func_TAG) return funcapply(f, cdr(e), env);
+    if (tag == thunk_TAG) return f; // ignore args
+
     printf("%%ERROR.lisp - don't know how to evaluate f="); princ(f); printf("  ");
     princ(e); printf(" ENV="); princ(env); terpri();
     return nil;
@@ -843,7 +852,8 @@ int trace = 0;
 
 lisp evalGC(lisp e, lisp env) {
     if (!e) return e;
-    if (!IS(e, atom) && !IS(e, conss)) return e;
+    char tag = TAG(e);
+    if (tag != atom_TAG && tag != conss_TAG && tag != thunk_TAG) return e;
 
     if (level >= 64) {
         printf("You're royally screwed! why does it still work?\n");
