@@ -17,7 +17,7 @@ void lispTask(void *pvParameters)
     printf("Hello from lispTask!\r\n");
     uint32_t count = 0;
     while(1) {
-        vTaskDelay(300); // 3s
+        //vTaskDelay(300); // 3s
 
         unsigned int mem = xPortGetFreeHeapSize();
         printf("free=%u\r\n", mem);
