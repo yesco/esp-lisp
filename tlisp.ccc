@@ -1,9 +1,0 @@
-/* 2015-09-22 (C) Jonas S Karlsson, jsk@yesco.org */
-/* "test" for esp-open-rtos put in examples/lisp */
-
-#include "lisp.h"
-
-int main() {
-    lispinit();
-    lisptest();
-}

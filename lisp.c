@@ -5,14 +5,17 @@
 //   s=0; for i=1,100000 do s=s+i end; print(s);
 //   function tail(n, s) if n == 0 then return s else return tail(n-1, s+1); end end print(tail(100000, 0))
 
-// lisp.c (tail 1000 0)
+// DEF(tail, (lambda (n s) (if (eq n 0) s (tail (- n 1) (+ s 1)))));
+// princ(evalGC(read("(tail 100000 0)"), env));
+// -----------------------------------------------------------------
+// lisp.c (tail 1,000 0)
 //   all alloc/evalGC gives 5240ms with print
 //   no print gc => 5040ms
 //   ==> painful slow!
 //   NO INT alloc => 4500ms
 //   needGC() function, block mark => 1070ms
 //
-// lisp.c (tail 10000 0)
+// lisp.c (tail 10,000 0)
 //   => 9380, 9920, 10500
 //   reuse() looped always from 0, made it round-robin => 3000... 4200... 4000ms!
 //   mark_deep() + p->index=i ===> 1500-2000ms
@@ -22,14 +25,21 @@
 //   slot alloc => 590,600 ms
 //   eq => ==, remove one eval, tag test => 540,550ms
 //
+// lisp.c (tail 10,000 0)
+//   now takes 5300ms more or less exactly every time
+//   2.5x slower than lua, didn't actually measure actual lua time
+//   evalGC now lookup vars too => 4780
+//   bindEvalList (combined evallist + bindlist) => 4040ms!
+
+//
 // RAW C esp8266 - printf("10,000,000 LOOP (100x lua) TIME=%d\r\n", tm); ===> 50ms
 //
 
 #ifndef TEST
   #include "espressif/esp_common.h"
   //#include "FreeRTOS.h" // just for MEM FREE QUESTION
-  #define LOOP 9999
-  #define LOOPTAIL "(tail 9999 0)"
+  #define LOOP 99999
+  #define LOOPTAIL "(tail 99999 0)"
 #endif
 
 #ifdef TEST
@@ -466,17 +476,6 @@ lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
     return r;
 }
 
-lisp oldprimapply(lisp ff, lisp args) {
-    lisp a = args, b = cdr(a), c = cdr(b), d = cdr(c), e = cdr(d), f = cdr(e), g = cdr(f), h = cdr(g), i = cdr(h), j = cdr(i);
-    lisp (*fp)(lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp) = ATTR(prim, ff, f);
-    // with C calling convention it's ok, but maybe not most efficient...
-    lisp r = fp(car(a), car(b), car(c), car(d), car(e), car(f), car(g), car(h), car(i), car(j));
-    princ(cons(ff, args));
-    printf(" -> "); princ(r); printf("\n");
-
-    return r;
-}
-
 lisp symbol_list = NULL;
 
 lisp mkmkatom(char* s, lisp list) {
@@ -809,6 +808,7 @@ lisp eval_hlp(lisp e, lisp env) {
     lisp orig = car(e);
     lisp f = orig;
     tag = TAG(f);
+    //if (tag == prim_TAG && f == 
     while (f && tag!=prim_TAG && tag!=thunk_TAG && tag!=func_TAG && tag!=immediate_TAG) {
         f = evalGC(f, env);
         tag = TAG(f);
@@ -853,6 +853,12 @@ int trace = 0;
 lisp evalGC(lisp e, lisp env) {
     if (!e) return e;
     char tag = TAG(e);
+    if (tag == atom_TAG) {
+        lisp v = assoc(e, env); // look up variable
+        if (v) return cdr(v);
+        printf("Undefined symbol: "); princ(e); terpri();
+        return nil;
+    }
     if (tag != atom_TAG && tag != conss_TAG && tag != thunk_TAG) return e;
 
     if (level >= 64) {
@@ -929,20 +935,34 @@ lisp bindlist(lisp fargs, lisp args, lisp env) {
     return bindlist(cdr(fargs), cdr(args), cons(b, env));
 }
 
+lisp bindEvalList(lisp fargs, lisp args, lisp env, lisp extend) {
+    while (fargs) {
+        lisp b = cons(car(fargs), eval(car(args), env));
+        extend = cons(b, extend);
+        fargs = cdr(fargs);
+        args = cdr(args);
+    }
+    return extend;
+}
+
+lisp bindEvalList_rec(lisp fargs, lisp args, lisp env, lisp extend) {
+    // TODO: not recurse!
+    if (!fargs) return extend;
+    lisp b = cons(car(fargs), eval(car(args), env));
+    return bindEvalList(cdr(fargs), cdr(args), env, cons(b, extend));
+}
+
 // TODO: nlambda?
 lisp funcapply(lisp f, lisp args, lisp env) {
     lisp lenv = ATTR(thunk, f, env);
     lisp l = ATTR(thunk, f, e);
     //printf("FUNCAPPLY:"); princ(f); printf(" body="); princ(l); printf(" args="); princ(args); printf(" env="); princ(lenv); terpri();
     lisp fargs = car(l); // skip #lambda
-    args = evallist(args, env);
-    lenv = bindlist(fargs, args, lenv);
+    //args = evallist(args, env);
+    //lenv = bindlist(fargs, args, lenv);
+    lenv = bindEvalList(fargs, args, env, lenv);
     lisp prog = car(cdr(l)); // skip #lambda (...) GET IGNORE
-    // TODO: implicit progn? loop over cdr...
-    //printf("MKIMMEDIATE: "); princ(prog); terpri();    
     return mkimmediate(prog, lenv);
-    // this doesn't handle tail recursion, but may be faster?
-    return eval(prog, lenv);
 }
 
 void lispinit() {
