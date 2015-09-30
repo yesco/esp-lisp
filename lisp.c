@@ -1,4 +1,10 @@
 /* A mini "lisp machine" */
+// in speed it's comparable to compiled LUA
+// - simple "readline"
+// - maybe 2x as slow
+// - handles tail-recursion optimization
+// - full closures
+// - lexical binding
 
 // Lua time 100,000 => 2s
 // ----------------------
@@ -6,7 +12,7 @@
 //   function tail(n, s) if n == 0 then return s else return tail(n-1, s+1); end end print(tail(100000, 0))
 
 // DEF(tail, (lambda (n s) (if (eq n 0) s (tail (- n 1) (+ s 1)))));
-// princ(evalGC(read("(tail 100000 0)"), env));
+// princ(evalGC(reads("(tail 100000 0)"), env));
 // -----------------------------------------------------------------
 // lisp.c (tail 1,000 0)
 //   all alloc/evalGC gives 5240ms with print
@@ -38,9 +44,20 @@
 // RAW C esp8266 - printf("10,000,000 LOOP (100x lua) TIME=%d\r\n", tm); ===> 50ms
 //
 
+#include <unistd.h>
+#include <ctype.h>
+#include <stdarg.h>
+#include <string.h>
+
 #ifndef TEST
-  #include "espressif/esp_common.h"
+  #include "FreeRTOS.h"
+  #include "task.h"
+
+  #include <espressif/esp_common.h>
+  //#include <serial_driver.h> // enable for uart0_num_char(void)
+
   //#include "FreeRTOS.h" // just for MEM FREE QUESTION
+
   #define LOOP 99999
   #define LOOPTAIL "(tail 99999 0)"
 #endif
@@ -51,9 +68,6 @@
   #define LOOP 2999999
   #define LOOPTAIL "(tail 2999999 0)"
 #endif
-
-#include <string.h>
-#include <stdarg.h>
 
 // TODO: use pointer to store some tag data, use this for exteded types
 // last bits (3 as it allocates in at least 8 bytes boundaries):
@@ -379,7 +393,6 @@ lisp list(lisp first, ...) {
 
     va_start(ap, first);
     for (x = first; x != (lisp)-1; x = va_arg(ap, lisp)) {
-        putchar('['); princ(x); putchar(']');
         lisp nw = cons(x, nil);
         if (!r) r = nw;
         setcdr(last, nw);
@@ -512,7 +525,7 @@ lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
     return r;
 }
 
-lisp symbol_list = NULL;
+atom* symbol_list = NULL;
 
 // don't call this directly, call symbol
 lisp secretMkAtom(char* s) {
@@ -520,14 +533,13 @@ lisp secretMkAtom(char* s) {
     r->name = s;
     // link it in first
     r->next = (atom*)symbol_list;
-    symbol_list = (lisp)r;
+    symbol_list = r;
     return (lisp)r;
 }
 
 lisp find_symbol(char *s, int len) {
     atom* cur = (atom*)symbol_list;
     while (cur) {
-        //if (strncmp(s, cur->name, len+1) == 0) return (lisp)cur;
         if (strncmp(s, cur->name, len) == 0 && strlen(cur->name) == len) return (lisp)cur;
         cur = cur->next;
     }
@@ -621,7 +633,7 @@ void mark(lisp x) {
     mark_deep(LAMBDA, 1);
 
     // TODO: remove these from array?
-    mark_deep(symbol_list, 0); // never deallocate atoms!!! 
+    mark_deep((lisp)symbol_list, 0); // never deallocate atoms!!! 
 }
 
 ///--------------------------------------------------------------------------------
@@ -653,7 +665,7 @@ lisp equal(lisp a, lisp b) { return eq(a, b) ? t : symbol("*EQUAL-NOT-DEFINED*")
 lisp _setqq(lisp env, lisp name, lisp v) {
     printf("[_setqq = "); princ(name); printf(" := "); princ(v); printf(" ]\n");
     lisp bind = assoc(name, env);
-    if (!bind) return;
+    if (!bind) return nil;
     setcdr(bind, v);
     return v;
 }
@@ -697,7 +709,6 @@ static char nextx() {
     }
     if (!input) return 0;
     if (!*input) {
-        // TODO: leak? ownership of pointers
         input = NULL;
         return 0;
     }
@@ -705,6 +716,7 @@ static char nextx() {
 }
 
 static char next() {
+    // for debuggin
     if (0) {
         char c = nextx();
         printf(" [next == %d] ", c);
@@ -720,18 +732,14 @@ static void skipSpace() {
     nextChar = c;
 }
 
-// TODO: negative number
-static lisp readInt() {
-    char c = next();
-    int v = 0;
-    if (!c) return nil;
-    while (c && c >= '0' && c <= '9') {
+static int readInt(int v) {
+    unsigned char c = next();
+    while (c && isdigit(c)) {
         v = v*10 + c-'0';
         c = next();
     }
     nextChar = c;
-//    printf("MKINT=%d\n", v); 
-    return mkint(v);
+    return v;
 }
 
 static lisp readString() {
@@ -743,14 +751,12 @@ static lisp readString() {
     return mklenstring(start, len);
 }
 
-static lisp readAtom() {
-    // TODO: broken if ungetc used before...?
+static lisp readAtom(char c) {
     char* start = input - 1;
     int len = 0;
-    char c = next();
     while (c && c!='(' && c!=')' && c!=' ' && c!='.') {
-        c = next();
         len++;
+        c = next();
     }
     nextChar = c;
     return symbolCopy(start, len);
@@ -779,25 +785,16 @@ static lisp readList() {
 
 static lisp readx() {
     skipSpace();
-    char c = next();
+    unsigned char c = next();
     if (!c) return NULL;
-
-    if (c == '(') {
-        return readList();
-    } else if (c == ')') {
-        return nil;
-    } else if (c >= '0' && c <= '9') {
-        nextChar = c;
-        return readInt();
-    } else if (c == '"') {
-        return readString();
-    } else {
-        nextChar = c;
-        return readAtom();
-    }
+    if (c == '(') return readList();
+    if (c == ')') return nil;
+    if (isdigit(c)) return mkint(readInt(c - '0'));;
+    if (c == '"') return readString();
+    return readAtom(c);
 }
 
-lisp read(char *s) {
+lisp reads(char *s) {
     input = s;
     nextChar = 0;
     return readx();
@@ -861,7 +858,6 @@ static lisp eval_hlp(lisp e, lisp env) {
         lisp v = assoc(e, env); // look up variable
         if (v) return cdr(v);
         printf("--Undefined symbol: "); princ(e); terpri();
-        printf("  ENV= "); princ(env); terpri();
         return nil;
     }
     if (tag != conss_TAG) return e;
@@ -924,7 +920,6 @@ lisp evalGC(lisp e, lisp env) {
         lisp v = assoc(e, env); 
         if (v) return cdr(v);
         printf("--Undefined symbol: "); princ(e); terpri();
-        printf("  ENV= "); princ(env); terpri();
         return nil;
     }
     if (tag != atom_TAG && tag != conss_TAG && tag != thunk_TAG) return e;
@@ -1020,10 +1015,10 @@ lisp funcapply(lisp f, lisp args, lisp env) {
 // User, macros, assume a "globaL" env variable implicitly, and updates it
 #define SET(sname, val) env = setq(symbol(#sname), val, env)
 #define SETQc(sname, val) env = setq(symbol(#sname), val, env)
-#define SETQ(sname, val) env = setq(symbol(#sname), read(#val), env)
-#define SETQQ(sname, val) env = setq(symbol(#sname), quote(read(#val)), env)
-#define DEF(fname, sbody) env = setq(symbol(#fname), read(#sbody), env)
-#define EVAL(what) eval(read(#what), env)
+#define SETQ(sname, val) env = setq(symbol(#sname), reads(#val), env)
+#define SETQQ(sname, val) env = setq(symbol(#sname), quote(reads(#val)), env)
+#define DEF(fname, sbody) env = setq(symbol(#fname), reads(#sbody), env)
+#define EVAL(what) eval(reads(#what), env)
 #define PRINT(what) ({ princ(EVAL(what)); terpri(); })
 #define SHOW(what) ({ printf(#what " => "); princ(EVAL(what)); terpri(); })
 #define PRIM(fname, argn, fun) env = setq(symbol(#fname), mkprim(#fname, argn, fun), env)
@@ -1089,13 +1084,96 @@ lisp lispinit() {
     return env;
 }
 
- void tread(char* s) {
+char* readline(char* prompt, int maxlen) {
+    if (prompt) {
+        printf(prompt);
+        fflush(stdout);
+    }
+
+    char buffer[maxlen+1];
+    char ch;
+    int i = 0;
+    // The thread will block here until there is data available
+    // NB. read(...) may be called from user_init or from a thread
+    // We can check how many characters are available in the RX buffer
+    // with uint32_t uart0_num_char(void);
+    while (read(0, (void*)&ch, 1)) { // 0 is stdin
+        if (ch == '\b' || ch == 0x7f) {
+            if (i > 0) {
+                i--;
+                printf("\b \b"); fflush(stdout);
+            }
+            continue;
+        }
+
+        int eol = (ch == '\n' || ch == '\r');
+        if (!eol) {
+            putchar(ch); fflush(stdout);
+            buffer[i++] = ch;
+        }
+        if (i == maxlen || eol) {
+            buffer[i] = 0;
+            printf("\n");
+            return strdup(buffer);
+        }
+    }
+    return NULL;
+}
+
+void hello() {
+    printf("\n\nWelcome to esp-lisp!\n");
+    printf("2015 (c) Jonas S Karlsson under MPL 2.0\n");
+    printf("2015 (c) Jonas S Karlsson under MPL 2.0\n");
+    printf("Read more on http://yesco.org/esp-lisp\n");
+    printf("\n");
+}
+
+void help() {
+    printf("\n\nDocs - http://yesco.org/esp-lisp\n");
+    printf("Symbols: ");
+    atom* s = symbol_list;
+    while (s) {
+        princ((lisp)s); putchar(' ');
+        s = s->next;
+    }
+    terpri();
+    printf("Commands: hello help.\n");
+    terpri();
+}
+
+void readeval() {
+    hello();
+
+    lisp env = lispinit();
+    while(1) {
+        char* ln = readline("lisp> ", 80);
+
+        if (!ln) {
+            break;
+        } else if (strcmp(ln, "hello") == 0) {
+            hello();
+        } else if (strcmp(ln, "help") == 0 || ln[0] == '?') {
+            help();
+        } else if (strlen(ln) > 0) {
+            princ(eval(reads(ln), env)); terpri();
+        }
+
+        free(ln);
+    }
+
+    printf("OK, bye!\n");
+}
+
+void treads(char* s) {
     printf("\nread-%s: ", s);
-    princ(read(s));
+    princ(reads(s));
     terpri();
 }
     
 void newLispTest(lisp env) {
+    readeval();
+    return;
+
     dogc = 1;
 
     printf("\n\n----------------------CLOSURE GENERATOR\n");
@@ -1103,16 +1181,16 @@ void newLispTest(lisp env) {
     SHOW(a);
     SETQc(a, mkint(99));
     SHOW(a);
-    //princ(eval(read("(setq a 11111)"), env));
+    //princ(eval(reads("(setq a 11111)"), env));
 
     terpri();
     PRINT(set);
-    _setq(env, symbol("a"), read("(+ 3 5)"));
+    _setq(env, symbol("a"), reads("(+ 3 5)"));
     SHOW(a);
 
     terpri();
     PRINT(setq);
-    _setq(env, symbol("a"), read("(+ 3 5)"));
+    _setq(env, symbol("a"), reads("(+ 3 5)"));
     SHOW(a);
     
     // TODO: setqq doesn't do the job...
@@ -1123,7 +1201,7 @@ void newLispTest(lisp env) {
 
     terpri();
     PRINT(setqq);
-    _setqq(env, symbol("x"), read("(+ 3 5)"));
+    _setqq(env, symbol("x"), reads("(+ 3 5)"));
     SHOW(a);
 
     //return;
@@ -1144,38 +1222,39 @@ void newLispTest(lisp env) {
     
     printf("\n\n----------------------misc\n");
     printf("ENV= "); princ(env); terpri();
-    princ(read("(foo bar 42)")); terpri();
+    princ(reads("(foo bar 42)")); terpri();
     princ(mkint(3)); terpri();
-    princ(read("4711")); terpri();
-    princ(read("303")); terpri();
-    princ(eval(read("3"), env)); terpri();
-    princ(evalGC(read("33"), env)); terpri();
-    //princ(eval(read("(333)"), env)); terpri(); // TODO: crashes!!!???
+    princ(reads("4711")); terpri();
+    princ(reads("303")); terpri();
+    princ(eval(reads("3"), env)); terpri();
+    princ(evalGC(reads("33"), env)); terpri();
+    //princ(eval(reads("(333)"), env)); terpri(); // TODO: crashes!!!???
 
     // TODO: should nil be a symbol? grrr, eval to nil, no better not because (x) will be true!
     // TODO: means reader should be special...
-    princ(evalGC(read("nil"), env)); terpri();
+    princ(evalGC(reads("nil"), env)); terpri();
     // TODO: should t be a symbol? grrr, eval to t?
-    princ(evalGC(read("t"), env)); terpri();
-    princ(read("(+ 333 444)")); terpri();
-    princ(eval(read("(+ 33 44)"), env)); terpri();
+    princ(evalGC(reads("t"), env)); terpri();
+    princ(reads("(+ 333 444)")); terpri();
+    princ(eval(reads("(+ 33 44)"), env)); terpri();
 
     printf("\n\n----------------------TAIL OPT AA BB!\n");
     DEF(bb, (lambda (b) (+ b 3)));
     DEF(aa, (lambda (a) (bb a)));
-    printf("\nTEST 10="); princ(eval(read("(aa 7)"), env)); terpri();
+    printf("\nTEST 10="); princ(eval(reads("(aa 7)"), env)); terpri();
 
     printf("\n\n----------------------TAIL RECURSION!\n");
     printf("1====\n");
 
     DEF(tail, (lambda (n s) (if (eq n 0) s (tail (- n 1) (+ s 1)))));
     printf("2====\n");
-    printf("\nTEST %d=", LOOP); princ(evalGC(read(LOOPTAIL), env)); terpri();
+    printf("\nTEST %d=", LOOP); princ(evalGC(reads(LOOPTAIL), env)); terpri();
 
     printf("\n\n---cleanup\n");
     mark(env); // TODO: move into GC()
     gc();
 }
+
 
 void lisptest(lisp env) {
     printf("------------------------------------------------------\n");
@@ -1189,22 +1268,22 @@ void lisptest(lisp env) {
     printf("\nread1---string: "); princ(mklenstring("bar", 3));
     printf("\nread2---string: "); princ(mklenstring("bar", 2));
     printf("\nread3---string: "); princ(mklenstring("bar", 1));
-    printf("\nread4---read.string: "); princ(read("\"bar\""));
-    printf("\nread5---atom: "); princ(read("bar"));
-    printf("\nread6---int: "); princ(read("99"));
-    printf("\nread7---cons: "); princ(read("(bar . 99)"));
-    printf("\nread8---1: "); princ(read("1"));
-    printf("\nread9---12: "); princ(read("12"));
-    tread("123");
-    tread("()");
-    tread("(1)");
-    tread("(1 2)");
-    tread("(1 2 3)");
-    tread("((1) (2) (3))");
-    tread("(lambda (n) if (eq n 0) (* n (fac (- n 1))))");
-    tread("(A)");
-    tread("(A B)");
-    tread("(A B C)");
+    printf("\nread4---read.string: "); princ(reads("\"bar\""));
+    printf("\nread5---atom: "); princ(reads("bar"));
+    printf("\nread6---int: "); princ(reads("99"));
+    printf("\nread7---cons: "); princ(reads("(bar . 99)"));
+    printf("\nread8---1: "); princ(reads("1"));
+    printf("\nread9---12: "); princ(reads("12"));
+    treads("123");
+    treads("()");
+    treads("(1)");
+    treads("(1 2)");
+    treads("(1 2 3)");
+    treads("((1) (2) (3))");
+    treads("(lambda (n) if (eq n 0) (* n (fac (- n 1))))");
+    treads("(A)");
+    treads("(A B)");
+    treads("(A B C)");
     printf("\n3=3: "); princ(eq(mkint(3), mkint(3)));
     printf("\n3=4: "); princ(eq(mkint(3), mkint(4)));
     printf("\na=a: "); princ(eq(symbol("a"), symbol("a")));
@@ -1312,7 +1391,7 @@ void lisptest(lisp env) {
         aenv = setq(aa, AA, aenv);
         eval(list(aa, mkint(7), END), aenv);
     
-        //eval(read("(lambda (n) (if (eq n 0) 1 (fac (- n 1))))"), lenv);
+        //eval(reads("(lambda (n) (if (eq n 0) 1 (fac (- n 1))))"), lenv);
 
 //    reportAllocs();
 //    printf("SIZEOF int = %d\nSIZEOF ptr = %d\n", sizeof(int), sizeof(int*));
