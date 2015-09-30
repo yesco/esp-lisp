@@ -17,6 +17,8 @@
 //   reuse() looped always from 0, made it round-robin => 3000... 4200... 4000ms!
 //   mark_deep() + p->index=i ===> 1500-2000ms
 //   car/cdr macro, on desktop 6.50 -> 4.5s for for 1M loop for esp => 1400-1800
+//   hardcode primapply 2 parameters => 1100ms
+//   hardcode primapply 1,2,3,-3 (if),-16 => 860-1100ms
 //
 // RAW C esp8266 - printf("10,000,000 LOOP (100x lua) TIME=%d\r\n", tm); ===> 50ms
 //
@@ -337,6 +339,46 @@ lisp evallist(lisp e, lisp env) {
 lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
     //printf("PRIMAPPLY "); princ(ff); princ(args); terpri();
     int n = ATTR(prim, ff, n);
+    int an = abs(n);
+
+    if (n == 1) {
+        lisp (*fp)(lisp) = ATTR(prim, ff, f);
+        return (*fp)(eval(car(args), env));
+    }
+    if (n == 2) {
+        lisp (*fp)(lisp,lisp) = ATTR(prim, ff, f);
+        return (*fp)(eval(car(args), env), eval(car(cdr(args)), env));
+    }
+    if (n == 3) {
+        lisp (*fp)(lisp,lisp,lisp) = ATTR(prim, ff, f);
+        return (*fp)(eval(car(args), env), eval(car(cdr(args)), env), eval(car(cdr(cdr(args))),env));
+    }
+    if (n == -3) {
+        lisp (*fp)(lisp,lisp,lisp,lisp) = ATTR(prim, ff, f);
+        return (*fp)(env, car(args), car(cdr(args)), car(cdr(cdr(args))));
+    }
+    if (n == -16) {
+        lisp (*fp)(lisp,lisp,lisp) = ATTR(prim, ff, f);
+        return (*fp)(env, args, all);
+    }
+    if (an > 0 && an <= 4) {
+        lisp argv[n];
+        int i;
+        for(i = 0; i < n; i++) {
+            lisp a = car(args);
+            if (a && n > 0) a = eval(a, env);
+            argv[i] = a;
+            args = cdr(args);
+        }
+        lisp (*fp)() = ATTR(prim, ff, f);
+        switch (n) {
+        case 1: return fp(argv[0]);
+        case 2: return fp(argv[0], argv[1]);
+        case 3: return fp(argv[0], argv[1], argv[2]);
+        case 4: return fp(argv[0], argv[1], argv[2], argv[3]);
+        }
+    }
+    
     // normal apply = eval list
     if (n >= 0) {
         args = evallist(args, env);
@@ -926,7 +968,7 @@ void lispinit() {
     //lispF("evallist", 2, evallist);
 
     // -- special
-    lispF("if", -4, iff);
+    lispF("if", -3, iff);
     lispF("lambda", -16, lambda);
 }
 
@@ -947,7 +989,7 @@ void newLispTest() {
     PRIM(*, 2, times);
     PRIM(eq, 2, eq);
     PRIM(=, 2, eq);
-    PRIM(if, -4, iff);
+    PRIM(if, -3, iff);
     PRIM(terpri, 0, terpri);
     PRIM(princ, 1, princ);
 
@@ -1024,7 +1066,7 @@ void lisptest() {
     // it has "lexical binding", lol
     princ(eval(cons(mkthunk(a, env), nil), env));
 
-    lisp IF = mkprim("if", -4, iff);
+    lisp IF = mkprim("if", -3, iff);
     printf("\n\n--------------IF\n");
     eval(IF, nil); terpri();
     eval(cons(IF, cons(mkint(7), cons(pp, cons(tt, nil)))), nil);
@@ -1077,7 +1119,7 @@ void lisptest() {
 
         LA = mkprim("lambda", -16, lambda);
         EQ = mkprim("eq", 2, eq);
-        IF = mkprim("if", -4, iff);
+        IF = mkprim("if", -3, iff);
         minuus = mkprim("minus", 2, minus);
         plu = mkprim("plus", 2, plus);
         tim = mkprim("times", 2, times);

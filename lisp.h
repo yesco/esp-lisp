@@ -1,5 +1,7 @@
 typedef struct {
     char tag;
+    char xx;
+    short index;
 } *lisp;
 
 void reportAllocs();
