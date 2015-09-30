@@ -1,5 +1,14 @@
-/* 2015-09-22 (C) Jonas S Karlsson, jsk@yesco.org */
 /* A mini "lisp machine" */
+
+// Lua time 100,000 => 2s
+// ----------------------
+//   s=0; for i=1,100000 do s=s+i end; print(s);
+//   function tail(n, s) if n == 0 then return s else return tail(n-1, s+1); end end print(tail(100000, 0))
+
+// lisp.c (tail 1000 0)
+//   all alloc/evalGC gives 5240ms with print
+//   no print gc => 5040ms
+//   ==> painful slow!
 
 #ifndef TEST
   #include "espressif/esp_common.h"
@@ -79,19 +88,22 @@ int reuse() {
     return -1;
 }
 
+int used_count = 0;
+
 void* myMalloc(int bytes, int tag) {
+    used_count++;
     tag_count[tag]++;
     tag_bytes[tag] += bytes;
     tag_count[0]++;
     tag_bytes[0] += bytes;
 
-    if (allocs_count == 269) { printf("\n==============ALLOC: %d bytes of tag %s ========================\n", bytes, tag_name[tag]); }
-    if (allocs_count == 270) { printf("\n==============ALLOC: %d bytes of tag %d %s ========================\n", bytes, tag, tag_name[tag]); }
+    //if (allocs_count == 269) { printf("\n==============ALLOC: %d bytes of tag %s ========================\n", bytes, tag_name[tag]); }
+    //if (allocs_count == 270) { printf("\n==============ALLOC: %d bytes of tag %d %s ========================\n", bytes, tag, tag_name[tag]); }
+    //if ((int)p == 0x08050208) { printf("\n============================== ALLOC trouble pointer %d bytes of tag %d %s ===========\n", bytes, ag, tag_name[tag]); }
+
     void* p = malloc(bytes);
+
     // dangerous optimization
-    if ((int)p == 0x08050208) {
-        printf("\n============================== ALLOC trouble pointer %d bytes of tag %d %s ===========\n", bytes, tag, tag_name[tag]);
-    }
     if (tag == immediate_TAG) {
         // do not record, do not GC, they'll be GC:ed automatically as invoked once!
         return p;
@@ -119,7 +131,10 @@ void mark_clean() {
 
 // you better mark stuff you want to keep first...
 int traceGC = 0;
+
 void gc() {
+    if (used_count < MAX_ALLOCS * 0.8) return; // NO GC need yet
+
     int count = 0;
     if (traceGC) printf(" [GC...");
     int i ;
@@ -146,10 +161,11 @@ void gc() {
                 p->tag = 66;
             }
             allocs[i] = NULL;
+            used_count--;
         }
     }
     mark_clean();
-    if (traceGC) printf("%d] ", count);
+    if (traceGC) printf("freed %d used=%d] ", count, used_count);
 }
 
 void reportAllocs() {
@@ -747,6 +763,7 @@ lisp evalGC(lisp e, lisp env) {
         // TODO: move into eval_hlp?
         tofree->tag = 0;
         free(tofree);
+        used_count--;
     }
     --level;
     if (trace) { indent(level); princ(r); printf(" <--- "); princ(e); terpri(); }
@@ -876,9 +893,9 @@ void newLispTest() {
 
     printf("\n\n----------------------TAIL RECURSION!\n");
     printf("1====\n");
-    DEF(tail, (lambda (n s) (if (eq (princ n) 0) s (tail (- n 1) (+ s 1)))));
+    //DEF(tail, (lambda (n s) (if (eq (princ n) 0) s (tail (- n 1) (+ s 1)))));
+    DEF(tail, (lambda (n s) (if (eq n 0) s (tail (- n 1) (+ s 1)))));
     printf("2====\n");
-    //evalGC(read("(tail 900 0)"), env); // OK, can tail recurses
     printf("\nTEST 999="); princ(evalGC(read("(if (tail 900 0) 999 666)"), env)); terpri();
     mark(env);
     gc();
@@ -886,9 +903,6 @@ void newLispTest() {
 
 void lisptest() {
     printf("------------------------------------------------------\n");
-
-    newLispTest();
-    newLispTest();
     newLispTest();
     return;
 

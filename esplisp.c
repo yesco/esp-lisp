@@ -21,8 +21,21 @@ void lispTask(void *pvParameters)
 
         unsigned int mem = xPortGetFreeHeapSize();
         printf("free=%u\r\n", mem);
+        int start = xTaskGetTickCount();
+
         lisptest();
-        printf("free=%u USED=%u\r\n", xPortGetFreeHeapSize(), (unsigned int)(mem-xPortGetFreeHeapSize()));
+
+        int tm = (xTaskGetTickCount() - start) * portTICK_RATE_MS;
+        printf("free=%u USED=%u TIME=%d\r\n", xPortGetFreeHeapSize(), (unsigned int)(mem-xPortGetFreeHeapSize()), tm);
+        printf("======================================================================\n");
+
+        start = xTaskGetTickCount();
+        int i, s = 0;
+        for(i=0; i<100000; i++) { s = s + 1; }
+        tm = (xTaskGetTickCount() - start) * portTICK_RATE_MS;
+
+        printf("LOOP TIME=%d\r\n", tm);
+        printf("======================================================================\n");
 
         xQueueSend(*queue, &count, 0);
         count++;
