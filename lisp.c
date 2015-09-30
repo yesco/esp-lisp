@@ -19,6 +19,7 @@
 //   car/cdr macro, on desktop 6.50 -> 4.5s for for 1M loop for esp => 1400-1800
 //   hardcode primapply 2 parameters => 1100ms
 //   hardcode primapply 1,2,3,-3 (if),-16 => 860-1100ms
+//   slot alloc => 590,600 ms
 //
 // RAW C esp8266 - printf("10,000,000 LOOP (100x lua) TIME=%d\r\n", tm); ===> 50ms
 //
@@ -33,8 +34,8 @@
 #ifdef TEST
   #include <stdlib.h>
   #include <stdio.h>
-  #define LOOP 999999
-  #define LOOPTAIL "(tail 999999 0)"
+  #define LOOP 2999999
+  #define LOOPTAIL "(tail 2999999 0)"
 #endif
 
 #include <string.h>
@@ -63,11 +64,6 @@ lisp LAMBDA = NULL;
 int dogc = 0;
 
 #define string_TAG 1
-#define conss_TAG 2
-#define intint_TAG 3
-
-#define immediate_TAG 7
-
 typedef struct {
     char tag;
     char xx;
@@ -75,10 +71,84 @@ typedef struct {
     char* p; // TODO: make it inline, not second allocation
 } string;
 
+// conss name in order to be able to have a function named 'cons()'
+#define conss_TAG 2
+typedef struct {
+    char tag;
+    char xx;
+    short index;
+    lisp car;
+    lisp cdr;
+} conss;
+
+// TODO: store inline in pointer
+#define intint_TAG 3
+typedef struct {
+    char tag;
+    char xx;
+    short index;
+    int v;
+} intint; // TODO: handle overflow...
+
+#define prim_TAG 4
+typedef struct {
+    char tag;
+    char xx;
+    short index;
+    signed char n;
+    void* f;
+    char* name; // TODO should be char name[1]; // inline allocation!, or actually should point to an ATOM
+} prim;
+
+// TODO: somehow an atom is very similar to a conss cell.
+// it has two pointers, next/cdr, diff is first pointer points a naked string/not lisp string. Maybe it should?
+// TODO: if we make this a 2-cell or 1-cell lisp? or maybe atoms should have no property list or value, just use ENV for that
+#define atom_TAG 5
+typedef struct atom {
+    char tag;
+    char xx;
+    short index;
+    struct atom* next;
+    char* name; // TODO should be char name[1]; // inline allocation!
+} atom;
+
+// Pseudo closure that is returned by if/progn and other construct that takes code, should handle tail recursion
+#define thunk_TAG 6
+typedef struct thunk {
+    char tag;
+    char xx;
+    short index;
+    lisp e;
+    lisp env;
+    // This needs be same as immediate
+} thunk;
+
+#define immediate_TAG 7
+typedef struct immediate {
+    char tag;
+    char xx;
+    short index;
+    lisp e;
+    lisp env;
+    // This needs be same as thunk
+} immediate;
+
+#define func_TAG 8
+
+typedef struct func {
+    char tag;
+    char xx;
+    short index;
+    lisp e;
+    lisp env;
+    // This needs be same as thunk
+} func;
+
 #define MAX_TAGS 16
 int tag_count[MAX_TAGS] = {0};
 int tag_bytes[MAX_TAGS] = {0};
 char* tag_name[MAX_TAGS] = { "TOTAL", "string", "cons", "int", "prim", "atom", "thunk", "immediate", "func", 0 };
+int tag_size[MAX_TAGS] = { 0, sizeof(string), sizeof(conss), sizeof(intint), sizeof(prim), sizeof(thunk), sizeof(immediate), sizeof(func) };
 
 #define MAX_ALLOCS 1024
 int allocs_count = 0;
@@ -120,6 +190,24 @@ int reuse() {
 
 int used_count = 0;
 
+#define SALLOC_MAX_SIZE 32
+void* alloc_slot[SALLOC_MAX_SIZE] = {0};
+
+void* salloc(int bytes) {
+    if (bytes > SALLOC_MAX_SIZE) return malloc(bytes);
+    void** p = alloc_slot[bytes];
+    if (!p) return malloc(bytes);
+    alloc_slot[bytes] = *p;
+    return p;
+}
+
+void sfree(void** p, int bytes) {
+    if (bytes > SALLOC_MAX_SIZE) return free(p);
+    void* n = alloc_slot[bytes];
+    *p = n;
+    alloc_slot[bytes] = p;
+}
+
 void* myMalloc(int bytes, int tag) {
     used_count++;
     tag_count[tag]++;
@@ -131,7 +219,7 @@ void* myMalloc(int bytes, int tag) {
     //if (allocs_count == 270) { printf("\n==============ALLOC: %d bytes of tag %d %s ========================\n", bytes, tag, tag_name[tag]); }
     //if ((int)p == 0x08050208) { printf("\n============================== ALLOC trouble pointer %d bytes of tag %d %s ===========\n", bytes, ag, tag_name[tag]); }
 
-    void* p = malloc(bytes);
+    void* p = salloc(bytes);
 
     // dangerous optimization
     if (tag == immediate_TAG) {
@@ -191,7 +279,7 @@ void gc() {
         } else {
             count++;
             if (1) {
-                free(p);
+                sfree((void*)p, tag_size[TAG(p)]);;
             } else {
                 printf("FREE: %d ", i); princ(p); terpri();
                 // simulate free
@@ -233,15 +321,6 @@ lisp mkstring(char *s) {
     return (lisp)r;
 }
 
-// conss name in order to be able to have a function named 'cons()'
-typedef struct {
-    char tag;
-    char xx;
-    short index;
-    lisp car;
-    lisp cdr;
-} conss;
-
 lisp carr(lisp x) { return x && IS(x, conss) ? ATTR(conss, x, car) : nil; }
 #define car(x) ({ lisp _x = (x); _x && IS(_x, conss) ? ATTR(conss, _x, car) : nil; })
 
@@ -278,14 +357,6 @@ lisp list(lisp first, ...) {
     return r;
 }
 
-// TODO: store inline in pointer
-typedef struct {
-    char tag;
-    char xx;
-    short index;
-    int v;
-} intint;
-
 lisp mkint(int v) {
     return MKINT(v);
     intint* r = ALLOC(intint);
@@ -297,17 +368,6 @@ int getint(lisp x) {
     return INTP(x) ? GETINT(x) : 0;
     return IS(x, intint) ? ATTR(intint, x, v) : 0;
 }
-
-#define prim_TAG 4
-
-typedef struct {
-    char tag;
-    char xx;
-    short index;
-    signed char n;
-    void* f;
-    char* name; // TODO should be char name[1]; // inline allocation!, or actually should point to an ATOM
-} prim;
 
 lisp mkprim(char* name, int n, void *f) {
     prim* r = ALLOC(prim);
@@ -415,18 +475,6 @@ lisp oldprimapply(lisp ff, lisp args) {
 
 lisp symbol_list = NULL;
 
-// TODO: somehow an atom is very similar to a conss cell.
-// it has two pointers, next/cdr, diff is first pointer points a naked string/not lisp string. Maybe it should?
-// TODO: if we make this a 2-cell or 1-cell lisp? or maybe atoms should have no property list or value, just use ENV for that
-#define atom_TAG 5
-typedef struct atom {
-    char tag;
-    char xx;
-    short index;
-    struct atom* next;
-    char* name; // TODO should be char name[1]; // inline allocation!
-} atom;
-
 lisp mkmkatom(char* s, lisp list) {
     atom* r = ALLOC(atom);
     r->name = s;
@@ -446,32 +494,12 @@ lisp symbol(char *s) {
     return symbol_list;
 }
 
-// Pseudo closure that is returned by if/progn and other construct that takes code, should handle tail recursion
-#define thunk_TAG 6
-typedef struct thunk {
-    char tag;
-    char xx;
-    short index;
-    lisp e;
-    lisp env;
-    // This needs be same as immediate
-} thunk;
-
 lisp mkthunk(lisp e, lisp env) {
     thunk* r = ALLOC(thunk);
     r->e = e;
     r->env = env;
     return (lisp)r;
 }
-
-typedef struct immediate {
-    char tag;
-    char xx;
-    short index;
-    lisp e;
-    lisp env;
-    // This needs be same as thunk
-} immediate;
 
 // an immediate is a continuation returned that will be called by eval directly to yield another value
 // this implements continuation based evaluation thus maybe alllowing tail recursion...
@@ -483,16 +511,6 @@ lisp mkimmediate(lisp e, lisp env) {
     return (lisp)r;
 }
 
-#define func_TAG 8
-
-typedef struct func {
-    char tag;
-    char xx;
-    short index;
-    lisp e;
-    lisp env;
-    // This needs be same as thunk
-} func;
 
 lisp mkfunc(lisp e, lisp env) {
     func* r = ALLOC(func); //(thunk*)mkthunk(e, env); // inherit from func_TAG
@@ -870,7 +888,7 @@ lisp evalGC(lisp e, lisp env) {
         // immediates are immediately consumed after evaluation, so they can be free:d directly
         // TODO: move into eval_hlp?
         tofree->tag = 0;
-        free(tofree);
+        sfree((void*)tofree, sizeof(thunk));
         used_count--;
     }
     --level;
