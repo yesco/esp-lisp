@@ -1,4 +1,6 @@
-mv tlisp.ccc tlisp.c && gcc -DTEST=1 tlisp.c lisp.c && ./a.out ; mv tlisp.c tlisp.ccc ; rm a.out
+cp tlisp.ccc tlisp.c && gcc -O2 -DTEST=1 tlisp.c lisp.c -o opt ; rm tlisp.c
+cp tlisp.ccc tlisp.c && gcc -g -pg -DTEST=1 tlisp.c lisp.c && time ./a.out ; rm tlisp.c
+#cp tlisp.ccc tlisp.c && gcc --enable-checking -v -da -Q -g -O0 -DTEST=1 tlisp.c lisp.c && ./a.out ; rm tlisp.c
 echo
 echo "----------------------------------------------------------------------"
 echo

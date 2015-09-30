@@ -348,8 +348,10 @@ lisp mem_usage(int count) {
     return nil;
 }
 
-lisp gc() {
+lisp gc(lisp env) {
     mark(nil); mark((lisp)symbol_list); // TODO: remove?
+
+    mark(env);
 
     // if not need let's not gc
     if (!needGC()) return mem_usage(0); 
@@ -388,7 +390,6 @@ lisp gc() {
 }
 
 void reportAllocs() {
-    // gc();
     terpri();
     printf("--- Allocation stats ---\n");
     int i;
@@ -902,11 +903,6 @@ static lisp getvar(lisp e, lisp env) {
     return nil;
 }
 
-// cache function
-lisp IF_PRIM;
-lisp PLUS_PRIM;
-lisp iff(lisp,lisp,lisp,lisp);
-
 static lisp eval_hlp(lisp e, lisp env) {
     if (!e) return e;
     char tag = TAG(e);
@@ -917,13 +913,6 @@ static lisp eval_hlp(lisp e, lisp env) {
     lisp orig = car(e);
     lisp f = orig;
     tag = TAG(f);
-    if (1 && tag == prim_TAG) {
-        lisp d1 = cdr(e);
-        lisp d2 = cdr(d1);
-        if (f == PLUS_PRIM) return plus(evalGC(car(d1), env), evalGC(car(d2), env));
-        if (f == IF_PRIM) return iff(env, car(d1), car(d2), car(cdr(d2)));
-        //if (IF_PRIM) return evalGC(car(a1), env) ? mkimmediate(car(a2), env) : mkimmediate(car(cdr(a2)), env);
-    }
     while (f && tag!=prim_TAG && tag!=thunk_TAG && tag!=func_TAG && tag!=immediate_TAG) {
         f = evalGC(f, env);
         tag = TAG(f);
@@ -953,7 +942,7 @@ static void mymark(lisp x) {
 }
 
 static void mygc() {
-    if (dogc) gc();
+    if (dogc) gc(nil);
 }
 
 static int blockGC = 0;
@@ -1109,8 +1098,7 @@ lisp lispinit() {
     allocs_count = 0;
 
     mark_clean();
-    mark(nil);
-    gc();
+    gc(nil);
 
     t = symbol("t");
     // nil = symbol("nil"); // LOL? TODO:? that wouldn't make sense? then it would be taken as true!
@@ -1118,14 +1106,14 @@ lisp lispinit() {
 
     SETQc(lambda, LAMBDA);
     SETQ(t, 1);
-    PRIM(+, 2, plus); PLUS_PRIM = eval(symbol("+"), env);
+    PRIM(+, 2, plus);
     PRIM(-, 2, minus);
     PRIM(*, 2, times);
     // PRIM("/", 2, divide);
     PRIM(eq, 2, eq);
     PRIM(=, 2, eq);
     PRIM(<, 2, lessthan);
-    PRIM(if, -3, iff); IF_PRIM = eval(symbol("if"), env);
+    PRIM(if, -3, iff);
     PRIM(terpri, 0, terpri);
     PRIM(princ, 1, princ);
 
@@ -1154,11 +1142,12 @@ lisp lispinit() {
     // while
     // gensym
 
-    PRIM(gc, 0, gc);
+    PRIM(gc, -1, gc);
 
     // another small lisp in 1K lines
     // - https://github.com/rui314/minilisp/blob/master/minilisp.c
 
+    dogc = 1;
     return env;
 }
 
@@ -1201,12 +1190,12 @@ char* readline(char* prompt, int maxlen) {
 void hello() {
     printf("\n\nWelcome to esp-lisp!\n");
     printf("2015 (c) Jonas S Karlsson under MPL 2.0\n");
-    printf("Read more on http://yesco.org/esp-lisp\n");
+    printf("Read more on https://github.com/yesco/esp-lisp/\n");
     printf("\n");
 }
 
 void help() {
-    printf("\n\nDocs - http://yesco.org/esp-lisp\n");
+    printf("\n\nDocs - https://github.com/yesco/esp-lisp/\n");
     printf("Symbols: ");
     atom* s = symbol_list;
     while (s) {
@@ -1238,10 +1227,9 @@ void readeval(lisp env) {
             trace = 1;
         } else if (strcmp(ln, "trace on") == 0) {
             trace = 0;
-        } else if (strlen(ln) > 0) {
+        } else if (strlen(ln) > 0) { // lisp
             princ(evalGC(reads(ln), env)); terpri();
-            mark(env);
-            gc();
+            gc(env);
         }
 
         free(ln);
@@ -1260,23 +1248,13 @@ int fibo(int n) {
     if (n < 2) return 1;
     else return fibo(n-1) + fibo(n-2);
 }
+
 void newLispTest(lisp env) {
-//    int n = 22;
-//    printf("fibo %d = %d\n", n, fibo(n));
-//    return;
 
-    //readeval(env);
-    //return;
-
-    dogc = 1;
-
-//    env = cons( cons(symbol("aa"),mkint(77)) , cons( cons(nil, nil) , env) );
     env = cons( cons(nil, nil) , env);
-
     DEF(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
-    //printf("GLOBALENV: "); princ(env); terpri();
-    princ(evalGC(reads("(fibo 32)"), env)); terpri();
-//    readeval(env);
+
+    readeval(env);
 
     return;
 
@@ -1355,8 +1333,7 @@ void newLispTest(lisp env) {
     printf("\nTEST %d=", LOOP); princ(evalGC(reads(LOOPTAIL), env)); terpri();
 
     printf("\n\n---cleanup\n");
-    mark(env); // TODO: move into GC()
-    gc();
+    gc(env);
 }
 
 
@@ -1457,8 +1434,8 @@ void lisptest(lisp env) {
 
     princ(list(nil, mkstring("fihs"), mkint(1), symbol("fish"), mkint(2), mkint(3), mkint(4), nil, nil, nil, END));
 
-    mark(nil); gc();
-    mark(nil); gc();
+    gc(nil);
+    gc(nil);
     printf("AFTER GC!\n");
 
     if (0) {
