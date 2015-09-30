@@ -1,17 +1,17 @@
 # esp-lisp
-Embroy for a ESP8266 lisp interpreter as alternative to lua on the nodemcu.
+A small fast lisp interpeter for a ESP8266 as alternative to lua on the nodemcu.
 
 ## why
 
-Who doesn't need a lisp? I always wanted my own "lispmachine" anyway ;) It's ideally small and interactive for experimentation, very little typing, compared to lua for example.
+Who doesn't need a lisp? I always wanted my own "lispmachine" anyway ;) It's ideally small and interactive for experimentation, very little typing, compared to lua for example, easy to extend with FFI to add new functions.
 
 ## design goals
 
-- full closures
-- tail recursion
-- interactive development instead of compile/upload/run
-- readline or better interface
 - embedded small lisp
+- full closures ala scheme
+- tail recursion to allow for actors/coroutines
+- interactive development instead of compile/upload/run
+- readline or better terminal interface
 - easy to add functions by registering, good FFI
 - no macros use NLAMBDA concept instead
 
@@ -19,7 +19,7 @@ Who doesn't need a lisp? I always wanted my own "lispmachine" anyway ;) It's ide
 
 It's about 1000 lines of code.
 
-It is just working [relase](https://github.com/yesco/esp-lisp/releases), just got a readline interface! See the docs in [wiki](https://github.com/yesco/esp-lisp/wiki) for simple examples.
+I just have the first  working [relase](https://github.com/yesco/esp-lisp/releases), got a readline interface! See the docs in [wiki](https://github.com/yesco/esp-lisp/wiki) for simple examples.
 
 ## features
 
