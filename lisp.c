@@ -348,10 +348,10 @@ lisp mem_usage(int count) {
     return nil;
 }
 
-lisp gc(lisp env) {
+lisp gc(lisp* envp) {
     mark(nil); mark((lisp)symbol_list); // TODO: remove?
 
-    mark(env);
+    if (envp) mark(*envp);
 
     // if not need let's not gc
     if (!needGC()) return mem_usage(0); 
@@ -474,7 +474,7 @@ lisp mkprim(char* name, int n, void *f) {
     return (lisp)r;
 }
 
-lisp eval(lisp e, lisp env);
+lisp eval(lisp e, lisp* env);
 lisp eq(lisp a, lisp b);
 
 // lookup binding of atom variable name (not work for int names)
@@ -490,15 +490,15 @@ lisp assoc(lisp name, lisp env) {
     return nil;
 }
 
-lisp evallist(lisp e, lisp env) {
+lisp evallist(lisp e, lisp* envp) {
     if (!e) return e;
     // TODO: don't recurse!
-    return cons(eval(car(e), env), evallist(cdr(e), env));
+    return cons(eval(car(e), envp), evallist(cdr(e), envp));
 }
 
-lisp evalGC(lisp e, lisp env);
+lisp evalGC(lisp e, lisp *envp);
 
-lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
+lisp primapply(lisp ff, lisp args, lisp* envp, lisp all) {
     //printf("PRIMAPPLY "); princ(ff); princ(args); terpri();
     int n = ATTR(prim, ff, n);
     int an = abs(n);
@@ -506,37 +506,38 @@ lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
     // these special cases are redundant, can be done at general solution
     if (n == 2) { // eq/plus etc
         lisp (*fp)(lisp,lisp) = ATTR(prim, ff, f);
-        return (*fp)(evalGC(car(args), env), evalGC(car(cdr(args)), env)); // safe!
+        return (*fp)(evalGC(car(args), envp), evalGC(car(cdr(args)), envp)); // safe!
     }
     if (n == -3) { // if...
-        lisp (*fp)(lisp,lisp,lisp,lisp) = ATTR(prim, ff, f);
-        return (*fp)(env, car(args), car(cdr(args)), car(cdr(cdr(args))));
+        lisp (*fp)(lisp*,lisp,lisp,lisp) = ATTR(prim, ff, f);
+        return (*fp)(envp, car(args), car(cdr(args)), car(cdr(cdr(args))));
     }
     if (n == 1) {
         lisp (*fp)(lisp) = ATTR(prim, ff, f);
-        return (*fp)(eval(car(args), env));
+        return (*fp)(eval(car(args), envp));
     }
     if (n == 3) {
         lisp (*fp)(lisp,lisp,lisp) = ATTR(prim, ff, f);
-        return (*fp)(eval(car(args), env), eval(car(cdr(args)), env), eval(car(cdr(cdr(args))),env));
+        return (*fp)(eval(car(args), envp), eval(car(cdr(args)), envp), eval(car(cdr(cdr(args))),envp));
     }
     if (n == -16) { // lambda, quite uncommon
-        lisp (*fp)(lisp,lisp,lisp) = ATTR(prim, ff, f);
-        return (*fp)(env, args, all);
+        lisp (*fp)(lisp*,lisp,lisp) = ATTR(prim, ff, f);
+        return (*fp)(envp, args, all);
     }
+
     // don't do evalist, but allocate array, better for GC
-    if (1 && an > 0 && an <= 4) {
+    if (1 && an > 0 && an <= 6) {
         if (n < 0) an++; // add one for neval and initial env
         lisp argv[an];
         int i;
         for(i = 0; i < an; i++) {
             // if noeval, put env first
             if (i == 0 && n < 0) { 
-                argv[0] = env;
+  	        argv[0] = (lisp)envp;
                 continue;
             }
             lisp a = car(args);
-            if (a && n > 0) a = eval(a, env);
+            if (a && n > 0) a = eval(a, envp);
             argv[i] = a;
             args = cdr(args);
         }
@@ -555,15 +556,16 @@ lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
     // this is the old fallback solution, simple and works but expensive
     // prepare arguments
     if (n >= 0) {
-        args = evallist(args, env);
+        args = evallist(args, envp);
     } else if (n > -16) { // -1 .. -15 no-eval lambda, put env first
-        args = cons(env, args);
+        // TODO: for NLAMBDA this may not work...  may need a new lisp type
+        args = cons(*envp, args);
     }
 
     lisp r;
     if (abs(n) == 16) {
-        lisp (*fp)(lisp, lisp, lisp) = ATTR(prim, ff, f);
-        r = fp(env, args, all);
+        lisp (*fp)(lisp*, lisp, lisp) = ATTR(prim, ff, f);
+        r = fp(envp, args, all);
     } else {
         lisp a = args, b = cdr(a), c = cdr(b), d = cdr(c), e = cdr(d), f = cdr(e), g = cdr(f), h = cdr(g), i = cdr(h), j = cdr(i);
         // with C calling convention it's ok, but maybe not most efficient...
@@ -622,7 +624,6 @@ lisp mkthunk(lisp e, lisp env) {
 // if, lambda, progn etc return these instead of calling eval on the tail
 lisp mkimmediate(lisp e, lisp env) {
     immediate* r = ALLOC(immediate); //(thunk*)mkthunk(e, env); // inherit from func_TAG
-    //r->tag = immediate_TAG;
     r->e = e;
     r->env = env;
     return (lisp)r;
@@ -703,21 +704,24 @@ lisp equal(lisp a, lisp b) { return eq(a, b) ? t : symbol("*EQUAL-NOT-DEFINED*")
 //    return nenv;
 //}
 
-lisp _setqq(lisp env, lisp name, lisp v) {
-    printf("[_setqq = "); princ(name); printf(" := "); princ(v); printf(" ]\n");
-    lisp bind = assoc(name, env);
-    if (!bind) return nil;
-    setcdr(bind, v);
+lisp _setqq(lisp* envp, lisp name, lisp v) {
+    //printf("[_setqq = "); princ(name); printf(" := "); princ(v); printf(" ]\n");
+    lisp bind = assoc(name, *envp);
+    if (bind) {
+      setcdr(bind, v);
+    } else {
+      *envp = cons( cons(name, v), *envp);
+    }
     return v;
 }
-lisp _setq(lisp env, lisp name, lisp v) {
-    return _setqq(env, name, eval(v, env));
+lisp _setq(lisp* envp, lisp name, lisp v) {
+    return _setqq(envp, name, eval(v, envp));
 }
-lisp _set(lisp env, lisp name, lisp v) {
-    return _setqq(env, eval(name, env), eval(v, env));
+lisp _set(lisp* envp, lisp name, lisp v) {
+    return _setqq(envp, eval(name, envp), eval(v, envp));
 }
 
-lisp _quote(lisp env, lisp x) {
+lisp _quote(lisp* envp, lisp x) {
     return x;
 }
 
@@ -727,13 +731,14 @@ lisp quote(lisp x) {
 }
 
 // this one is different it returns and extended env, if needed
+// TODO remove?
 lisp setq(lisp name, lisp v, lisp env) {
     lisp bind = assoc(name, env);
     if (!bind) {
         bind = cons(name, nil);
         env = cons(bind, env);
     }
-    v = eval(v, env);
+    v = eval(v, &env);
     setcdr(bind, v);
     return env;
 }
@@ -890,23 +895,21 @@ static void indent(int n) {
 
 static int level = 0;
 
-static lisp funcapply(lisp f, lisp args, lisp env);
+static lisp funcapply(lisp f, lisp args, lisp* envp);
 
 static lisp getvar(lisp e, lisp env) {
     lisp v = assoc(e, env); 
     if (v) return cdr(v);
     printf("--Undefined symbol: "); princ(e); terpri();
     //printf("ENV= "); princ(env); terpri();
-    #ifdef TEST
-      exit(1);
-    #endif
+    // TODO: "throw error"?
     return nil;
 }
 
-static lisp eval_hlp(lisp e, lisp env) {
+static lisp eval_hlp(lisp e, lisp* envp) {
     if (!e) return e;
     char tag = TAG(e);
-    if (tag == atom_TAG) return getvar(e, env);
+    if (tag == atom_TAG) return getvar(e, *envp);
     if (tag != conss_TAG) return e;
 
     // find function
@@ -914,7 +917,7 @@ static lisp eval_hlp(lisp e, lisp env) {
     lisp f = orig;
     tag = TAG(f);
     while (f && tag!=prim_TAG && tag!=thunk_TAG && tag!=func_TAG && tag!=immediate_TAG) {
-        f = evalGC(f, env);
+        f = evalGC(f, envp);
         tag = TAG(f);
     }
     if (f != orig) {
@@ -928,8 +931,8 @@ static lisp eval_hlp(lisp e, lisp env) {
         setcar(e, f);
     }
 
-    if (tag == prim_TAG) return primapply(f, cdr(e), env, e);
-    if (tag == func_TAG) return funcapply(f, cdr(e), env);
+    if (tag == prim_TAG) return primapply(f, cdr(e), envp, e);
+    if (tag == func_TAG) return funcapply(f, cdr(e), envp);
     if (tag == thunk_TAG) return f; // ignore args
 
     printf("%%ERROR.lisp - don't know how to evaluate f="); princ(f); printf("  ");
@@ -942,16 +945,16 @@ static void mymark(lisp x) {
 }
 
 static void mygc() {
-    if (dogc) gc(nil);
+    if (dogc) gc(NULL);
 }
 
 static int blockGC = 0;
 
 // this is a safe eval to call from anywhere, it will not GC
 // but it may blow up the stack, or the heap!!!
-lisp eval(lisp e, lisp env) {
+lisp eval(lisp e, lisp* envp) {
     blockGC++;
-    lisp r = evalGC(e, env);
+    lisp r = evalGC(e, envp);
     blockGC--;
     return r;
 }
@@ -959,14 +962,27 @@ lisp eval(lisp e, lisp env) {
 #define MAX_STACK 256
 static struct stack {
     lisp e;
-    lisp env;
+    lisp* envp;
 } stack[MAX_STACK];
 
-lisp evalGC(lisp e, lisp env) {
+// prints env and stops at (nil . nil) binding (hides "globals")
+void print_env(lisp env) {
+    indent(level+1);
+    printf(" ENV ");
+    lisp xx = env;
+    while (xx && car(car(xx))) {
+        lisp b = car(xx);
+	princ(car(b)); putchar('='); princ(cdr(b)); putchar(' ');
+	xx = cdr(xx);
+    }
+    terpri();
+}
+
+lisp evalGC(lisp e, lisp* envp) {
     if (!e) return e;
     char tag = TAG(e);
     // look up variable
-    if (tag == atom_TAG) return getvar(e, env); 
+    if (tag == atom_TAG) return getvar(e, *envp); 
     if (tag != atom_TAG && tag != conss_TAG && tag != thunk_TAG) return e;
 
     if (level >= MAX_STACK) {
@@ -978,17 +994,17 @@ lisp evalGC(lisp e, lisp env) {
     }
 
     stack[level].e = e;
-    stack[level].env = env;
+    stack[level].envp = envp;
 
     // TODO: move this to function
     if (!blockGC && needGC()) {
-        mymark(env);
+        mymark(*envp);
         if (trace) printf("%d STACK: ", level);
         int i;
         for(i=0; i<64; i++) {
             if (!stack[i].e) break;
             mymark(stack[i].e);
-            mymark(stack[i].env);
+            mymark(*stack[i].envp);
             if (trace) {
                 printf(" %d: ", i);
                 princ(stack[i].e);
@@ -1001,26 +1017,16 @@ lisp evalGC(lisp e, lisp env) {
     if (trace) { indent(level); printf("---> "); princ(e); terpri(); }
     level++;
     //if (trace) { indent(level+1); printf(" ENV= "); princ(env); terpri(); }
-    if (trace) {
-        indent(level+1);
-        printf(" ENV ");
-        lisp xx = env;
-        while (xx && car(car(xx))) {
-            lisp b = car(xx);
-            //princ(b); putchar(' ');
-            princ(car(b)); putchar('='); princ(cdr(b)); putchar(' ');
-            xx = cdr(xx);
-        }
-        terpri();
-    }
+    if (trace) print_env(*envp);
 
-    lisp r = eval_hlp(e, env);
+    lisp r = eval_hlp(e, envp);
     while (r && TAG(r) == immediate_TAG) {
         lisp tofree = r;
+	// TODO: figure out if thunk->env should be thunk->envp ???
         if (trace) // make it visible
-            r = evalGC(ATTR(thunk, r, e), ATTR(thunk, r, env));
+            r = evalGC(ATTR(thunk, r, e), &ATTR(thunk, r, env));
         else
-            r = eval_hlp(ATTR(thunk, r, e), ATTR(thunk, r, env));
+            r = eval_hlp(ATTR(thunk, r, e), &ATTR(thunk, r, env));
         // immediates are immediately consumed after evaluation, so they can be free:d directly
         tofree->tag = 0;
         sfree((void*)tofree, sizeof(thunk));
@@ -1031,20 +1037,20 @@ lisp evalGC(lisp e, lisp env) {
     if (trace) { indent(level); princ(r); printf(" <--- "); princ(e); terpri(); }
 
     stack[level].e = nil;
-    stack[level].env = nil;
+    stack[level].envp = NULL;
     return r;
 }
 
-lisp iff(lisp env, lisp exp, lisp thn, lisp els) {
+lisp iff(lisp* envp, lisp exp, lisp thn, lisp els) {
     // evalGC is safe here as we don't construct any structes, yet
     // TODO: how did we get here? primapply does call evallist thus created something...
     // but we pass ENV on so it should be safe..., it'll mark it!
-    return evalGC(exp, env) ? mkimmediate(thn, env) : mkimmediate(els, env);
+    return evalGC(exp, envp) ? mkimmediate(thn, *envp) : mkimmediate(els, *envp);
 }
 
 // essentially this is a quote but it stores the environment so it's a closure!
-lisp lambda(lisp env, lisp all) {
-    return mkfunc(all, env);
+lisp lambda(lisp* envp, lisp all) {
+    return mkfunc(all, *envp);
 }
 
 // use bindEvalList unless NLAMBDA
@@ -1055,9 +1061,9 @@ lisp bindlist(lisp fargs, lisp args, lisp env) {
     return bindlist(cdr(fargs), cdr(args), cons(b, env));
 }
 
-lisp bindEvalList(lisp fargs, lisp args, lisp env, lisp extend) {
+lisp bindEvalList(lisp fargs, lisp args, lisp* envp, lisp extend) {
     while (fargs) {
-        lisp b = cons(car(fargs), eval(car(args), env));
+        lisp b = cons(car(fargs), eval(car(args), envp));
         extend = cons(b, extend);
         fargs = cdr(fargs);
         args = cdr(args);
@@ -1066,12 +1072,12 @@ lisp bindEvalList(lisp fargs, lisp args, lisp env, lisp extend) {
 }
 
 // TODO: nlambda?
-lisp funcapply(lisp f, lisp args, lisp env) {
+lisp funcapply(lisp f, lisp args, lisp* envp) {
     lisp lenv = ATTR(thunk, f, env);
     lisp l = ATTR(thunk, f, e);
     //printf("FUNCAPPLY:"); princ(f); printf(" body="); princ(l); printf(" args="); princ(args); printf(" env="); princ(lenv); terpri();
     lisp fargs = car(l); // skip #lambda // TODO: check if NLAMBDA!
-    lenv = bindEvalList(fargs, args, env, lenv);
+    lenv = bindEvalList(fargs, args, envp, lenv);
     lisp prog = car(cdr(l)); // skip #lambda (...) TODO: implicit PROGN? how to do?
     return mkimmediate(prog, lenv);
 }
@@ -1082,7 +1088,7 @@ lisp funcapply(lisp f, lisp args, lisp env) {
 #define SETQ(sname, val) env = setq(symbol(#sname), reads(#val), env)
 #define SETQQ(sname, val) env = setq(symbol(#sname), quote(reads(#val)), env)
 #define DEF(fname, sbody) env = setq(symbol(#fname), reads(#sbody), env)
-#define EVAL(what) eval(reads(#what), env)
+#define EVAL(what) eval(reads(#what), &env)
 #define PRINT(what) ({ princ(EVAL(what)); terpri(); })
 #define SHOW(what) ({ printf(#what " => "); princ(EVAL(what)); terpri(); })
 #define PRIM(fname, argn, fun) env = setq(symbol(#fname), mkprim(#fname, argn, fun), env)
@@ -1098,7 +1104,7 @@ lisp lispinit() {
     allocs_count = 0;
 
     mark_clean();
-    gc(nil);
+    gc(NULL);
 
     t = symbol("t");
     // nil = symbol("nil"); // LOL? TODO:? that wouldn't make sense? then it would be taken as true!
@@ -1106,6 +1112,7 @@ lisp lispinit() {
 
     SETQc(lambda, LAMBDA);
     SETQ(t, 1);
+    SETQ(nil, nil);
     PRIM(+, 2, plus);
     PRIM(-, 2, minus);
     PRIM(*, 2, times);
@@ -1228,8 +1235,8 @@ void readeval(lisp env) {
         } else if (strcmp(ln, "trace on") == 0) {
             trace = 0;
         } else if (strlen(ln) > 0) { // lisp
-            princ(evalGC(reads(ln), env)); terpri();
-            gc(env);
+            princ(evalGC(reads(ln), &env)); terpri();
+            gc(&env);
         }
 
         free(ln);
@@ -1267,12 +1274,12 @@ void newLispTest(lisp env) {
 
     terpri();
     PRINT(set);
-    _setq(env, symbol("a"), reads("(+ 3 5)"));
+    _setq(&env, symbol("a"), reads("(+ 3 5)"));
     SHOW(a);
 
     terpri();
     PRINT(setq);
-    _setq(env, symbol("a"), reads("(+ 3 5)"));
+    _setq(&env, symbol("a"), reads("(+ 3 5)"));
     SHOW(a);
     
     // TODO: setqq doesn't do the job...
@@ -1283,7 +1290,7 @@ void newLispTest(lisp env) {
 
     terpri();
     PRINT(setqq);
-    _setqq(env, symbol("x"), reads("(+ 3 5)"));
+    _setqq(&env, symbol("x"), reads("(+ 3 5)"));
     SHOW(a);
 
     //return;
@@ -1308,32 +1315,32 @@ void newLispTest(lisp env) {
     princ(mkint(3)); terpri();
     princ(reads("4711")); terpri();
     princ(reads("303")); terpri();
-    princ(eval(reads("3"), env)); terpri();
-    princ(evalGC(reads("33"), env)); terpri();
+    princ(eval(reads("3"), &env)); terpri();
+    princ(evalGC(reads("33"), &env)); terpri();
     //princ(eval(reads("(333)"), env)); terpri(); // TODO: crashes!!!???
 
     // TODO: should nil be a symbol? grrr, eval to nil, no better not because (x) will be true!
     // TODO: means reader should be special...
-    princ(evalGC(reads("nil"), env)); terpri();
+    princ(evalGC(reads("nil"), &env)); terpri();
     // TODO: should t be a symbol? grrr, eval to t?
-    princ(evalGC(reads("t"), env)); terpri();
+    princ(evalGC(reads("t"), &env)); terpri();
     princ(reads("(+ 333 444)")); terpri();
-    princ(eval(reads("(+ 33 44)"), env)); terpri();
+    princ(eval(reads("(+ 33 44)"), &env)); terpri();
 
     printf("\n\n----------------------TAIL OPT AA BB!\n");
     DEF(bb, (lambda (b) (+ b 3)));
     DEF(aa, (lambda (a) (bb a)));
-    printf("\nTEST 10="); princ(eval(reads("(aa 7)"), env)); terpri();
+    printf("\nTEST 10="); princ(eval(reads("(aa 7)"), &env)); terpri();
 
     printf("\n\n----------------------TAIL RECURSION!\n");
     printf("1====\n");
 
     DEF(tail, (lambda (n s) (if (eq n 0) s (tail (- n 1) (+ s 1)))));
     printf("2====\n");
-    printf("\nTEST %d=", LOOP); princ(evalGC(reads(LOOPTAIL), env)); terpri();
+    printf("\nTEST %d=", LOOP); princ(evalGC(reads(LOOPTAIL), &env)); terpri();
 
     printf("\n\n---cleanup\n");
-    gc(env);
+    gc(&env);
 }
 
 
@@ -1380,35 +1387,35 @@ void lisptest(lisp env) {
     printf("\neval-a: ");
     lisp a = symbol("a");
     env = cons(cons(a, mkint(5)), nil);;
-    princ(eval(a, env));
+    princ(eval(a, &env));
 
-    printf("\nchanged neval-a: ");
-    princ(eval(a, cons(cons(a, mkint(77)), env)));
+    //printf("\nchanged neval-a: ");
+    //princ(eval(a, & lol cons(cons(a, mkint(77)), env)));
 
     printf("\nTHUNK-----");
-    princ(mkthunk(mkint(14), nil));
+    princ(mkthunk(mkint(14), NULL));
     printf(" ----> ");
-    princ(eval(cons(mkthunk(pp, nil), nil), nil));
+    princ(eval(cons(mkthunk(pp, NULL), nil), NULL));
     // it has "lexical binding", lol
-    princ(eval(cons(mkthunk(a, env), nil), env));
+    princ(eval(cons(mkthunk(a, env), nil), &env));
 
     lisp IF = mkprim("if", -3, iff);
     printf("\n\n--------------IF\n");
-    eval(IF, nil); terpri();
-    eval(cons(IF, cons(mkint(7), cons(pp, cons(tt, nil)))), nil);
-    eval(cons(IF, cons(nil, cons(pp, cons(tt, nil)))), nil);
+    eval(IF, NULL); terpri();
+    eval(cons(IF, cons(mkint(7), cons(pp, cons(tt, nil)))), NULL);
+    eval(cons(IF, cons(nil, cons(pp, cons(tt, nil)))), NULL);
 
     lisp LA = mkprim("lambda", -16, lambda);
     printf("\n\n--------------LAMBDA\n");
-    eval(LA, nil); terpri();
-    eval(list(LA, mkint(7), END), nil);
+    eval(LA, NULL); terpri();
+    eval(list(LA, mkint(7), END), NULL);
     lisp la = symbol("lambda");
     lisp lenv = list(cons(la, LA), END);
     lisp l = list(LA, list(symbol("n"), END),
                   list(plu, mkint(39), symbol("n"), END),
                   END);
-    l = eval(l, lenv);
-    eval(list(l, mkint(3), END), lenv); // looking up la giving LA doesn't work?
+    l = eval(l, &lenv);
+    eval(list(l, mkint(3), END), &lenv); // looking up la giving LA doesn't work?
 
     lisp n = symbol("n");
     lisp EQ = mkprim("eq", 2, eq);
@@ -1430,12 +1437,13 @@ void lisptest(lisp env) {
 //    lisp facbind = assoc(fc, fenv);
 //    setcdr(facbind, FAC); // create circular dependency on it's own defininition symbol by redefining
 
-    eval(list(fc, mkint(6), END), fenv);
+    eval(list(fc, mkint(6), END), &fenv);
 
     princ(list(nil, mkstring("fihs"), mkint(1), symbol("fish"), mkint(2), mkint(3), mkint(4), nil, nil, nil, END));
 
-    gc(nil);
-    gc(nil);
+    // TODO: remove
+    gc(NULL);
+    gc(NULL);
     printf("AFTER GC!\n");
 
     if (0) {
@@ -1461,7 +1469,7 @@ void lisptest(lisp env) {
                          END);
         lisp tailenv = setq(tl, tail, fenv);
         printf("\n\n----------------------TAIL RECURSION!\n");
-        eval(list(tail, mkint(900), mkint(0), END), tailenv);
+        eval(list(tail, mkint(900), mkint(0), END), &tailenv);
     
         printf("\n\n----------------------TAIL RECURSION!\n");
         lisp aa = symbol("aa");
@@ -1470,7 +1478,7 @@ void lisptest(lisp env) {
         lisp aenv = setq(bb, BB, fenv);
         lisp AA = list(LA, list(n, END), list(bb, n, END), END);
         aenv = setq(aa, AA, aenv);
-        eval(list(aa, mkint(7), END), aenv);
+        eval(list(aa, mkint(7), END), &aenv);
     
         //eval(reads("(lambda (n) (if (eq n 0) 1 (fac (- n 1))))"), lenv);
 
