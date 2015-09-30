@@ -41,7 +41,7 @@ typedef struct {
 #define MAX_TAGS 16
 int tag_count[MAX_TAGS] = {0};
 int tag_bytes[MAX_TAGS] = {0};
-char* tag_name[MAX_TAGS] = { "TOTAL", "string", "cons", "int", "prim", "atom", 0 };
+char* tag_name[MAX_TAGS] = { "TOTAL", "string", "cons", "int", "prim", "atom", "cont", 0 };
 
 #define MAX_ALLOCS 1024
 int allocs_count = 0;
@@ -196,6 +196,9 @@ lisp primapply(lisp ff, lisp args, lisp env) {
     // normal apply = eval list
     if (n >= 0) {
         args = evallist(args, env);
+    } else { // no eval/autoquote arguemnts/"macro"
+        // calling convention is first arg is current environment
+        args = cons(env, args);
     }
     lisp a = args, b = cdr(a), c = cdr(b), d = cdr(c), e = cdr(d), f = cdr(e), g = cdr(f), h = cdr(g), i = cdr(h), j = cdr(i);
     lisp (*fp)(lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp) = ATTR(prim, ff, f);
@@ -248,6 +251,31 @@ lisp symbol(char *s) {
     return symbol_list;
 }
 
+// Pseudo closure that is returned by if/progn and other construct that takes code, should handle tail recursion
+#define cont_TAG 6
+typedef struct cont {
+    char tag;
+    lisp e;
+    lisp env;
+} cont;
+
+lisp mkcont(lisp e, lisp env) {
+    cont* r = ALLOC(cont);
+    r->e = e;
+    r->env = env;
+    return (lisp)r;
+}
+
+#define immediate_TAG 7
+
+// an immediate is a continuation returned that will be called by eval directly to yield another value
+// this implements continuation based evaluation thus maybe alllowing tail recursion...
+lisp mkimmediate(lisp e, lisp env) {
+    cont* r = (cont*)mkcont(e, env); // inherit from cont_TAG
+    r->tag = immediate_TAG;
+    return (lisp)r;
+}
+
 ////////////////////////////// GC
 
 // silly inefficient, as it loops to find pointer in array, lol
@@ -271,6 +299,10 @@ void mark_deep(void* x, int deep) {
                     // don't recurse on rest, just loop
                     x = cdr(p);
                     i = -1;
+                } else if (TAG(p) == cont_TAG) {
+                    // should we switch? which one is most likely to become deep?
+                    mark_deep(ATTR(cont, p, e), deep+1);
+                    x = ATTR(cont, p, env);
                 } else return; // found pointer but nothing more to do
             }
         }
@@ -421,8 +453,9 @@ lisp princ(lisp x) {
     // simple one liners
     if (tag == string_TAG) printf("%s", ATTR(string, x, p));
     else if (tag == intint_TAG) printf("%d", ATTR(intint, x, v));
-    else if (tag == prim_TAG) printf("#prim:%s", ATTR(prim, x, name));
+    else if (tag == prim_TAG) printf("#%s", ATTR(prim, x, name));
     else if (tag == atom_TAG) printf("%s", ATTR(atom, x, name));
+    else if (tag == cont_TAG) { printf("#cont["); princ(ATTR(cont, x, e)); putchar(']'); }
     // longer blocks
     else if (tag == conss_TAG) {
         putchar('(');
@@ -456,18 +489,37 @@ lisp eval_hlp(lisp e, lisp env) {
     if (IS(e, atom)) return cdr(assoc(e, env));
     if (!IS(e, conss)) return e; // all others are literal (for now)
     lisp f = eval(car(e), env);
-    return primapply(f, cdr(e), env);
+    if (IS(f, prim)) return primapply(f, cdr(e), env);
+    // TODO: if return an immediate cont, we should loop! maybe in level above?
+    if (IS(f, cont)) {
+        printf("\n----------------SHAJT!------------- "); princ(ATTR(cont, f, e)); terpri();
+        return eval(ATTR(cont, f, e), ATTR(cont, f, env)); // TODO: actually this should be like APPLY!!! of lambda
+    }
+    printf("%%ERROR.lisp - don't know how to evaluate: "); princ(e); terpri();
+    return NIL;
 }
 
 lisp eval(lisp e, lisp env) {
     indent(level++); printf("---> "); princ(e); terpri();
     lisp r = eval_hlp(e, env);
+    while (r && TAG(r) == immediate_TAG) {
+        r = eval(ATTR(cont, r, e), ATTR(cont, r, env));
+    }
     indent(--level); princ(r); printf(" <--- "); princ(e); terpri();
     return r;
 }
 
 void lispF(char* name, int n, void* f) {
     // TODO: do something...
+}
+
+lisp iff(lisp env, lisp exp, lisp thn, lisp els) {
+    // non-tail if
+    if (0) {
+        return eval(exp, env) ? eval(thn, env) : eval(els, env);
+    } else {
+        return eval(exp, env) ? mkimmediate(thn, env) : mkimmediate(els, env);
+    }
 }
 
 void lispinit() {
@@ -504,6 +556,9 @@ void lispinit() {
     lispF("eval", 1, eval);
     //lispF("apply", 1, apply);
     //lispF("evallist", 2, evallist);
+
+    // -- special
+    lispF("if", -4, iff);
 }
 
 void lisptest() {
@@ -548,6 +603,19 @@ void lisptest() {
     printf("\nchanged neval-a: ");
     mark(a);
     princ(eval(a, cons(cons(a, mkint(77)), env)));
+
+    printf("\nCONT-----");
+    princ(mkcont(mkint(14), NIL));
+    printf(" ----> ");
+    princ(eval(cons(mkcont(pp, NIL), NIL), NIL));
+    // it has "lexical binding", lol
+    princ(eval(cons(mkcont(a, env), NIL), NIL));
+
+    lisp IF = mkprim("if", -4, iff);
+    printf("\n\n--------------IF\n");
+    eval(IF, NIL); terpri();
+    eval(cons(IF, cons(mkint(7), cons(pp, cons(tt, NIL)))), NIL);
+    eval(cons(IF, cons(NIL, cons(pp, cons(tt, NIL)))), NIL);
 
     reportAllocs();
 }
