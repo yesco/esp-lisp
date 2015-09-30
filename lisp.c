@@ -1,4 +1,7 @@
+/* Distributed under Mozilla Public Licence 2.0   */
+/* https://www.mozilla.org/en-US/MPL/2.0/         */
 /* A mini "lisp machine" */
+
 // in speed it's comparable to compiled LUA
 // - simple "readline"
 // - maybe 2x as slow
@@ -192,9 +195,12 @@ int tag_size[MAX_TAGS] = { 0, sizeof(string), sizeof(conss), sizeof(intint), siz
 
 // essentially total number of cons+atom+prim
 // TODO: remove ATOM since they are never GC:ed! (thunk are special too, not tracked)
+//#define MAX_ALLOCS 819200 // (fibo 22)
+//#define MAX_ALLOCS 8192
 //#define MAX_ALLOCS 1024
 #define MAX_ALLOCS 512 // keeps 17K free
 //#define MAX_ALLOCS 256 // keeps 21K free
+//#define MAX_ALLOCS 128 // keeps 21K free
 
 int allocs_count = 0;
 void* allocs[MAX_ALLOCS] = { 0 };
@@ -299,7 +305,7 @@ void mark_clean() {
 }
 
 // set to 1 to get GC tracing messages
-int traceGC = 0;
+int traceGC = 1;
 
 int needGC() {
     return (used_count < MAX_ALLOCS * 0.8) ? 0 : 1;
@@ -449,6 +455,8 @@ lisp evallist(lisp e, lisp env) {
     return cons(eval(car(e), env), evallist(cdr(e), env));
 }
 
+lisp evalGC(lisp e, lisp env);
+
 lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
     //printf("PRIMAPPLY "); princ(ff); princ(args); terpri();
     int n = ATTR(prim, ff, n);
@@ -457,7 +465,7 @@ lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
     // these special cases are redundant, can be done at general solution
     if (n == 2) { // eq/plus etc
         lisp (*fp)(lisp,lisp) = ATTR(prim, ff, f);
-        return (*fp)(eval(car(args), env), eval(car(cdr(args)), env));
+        return (*fp)(evalGC(car(args), env), evalGC(car(cdr(args)), env)); // safe!
     }
     if (n == -3) { // if...
         lisp (*fp)(lisp,lisp,lisp,lisp) = ATTR(prim, ff, f);
@@ -611,7 +619,7 @@ void mark_deep(lisp next, int deep) {
         if (IS_USED(index)) return;
 
         SET_USED(index);
-        //printf("Marked %i deep %i :: ", index, deep); princ(p); terpri();
+        //printf("Marked %i deep %i :: p=%u ", index, deep, p); princ(p); terpri();
             
         // follow pointers, recurse on one end, or set next for continue
         if (IS(p, atom)) {
@@ -680,10 +688,12 @@ lisp _quote(lisp env, lisp x) {
     return x;
 }
 
+// TODO: consider http://picolisp.com/wiki/?ArticleQuote
 lisp quote(lisp x) {
     return list(symbol("quote"), x, END);
 }
 
+// this one is different it returns and extended env, if needed
 lisp setq(lisp name, lisp v, lisp env) {
     lisp bind = assoc(name, env);
     if (!bind) {
@@ -815,7 +825,7 @@ lisp princ(lisp x) {
     else if (tag == atom_TAG) printf("%s", ATTR(atom, x, name));
     else if (tag == thunk_TAG) { printf("#thunk["); princ(ATTR(thunk, x, e)); putchar(']'); }
     else if (tag == immediate_TAG) { printf("#immediate["); princ(ATTR(thunk, x, e)); putchar(']'); }
-    else if (tag == func_TAG) { printf("#func["); princ(ATTR(thunk, x, e)); putchar(']'); }
+    else if (tag == func_TAG) { printf("#func["); /* princ(ATTR(thunk, x, e)); */ putchar(']'); } // circular...
     // longer blocks
     else if (tag == conss_TAG) {
         putchar('(');
@@ -849,17 +859,21 @@ static int level = 0;
 
 static lisp funcapply(lisp f, lisp args, lisp env);
 
-lisp evalGC(lisp e, lisp env);
+static lisp getvar(lisp e, lisp env) {
+    lisp v = assoc(e, env); 
+    if (v) return cdr(v);
+    printf("--Undefined symbol: "); princ(e); terpri();
+    //printf("ENV= "); princ(env); terpri();
+    #ifdef TEST
+      exit(1);
+    #endif
+    return nil;
+}
 
 static lisp eval_hlp(lisp e, lisp env) {
     if (!e) return e;
     char tag = TAG(e);
-    if (tag == atom_TAG) {
-        lisp v = assoc(e, env); // look up variable
-        if (v) return cdr(v);
-        printf("--Undefined symbol: "); princ(e); terpri();
-        return nil;
-    }
+    if (tag == atom_TAG) return getvar(e, env);
     if (tag != conss_TAG) return e;
 
     // find function
@@ -886,7 +900,7 @@ static lisp eval_hlp(lisp e, lisp env) {
     if (tag == thunk_TAG) return f; // ignore args
 
     printf("%%ERROR.lisp - don't know how to evaluate f="); princ(f); printf("  ");
-    princ(e); printf(" ENV="); princ(env); terpri();
+    printf(" ENV="); princ(env); terpri();
     return nil;
 }
 
@@ -901,6 +915,7 @@ static void mygc() {
 static int blockGC = 0;
 
 // this is a safe eval to call from anywhere, it will not GC
+// but it may blow up the stack, or the heap!!!
 lisp eval(lisp e, lisp env) {
     blockGC++;
     lisp r = evalGC(e, env);
@@ -908,7 +923,11 @@ lisp eval(lisp e, lisp env) {
     return r;
 }
 
-static lisp stack[64];
+#define MAX_STACK 256
+static struct stack {
+    lisp e;
+    lisp env;
+} stack[MAX_STACK];
 
 static int trace = 0;
 
@@ -916,23 +935,19 @@ lisp evalGC(lisp e, lisp env) {
     if (!e) return e;
     char tag = TAG(e);
     // look up variable
-    if (tag == atom_TAG) {
-        lisp v = assoc(e, env); 
-        if (v) return cdr(v);
-        printf("--Undefined symbol: "); princ(e); terpri();
-        return nil;
-    }
+    if (tag == atom_TAG) return getvar(e, env); 
     if (tag != atom_TAG && tag != conss_TAG && tag != thunk_TAG) return e;
 
-    if (level >= 64) {
-        printf("You're royally screwed! why does it still work?\n");
+    if (level >= MAX_STACK) {
+        printf("%%Stack blowup! You're royally screwed! why does it still work?\n");
         #ifdef TEST
           exit(1);
         #endif
         return nil;
     }
 
-    stack[level] = e;
+    stack[level].e = e;
+    stack[level].env = env;
 
     // TODO: move this to function
     if (!blockGC && needGC()) {
@@ -940,11 +955,12 @@ lisp evalGC(lisp e, lisp env) {
         if (trace) printf("%d STACK: ", level);
         int i;
         for(i=0; i<64; i++) {
-            if (!stack[i]) break;
-            mymark(stack[i]);
+            if (!stack[i].e) break;
+            mymark(stack[i].e);
+            mymark(stack[i].env);
             if (trace) {
                 printf(" %d: ", i);
-                princ(stack[i]);
+                princ(stack[i].e);
             }
         }
         if (trace) terpri();
@@ -953,7 +969,7 @@ lisp evalGC(lisp e, lisp env) {
 
     if (trace) { indent(level); printf("---> "); princ(e); terpri(); }
     level++;
-    if (trace) { indent(level+1); printf(" ENV= "); princ(env); terpri(); }
+    if (trace) { indent(level+1); printf("p=%u %i ", (unsigned int)env, env->index); printf(" ENV= "); princ(env); terpri(); }
 
     lisp r = eval_hlp(e, env);
     while (r && TAG(r) == immediate_TAG) {
@@ -967,7 +983,8 @@ lisp evalGC(lisp e, lisp env) {
 
     --level;
     if (trace) { indent(level); princ(r); printf(" <--- "); princ(e); terpri(); }
-    stack[level] = nil;
+    stack[level].e = nil;
+    stack[level].env = nil;
     return r;
 }
 
@@ -1123,7 +1140,6 @@ char* readline(char* prompt, int maxlen) {
 void hello() {
     printf("\n\nWelcome to esp-lisp!\n");
     printf("2015 (c) Jonas S Karlsson under MPL 2.0\n");
-    printf("2015 (c) Jonas S Karlsson under MPL 2.0\n");
     printf("Read more on http://yesco.org/esp-lisp\n");
     printf("\n");
 }
@@ -1141,10 +1157,9 @@ void help() {
     terpri();
 }
 
-void readeval() {
+void readeval(lisp env) {
     hello();
 
-    lisp env = lispinit();
     while(1) {
         char* ln = readline("lisp> ", 80);
 
@@ -1155,7 +1170,7 @@ void readeval() {
         } else if (strcmp(ln, "help") == 0 || ln[0] == '?') {
             help();
         } else if (strlen(ln) > 0) {
-            princ(eval(reads(ln), env)); terpri();
+            princ(evalGC(reads(ln), env)); terpri();
         }
 
         free(ln);
@@ -1170,11 +1185,25 @@ void treads(char* s) {
     terpri();
 }
     
+int fibo(int n) {
+    if (n < 2) return 1;
+    else return fibo(n-1) + fibo(n-2);
+}
 void newLispTest(lisp env) {
-    readeval();
-    return;
+//    int n = 22;
+//    printf("fibo %d = %d\n", n, fibo(n));
+//    return;
+
+    //readeval();
+    //return;
 
     dogc = 1;
+
+    DEF(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
+    readeval(env);
+
+//    princ(evalGC(reads("(fibo 30)"), env)); terpri();
+    return;
 
     printf("\n\n----------------------CLOSURE GENERATOR\n");
     SETQc(a, mkint(35));

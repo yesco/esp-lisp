@@ -16,6 +16,10 @@
 void lispTask(void *pvParameters)
 {
     lisp env = lispinit();
+    lisptest(env);
+    return;
+
+    //lisp env = lispinit();
 
     xQueueHandle *queue = (xQueueHandle *)pvParameters;
     printf("Hello from lispTask!\r\n");
@@ -62,18 +66,17 @@ void recvTask(void *pvParameters)
     }
 }
 
-//static xQueueHandle mainqueue;
+static xQueueHandle mainqueue;
 
 void user_init(void)
 {
     sdk_uart_div_modify(0, UART_CLK_FREQ / 115200);
 
-    lisp env = lispinit();
-    lisptest(env);
+//    lisp env = lispinit();
+//    lisptest(env);
+//    return;
 
-    return;
-
-//    mainqueue = xQueueCreate(10, sizeof(uint32_t));
-//    xTaskCreate(lispTask, (signed char *)"lispTask", 2048, &mainqueue, 2, NULL);
+    mainqueue = xQueueCreate(10, sizeof(uint32_t));
+    xTaskCreate(lispTask, (signed char *)"lispTask", 2048, &mainqueue, 2, NULL);
 //    xTaskCreate(recvTask, (signed char *)"recvTask", 256, &mainqueue, 2, NULL);
 }
