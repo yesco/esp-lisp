@@ -1,4 +1,6 @@
 /* 2015-09-22 (C) Jonas S Karlsson, jsk@yesco.org */
+/* Distributed under Mozilla Public Licence 2.0   */
+/* https://www.mozilla.org/en-US/MPL/2.0/         */
 /* "driver" for esp-open-rtos put in examples/lisp */
 
 #include "espressif/esp_common.h"
@@ -13,6 +15,8 @@
 
 void lispTask(void *pvParameters)
 {
+    lisp env = lispinit();
+
     xQueueHandle *queue = (xQueueHandle *)pvParameters;
     printf("Hello from lispTask!\r\n");
     uint32_t count = 0;
@@ -23,7 +27,7 @@ void lispTask(void *pvParameters)
         printf("free=%u\r\n", mem);
         int start = xTaskGetTickCount();
 
-        lisptest();
+        lisptest(env);
 
         int tm = (xTaskGetTickCount() - start) * portTICK_RATE_MS;
         printf("free=%u USED=%u TIME=%d\r\n", xPortGetFreeHeapSize(), (unsigned int)(mem-xPortGetFreeHeapSize()), tm);
@@ -51,23 +55,25 @@ void recvTask(void *pvParameters)
         uint32_t count;
         if(xQueueReceive(*queue, &count, 1000)) {
             //printf("Got %u\n", count);
-            putchar('.');
+            //putchar('.');
         } else {
-            printf("No msg :(\n");
+            //printf("No msg :(\n");
         }
     }
 }
 
-static xQueueHandle mainqueue;
+//static xQueueHandle mainqueue;
 
 void user_init(void)
 {
     sdk_uart_div_modify(0, UART_CLK_FREQ / 115200);
-    printf("SDK version:%s\n", sdk_system_get_sdk_version());
-    
-    lispinit();
 
-    mainqueue = xQueueCreate(10, sizeof(uint32_t));
-    xTaskCreate(lispTask, (signed char *)"lispTask", 2048, &mainqueue, 2, NULL);
-    xTaskCreate(recvTask, (signed char *)"recvTask", 256, &mainqueue, 2, NULL);
+    lisp env = lispinit();
+    lisptest(env);
+
+    return;
+
+//    mainqueue = xQueueCreate(10, sizeof(uint32_t));
+//    xTaskCreate(lispTask, (signed char *)"lispTask", 2048, &mainqueue, 2, NULL);
+//    xTaskCreate(recvTask, (signed char *)"recvTask", 256, &mainqueue, 2, NULL);
 }
