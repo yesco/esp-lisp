@@ -55,6 +55,12 @@ Flashes it to your esp-8266 device.
 
 To connect to it and run it.
 
+## TODO
 
+Optimize more for storage/simplify and avoid using malloc here are some ideas from elsewhere.
+
+- http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.109.6660&rep=rep1&type=pdf
+- picolisp speed tests... http://software-lab.de/radical.pdf
+- picolisp puts compiled lisp in ROM - http://picolisp.com/wiki/!pdf?-B1054
 
 
