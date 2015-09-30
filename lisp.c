@@ -441,6 +441,7 @@ lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
     int n = ATTR(prim, ff, n);
     int an = abs(n);
 
+    // these special cases are redundant, can be done at general solution
     if (n == 2) { // eq/plus etc
         lisp (*fp)(lisp,lisp) = ATTR(prim, ff, f);
         return (*fp)(eval(car(args), env), eval(car(cdr(args)), env));
@@ -462,11 +463,11 @@ lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
         return (*fp)(env, args, all);
     }
     // don't do evalist, but allocate array, better for GC
-    if (an > 0 && an <= 4) {
+    if (1 && an > 0 && an <= 4) {
         if (n < 0) an++; // add one for neval and initial env
         lisp argv[an];
         int i;
-        for(i = 0; i < n; i++) {
+        for(i = 0; i < an; i++) {
             // if noeval, put env first
             if (i == 0 && n < 0) { 
                 argv[0] = env;
@@ -483,10 +484,13 @@ lisp primapply(lisp ff, lisp args, lisp env, lisp all) {
         case 2: return fp(argv[0], argv[1]);
         case 3: return fp(argv[0], argv[1], argv[2]);
         case 4: return fp(argv[0], argv[1], argv[2], argv[3]);
+        case 5: return fp(argv[0], argv[1], argv[2], argv[3], argv[4]);
+        case 6: return fp(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
         }
     }
     // above is all optimiziations
 
+    // this is the old fallback solution, simple and works but expensive
     // prepare arguments
     if (n >= 0) {
         args = evallist(args, env);
@@ -523,7 +527,8 @@ lisp secretMkAtom(char* s) {
 lisp find_symbol(char *s, int len) {
     atom* cur = (atom*)symbol_list;
     while (cur) {
-        if (strncmp(s, cur->name, len) == 0) return (lisp)cur;
+        //if (strncmp(s, cur->name, len+1) == 0) return (lisp)cur;
+        if (strncmp(s, cur->name, len) == 0 && strlen(cur->name) == len) return (lisp)cur;
         cur = cur->next;
     }
     return NULL;
@@ -644,14 +649,37 @@ lisp equal(lisp a, lisp b) { return eq(a, b) ? t : symbol("*EQUAL-NOT-DEFINED*")
 //    setcdr(nenv, FAC); // create circular dependency on it's own defininition symbol by redefining
 //    return nenv;
 //}
+
+lisp _setqq(lisp env, lisp name, lisp v) {
+    printf("[_setqq = "); princ(name); printf(" := "); princ(v); printf(" ]\n");
+    lisp bind = assoc(name, env);
+    if (!bind) return;
+    setcdr(bind, v);
+    return v;
+}
+lisp _setq(lisp env, lisp name, lisp v) {
+    return _setqq(env, name, eval(v, env));
+}
+lisp _set(lisp env, lisp name, lisp v) {
+    return _setqq(env, eval(name, env), eval(v, env));
+}
+
+lisp _quote(lisp env, lisp x) {
+    return x;
+}
+
+lisp quote(lisp x) {
+    return list(symbol("quote"), x, END);
+}
+
 lisp setq(lisp name, lisp v, lisp env) {
     lisp bind = assoc(name, env);
     if (!bind) {
         bind = cons(name, nil);
         env = cons(bind, env);
     }
-    v = eval(v, env); // evaluate using new env containing right env with binding to self
-    setcdr(bind, v); // create circular dependency on it's own defininition symbol by redefining
+    v = eval(v, env);
+    setcdr(bind, v);
     return env;
 }
 
@@ -832,7 +860,8 @@ static lisp eval_hlp(lisp e, lisp env) {
     if (tag == atom_TAG) {
         lisp v = assoc(e, env); // look up variable
         if (v) return cdr(v);
-        printf("Undefined symbol: "); princ(e); terpri();
+        printf("--Undefined symbol: "); princ(e); terpri();
+        printf("  ENV= "); princ(env); terpri();
         return nil;
     }
     if (tag != conss_TAG) return e;
@@ -894,7 +923,8 @@ lisp evalGC(lisp e, lisp env) {
     if (tag == atom_TAG) {
         lisp v = assoc(e, env); 
         if (v) return cdr(v);
-        printf("Undefined symbol: "); princ(e); terpri();
+        printf("--Undefined symbol: "); princ(e); terpri();
+        printf("  ENV= "); princ(env); terpri();
         return nil;
     }
     if (tag != atom_TAG && tag != conss_TAG && tag != thunk_TAG) return e;
@@ -988,9 +1018,14 @@ lisp funcapply(lisp f, lisp args, lisp env) {
 }
 
 // User, macros, assume a "globaL" env variable implicitly, and updates it
-#define SETQ(sname, val) env = setq(symbol(#sname), val, env)
+#define SET(sname, val) env = setq(symbol(#sname), val, env)
+#define SETQc(sname, val) env = setq(symbol(#sname), val, env)
+#define SETQ(sname, val) env = setq(symbol(#sname), read(#val), env)
+#define SETQQ(sname, val) env = setq(symbol(#sname), quote(read(#val)), env)
 #define DEF(fname, sbody) env = setq(symbol(#fname), read(#sbody), env)
-//#define EVAL(what) ({ eval(read(#what), env); terpri(); }) // TODO: no good!
+#define EVAL(what) eval(read(#what), env)
+#define PRINT(what) ({ princ(EVAL(what)); terpri(); })
+#define SHOW(what) ({ printf(#what " => "); princ(EVAL(what)); terpri(); })
 #define PRIM(fname, argn, fun) env = setq(symbol(#fname), mkprim(#fname, argn, fun), env)
 
 // returns an env with functions
@@ -1011,7 +1046,7 @@ lisp lispinit() {
     // nil = symbol("nil"); // LOL? TODO:? that wouldn't make sense? then it would be taken as true!
     LAMBDA = mkprim("lambda", -16, lambda);
 
-    SETQ(lambda, LAMBDA);
+    SETQc(lambda, LAMBDA);
     PRIM(+, 2, plus);
     PRIM(-, 2, minus);
     PRIM(*, 2, times);
@@ -1037,7 +1072,11 @@ lisp lispinit() {
 
     PRIM(read, 1, read);
 
-    // setq
+    PRIM(set, -2, _set);
+    PRIM(setq, -2, _setq);
+    PRIM(setqq, -2, _setqq);
+    PRIM(quote, -1, _quote);
+
     // define
     // defun
     // defmacro
@@ -1059,6 +1098,51 @@ lisp lispinit() {
 void newLispTest(lisp env) {
     dogc = 1;
 
+    printf("\n\n----------------------CLOSURE GENERATOR\n");
+    SETQc(a, mkint(35));
+    SHOW(a);
+    SETQc(a, mkint(99));
+    SHOW(a);
+    //princ(eval(read("(setq a 11111)"), env));
+
+    terpri();
+    PRINT(set);
+    _setq(env, symbol("a"), read("(+ 3 5)"));
+    SHOW(a);
+
+    terpri();
+    PRINT(setq);
+    _setq(env, symbol("a"), read("(+ 3 5)"));
+    SHOW(a);
+    
+    // TODO: setqq doesn't do the job...
+    terpri();
+    printf("-setq x a---\n");
+    SETQQ(x, a);
+    SHOW(x);
+
+    terpri();
+    PRINT(setqq);
+    _setqq(env, symbol("x"), read("(+ 3 5)"));
+    SHOW(a);
+
+    //return;
+
+    SETQc(b, mkint(777));
+    SHOW(b);
+    SETQ(b, 999);
+    SHOW(b);
+    SETQ(b, (+ 3 4));
+    SHOW(b);
+    printf("----change from lisp!\n");
+    SETQ(c, 11111);
+    SHOW(c);
+    SHOW(c);
+    EVAL((setq c 12345));
+    princ(env); terpri();
+    SHOW(c);
+    
+    printf("\n\n----------------------misc\n");
     printf("ENV= "); princ(env); terpri();
     princ(read("(foo bar 42)")); terpri();
     princ(mkint(3)); terpri();
@@ -1088,6 +1172,7 @@ void newLispTest(lisp env) {
     printf("2====\n");
     printf("\nTEST %d=", LOOP); princ(evalGC(read(LOOPTAIL), env)); terpri();
 
+    printf("\n\n---cleanup\n");
     mark(env); // TODO: move into GC()
     gc();
 }
