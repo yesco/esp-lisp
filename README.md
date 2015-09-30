@@ -1,5 +1,5 @@
 # esp-lisp
-A small fast lisp interpeter for a ESP8266 as alternative to lua on the nodemcu.
+BETA: A small fast lisp interpeter for a ESP8266 as alternative to lua on the nodemcu.
 
 ## why
 
@@ -20,6 +20,8 @@ Who doesn't need a lisp? I always wanted my own "lispmachine" anyway ;) It's ide
 It's about 1000 lines of code.
 
 I just have the first  working [relase](https://github.com/yesco/esp-lisp/releases), got a readline interface! See the docs in [wiki](https://github.com/yesco/esp-lisp/wiki) for simple examples.
+
+Lot's of stuff is missing...
 
 ## features
 
