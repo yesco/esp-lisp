@@ -9,6 +9,12 @@
 //   all alloc/evalGC gives 5240ms with print
 //   no print gc => 5040ms
 //   ==> painful slow!
+//   NO INT alloc => 4500ms
+//   needGC() function, block mark => 1070ms
+// lisp.c (tail 10000 0)
+//   => 9380, 9920, 10500
+//
+// RAW C esp8266 - printf("10,000,000 LOOP (100x lua) TIME=%d\r\n", tm); ===> 50ms
 
 #ifndef TEST
   #include "espressif/esp_common.h"
@@ -51,6 +57,7 @@ int gettag(lisp x) { return x->tag; }
 
 #define string_TAG 1
 #define conss_TAG 2
+#define intint_TAG 3
 
 #define immediate_TAG 7
 
@@ -72,7 +79,13 @@ unsigned int used[MAX_ALLOCS/32 + 1] = { 0 };
 #define SET_USED(i) ({int _i = (i); used[_i/32] |= 1 << _i%32;})
 #define IS_USED(i) ({int _i = (i); (used[_i/32] >> _i%32) & 1;})
 
-#define TAG(x) (x ? ((lisp)x)->tag : 0 )
+#define INTP(x) (((unsigned int)x) & 1)
+#define GETINT(x) (((unsigned int)x) >> 1)
+#define MKINT(i) ((lisp)(((i) << 1) + 1))
+
+//#define TAG(x) (x ? ((lisp)x)->tag : 0 )
+#define TAG(x) (INTP(x) ? intint_TAG : (x ? ((lisp)x)->tag : 0 ))
+
 #define ALLOC(type) ({type* x = myMalloc(sizeof(type), type ## _TAG); x->tag = type ## _TAG; x;})
 #define ATTR(type, x, field) ((type*)x)->field
 #define IS(x, type) (x && TAG(x) == type ## _TAG)
@@ -132,8 +145,12 @@ void mark_clean() {
 // you better mark stuff you want to keep first...
 int traceGC = 0;
 
+int needGC() {
+    return (used_count < MAX_ALLOCS * 0.8) ? 0 : 1;
+}
+
 void gc() {
-    if (used_count < MAX_ALLOCS * 0.8) return; // NO GC need yet
+    if (!needGC()) return; // not yet
 
     int count = 0;
     if (traceGC) printf(" [GC...");
@@ -235,7 +252,6 @@ lisp list(lisp first, ...) {
     return r;
 }
 
-#define intint_TAG 3
 // TODO: store inline in pointer
 typedef struct {
     char tag;
@@ -243,12 +259,16 @@ typedef struct {
 } intint;
 
 lisp mkint(int v) {
+    return MKINT(v);
     intint* r = ALLOC(intint);
     r->v = v;
     return (lisp)r;
 }
 
-int getint(lisp x) { return IS(x, intint) ? ATTR(intint, x, v) : 0; }
+int getint(lisp x) {
+    return INTP(x) ? GETINT(x) : 0;
+    return IS(x, intint) ? ATTR(intint, x, v) : 0;
+}
 
 #define prim_TAG 4
 
@@ -630,7 +650,7 @@ lisp princ(lisp x) {
     char tag = TAG(x);
     // simple one liners
     if (tag == string_TAG) printf("%s", ATTR(string, x, p));
-    else if (tag == intint_TAG) printf("%d", ATTR(intint, x, v));
+    else if (tag == intint_TAG) printf("%d", getint(x));
     else if (tag == prim_TAG) printf("#%s", ATTR(prim, x, name));
     else if (tag == atom_TAG) printf("%s", ATTR(atom, x, name));
     else if (tag == thunk_TAG) { printf("#thunk["); princ(ATTR(thunk, x, e)); putchar(']'); }
@@ -680,11 +700,17 @@ lisp eval_hlp(lisp e, lisp env) {
     }
 
     //printf("EVAL FUNC:"); princ(env); terpri();
-    lisp f = evalGC(car(e), env);
+    lisp orig = car(e);
+    lisp f = evalGC(orig, env);
     //printf("NOT FUNC: "); princ(f); terpri();
     while (f && !IS(f, prim) && !IS(f, thunk) && !IS(f, func) && !IS(f, immediate)) {
         f = evalGC(f, env);
         //printf("GOT--: "); princ(f); terpri();
+    }
+    if (f != orig) {
+        // nasty self code modification optimzation (saves lookup)
+        // TODO: not safe if found through variable (like all!)
+        setcar(e, f);
     }
     if (IS(f, prim)) return primapply(f, cdr(e), env, e);
     if (IS(f, thunk)) return f; // ignore args, higher level can call (evalGC)
@@ -726,10 +752,10 @@ lisp evalGC(lisp e, lisp env) {
         #endif
     }
 
-    if (!blockGC) {
-        mymark(env); // TODO: important
+    stack[level] = e;
 
-        stack[level] = e;
+    if (!blockGC && needGC()) {
+        mymark(env); // TODO: important
 
         // print stack
         if (trace) printf("%d STACK: ", level);
@@ -743,10 +769,10 @@ lisp evalGC(lisp e, lisp env) {
             }
         }
         if (trace) terpri();
-
         // TODO: better mark all shit first!
         mygc(); // not safe here, setq for example calls eval, it should not do gc as it builds cons at same time...
         // evallist the same issue, TODO: maybe an eval that doesn't GC? and only gc here and "up"
+
     }
 
     if (trace) { indent(level); printf("---> "); princ(e); terpri(); }
@@ -893,11 +919,12 @@ void newLispTest() {
 
     printf("\n\n----------------------TAIL RECURSION!\n");
     printf("1====\n");
-    //DEF(tail, (lambda (n s) (if (eq (princ n) 0) s (tail (- n 1) (+ s 1)))));
+
     DEF(tail, (lambda (n s) (if (eq n 0) s (tail (- n 1) (+ s 1)))));
     printf("2====\n");
-    printf("\nTEST 999="); princ(evalGC(read("(if (tail 900 0) 999 666)"), env)); terpri();
-    mark(env);
+    printf("\nTEST 9999="); princ(evalGC(read("(tail 9999 0)"), env)); terpri();
+
+    mark(env); // TODO: move into GC()
     gc();
 }
 

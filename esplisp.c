@@ -28,13 +28,14 @@ void lispTask(void *pvParameters)
         int tm = (xTaskGetTickCount() - start) * portTICK_RATE_MS;
         printf("free=%u USED=%u TIME=%d\r\n", xPortGetFreeHeapSize(), (unsigned int)(mem-xPortGetFreeHeapSize()), tm);
         printf("======================================================================\n");
+        reportAllocs();
 
         start = xTaskGetTickCount();
         int i, s = 0;
-        for(i=0; i<100000; i++) { s = s + 1; }
+        for(i=0; i<1000000; i++) { s = s + 1; }
         tm = (xTaskGetTickCount() - start) * portTICK_RATE_MS;
 
-        printf("LOOP TIME=%d\r\n", tm);
+        printf("10,000,000 LOOP (100x lua) TIME=%d\r\n", tm);
         printf("======================================================================\n");
 
         xQueueSend(*queue, &count, 0);
