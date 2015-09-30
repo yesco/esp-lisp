@@ -650,7 +650,7 @@ void mark_deep(lisp next, int deep) {
 
         lisp p = allocs[index];
         if (!p || p != next) {
-            printf("mark_deep.ERROR: index %d doesn't contain pointer.\n", index);
+            printf("\n-- ERROR: mark_deep - index %d doesn't contain pointer.\n", index);
             //printf("pppp = 0x%u and next = 0x%u \n", p, next);
             /* princ(next); */
             /* return; */
@@ -829,6 +829,7 @@ static lisp readList() {
     skipSpace();
 
     char c = next();
+    if (!c) return nil;
     if (c == ')') return nil;
     if (c == '(') {
         lisp ax = readList();
@@ -920,7 +921,7 @@ static lisp funcapply(lisp f, lisp args, lisp* envp);
 static lisp getvar(lisp e, lisp env) {
     lisp v = assoc(e, env); 
     if (v) return cdr(v);
-    printf("--Undefined symbol: "); princ(e); terpri();
+    printf("\n-- ERROR: Undefined symbol: "); princ(e); terpri();
     //printf("ENV= "); princ(env); terpri();
     // TODO: "throw error"?
     return nil;
@@ -955,7 +956,7 @@ static lisp eval_hlp(lisp e, lisp* envp) {
     if (tag == func_TAG) return funcapply(f, cdr(e), envp);
     if (tag == thunk_TAG) return f; // ignore args
 
-    printf("%%ERROR.lisp - don't know how to evaluate f="); princ(f); printf("  ");
+    printf("\n-- ERROR: car is not a function: "); princ(f); printf(" in "); princ(e); terpri();
     //printf(" ENV="); princ(env); terpri();
     return nil;
 }
