@@ -73,7 +73,7 @@
 #include <stdarg.h>
 #include <string.h>
 
-#ifndef TEST
+#ifndef UNIX
   #include "FreeRTOS.h"
   #include "task.h"
 
@@ -86,7 +86,7 @@
   #define LOOPTAIL "(tail 99999 0)"
 #endif
 
-#ifdef TEST
+#ifdef UNIX
   #include <stdlib.h>
   #include <stdio.h>
   #define LOOP 2999999
@@ -113,14 +113,17 @@ static int traceGC = 0;
 static int trace = 0;
 
 // use for list(mkint(1), symbol("foo"), mkint(3), END);
-lisp END = (lisp) -1; 
+lisp END = (lisp) -1;
 
 // global symbol variables, set in lispinit()
 lisp nil = NULL;
 lisp t = NULL;
 lisp LAMBDA = NULL;
 
+lisp evalGC(lisp e, lisp *envp);
+
 // if non nil enables continous GC
+// TODO: remove
 int dogc = 0;
 
 #define string_TAG 1
@@ -495,8 +498,6 @@ lisp evallist(lisp e, lisp* envp) {
     return cons(eval(car(e), envp), evallist(cdr(e), envp));
 }
 
-lisp evalGC(lisp e, lisp *envp);
-
 lisp primapply(lisp ff, lisp args, lisp* envp, lisp all) {
     //printf("PRIMAPPLY "); princ(ff); princ(args); terpri();
     int n = ATTR(prim, ff, n);
@@ -713,7 +714,6 @@ lisp equal(lisp a, lisp b) { return eq(a, b) ? t : symbol("*EQUAL-NOT-DEFINED*")
 //}
 
 lisp _setqq(lisp* envp, lisp name, lisp v) {
-    //printf("[_setqq = "); princ(name); printf(" := "); princ(v); printf(" ]\n");
     lisp bind = assoc(name, *envp);
     if (bind) {
       setcdr(bind, v);
@@ -723,10 +723,25 @@ lisp _setqq(lisp* envp, lisp name, lisp v) {
     return v;
 }
 lisp _setq(lisp* envp, lisp name, lisp v) {
-    return _setqq(envp, name, eval(v, envp));
+    lisp bind = assoc(name, *envp);
+    if (!bind) {
+        // need to create binding first for self recursive functions
+        bind = cons(name, nil);
+        *envp = cons(bind, *envp);
+    }
+    setcdr(bind, eval(v, envp));
+    return v;
 }
 lisp _set(lisp* envp, lisp name, lisp v) {
-    return _setqq(envp, eval(name, envp), eval(v, envp));
+    name = eval(name, envp);
+    lisp bind = assoc(name, *envp);
+    if (!bind) {
+        // need to create binding first for self recursive functions
+        bind = cons(name, nil);
+        *envp = cons(bind, *envp);
+    }
+    setcdr(bind, eval(v, envp));
+    return v;
 }
 
 lisp _quote(lisp* envp, lisp x) {
@@ -1074,6 +1089,15 @@ lisp lambda(lisp* envp, lisp all) {
     return mkfunc(all, *envp);
 }
 
+lisp progn(lisp* envp, lisp all) {
+    while(all && cdr(all)) {
+        evalGC(car(all), envp);
+        all = cdr(all);
+    }
+    // only last form needs be tail recursive..., or if have "return"?
+    return mkimmediate(car(all), *envp);
+}
+
 // use bindEvalList unless NLAMBDA
 lisp bindlist(lisp fargs, lisp args, lisp env) {
     // TODO: not recurse!
@@ -1112,7 +1136,12 @@ lisp funcapply(lisp f, lisp args, lisp* envp) {
 #define EVAL(what) eval(reads(#what), &env)
 #define PRINT(what) ({ princ(EVAL(what)); terpri(); })
 #define SHOW(what) ({ printf(#what " => "); princ(EVAL(what)); terpri(); })
+#define TEST(what, expect) ({ printf("TEST: " #what "\n=> "); lisp r = EVAL(what); princ(r); \
+            lisp e = reads(#expect); printf("\nexpected: "); princ(e); terpri(); \
+            printf("status: "); printf("%s\n\n", eq(r, e) ? "passed" : "failed"); })
 #define PRIM(fname, argn, fun) env = setq(symbol(#fname), mkprim(#fname, argn, fun), env)
+
+static lisp test(lisp*);
 
 // returns an env with functions
 lisp lispinit() {
@@ -1165,6 +1194,7 @@ lisp lispinit() {
     // PRIM(quote, -16, quote);
     // PRIM(list, 16, listlist);
 
+    PRIM(progn, -16, progn);
     PRIM(eval, 1, eval);
     PRIM(evallist, 2, evallist);
 
@@ -1181,7 +1211,9 @@ lisp lispinit() {
     // while
     // gensym
 
+    // system stuff
     PRIM(gc, -1, gc);
+    PRIM(test, -16, test);
 
     // another small lisp in 1K lines
     // - https://github.com/rui314/minilisp/blob/master/minilisp.c
@@ -1288,6 +1320,8 @@ int fibo(int n) {
     else return fibo(n-1) + fibo(n-2);
 }
 
+
+
 void newLispTest(lisp env) {
 
     env = cons( cons(nil, nil) , env);
@@ -1375,6 +1409,20 @@ void newLispTest(lisp env) {
     gc(&env);
 }
 
+static lisp test(lisp* envp) {
+    lisp env = *envp;
+    terpri();
+    TEST((progn 1 2 3), 3);
+    TEST((setq a nil), nil);
+    TEST((progn (setq a (cons 1 a)) (setq a (cons 2 a)) (setq a (cons 3 a))),
+         (3 2 1));
+    PRINT((setq tailprogn (lambda (n) (progn 3 2 1 (if (= n 0) (quote ok) (tailprogn (- n 1)))))));
+    TEST(tailprogn, 3);
+    TEST((tailprogn 10000), ok);
+
+    readeval(envp);
+    return nil;
+}
 
 void lisptest(lisp env) {
     printf("------------------------------------------------------\n");
