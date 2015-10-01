@@ -1095,7 +1095,7 @@ lisp progn(lisp* envp, lisp all) {
         all = cdr(all);
     }
     // only last form needs be tail recursive..., or if have "return"?
-    printf("\nPROGN: "); princ(car(all)); terpri();
+    //printf("\nPROGN: "); princ(car(all)); terpri();
     return mkimmediate(car(all), *envp);
 }
 
