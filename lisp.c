@@ -1095,6 +1095,7 @@ lisp progn(lisp* envp, lisp all) {
         all = cdr(all);
     }
     // only last form needs be tail recursive..., or if have "return"?
+    printf("\nPROGN: "); princ(car(all)); terpri();
     return mkimmediate(car(all), *envp);
 }
 
@@ -1419,8 +1420,6 @@ static lisp test(lisp* envp) {
     PRINT((setq tailprogn (lambda (n) (progn 3 2 1 (if (= n 0) (quote ok) (tailprogn (- n 1)))))));
     TEST(tailprogn, 3);
     TEST((tailprogn 10000), ok);
-
-    readeval(envp);
     return nil;
 }
 
