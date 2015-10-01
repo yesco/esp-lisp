@@ -326,7 +326,7 @@ void* myMalloc(int bytes, int tag) {
     if (allocs_count >= MAX_ALLOCS) {
         printf("Exhaused myMalloc array!\n");
         reportAllocs();
-        #ifdef TEST
+        #ifdef UNIX
           exit(1);
         #endif
     }
@@ -414,6 +414,10 @@ lisp mkstring(char *s) {
     string* r = ALLOC(string);
     r->p = s;
     return (lisp)r;
+}
+
+char* getstring(lisp s) {
+    return IS(s, string) ? ATTR(string, s, p) : NULL;
 }
 
 // macros car/cdr save 5%
@@ -679,12 +683,20 @@ void mark(lisp x) {
     mark_deep(x, 1);
 }
 
+static lisp reads(char *s);
+
 ///--------------------------------------------------------------------------------
 // Primitives
+// naming convention:
+// -- lisp foo()   ==   arguments like normal lisp function can be called from c easy
+// -- lsp foo_()   ==   same as lisp but name clashes with stanrdard function read_
+// -- lsp _foo()   ==   special function, order may be different (like it take env& as first)
 
+// first one liners
 lisp nullp(lisp a) { return a ? nil : t; }
 lisp consp(lisp a) { return IS(a, conss) ? t : nil; }
 lisp atomp(lisp a) { return IS(a, conss) ? nil : t; }
+lisp stringp(lisp a) { return IS(a, string) ? nil : t; }
 lisp symbolp(lisp a) { return IS(a, atom) ? t : nil; } // rename struct atom to symbol?
 lisp numberp(lisp a) { return IS(a, intint) ? t : nil; } // TODO: extend with float/real
 lisp integerp(lisp a) { return IS(a, intint) ? t : nil; }
@@ -695,7 +707,11 @@ lisp plus(lisp a, lisp b) { return mkint(getint(a) + getint(b)); }
 lisp minus(lisp a, lisp b) { return mkint(getint(a) - getint(b)); }
 lisp times(lisp a, lisp b) { return mkint(getint(a) * getint(b)); }
 lisp divide(lisp a, lisp b) { return mkint(getint(a) / getint(b)); }
+
+lisp read_(lisp s) { return reads(getstring(s)); }
 lisp terpri() { printf("\n"); return nil; }
+
+// longer functions
 lisp eq(lisp a, lisp b) {
     if (a == b) return t;
     char ta = TAG(a);
@@ -706,12 +722,22 @@ lisp eq(lisp a, lisp b) {
     if (getint(a) == getint(b)) return t;
     return nil;
 }
-lisp equal(lisp a, lisp b) { return eq(a, b) ? t : symbol("*EQUAL-NOT-DEFINED*"); }
-//lisp setQQ(lisp name, lisp v, lisp env) {
-//    lisp nenv = cons( cons(name, v), env );
-//    setcdr(nenv, FAC); // create circular dependency on it's own defininition symbol by redefining
-//    return nenv;
-//}
+
+lisp equal(lisp a, lisp b) {
+    while (a != b) {
+        lisp r = eq(a, b);
+        if (r) return r;
+        char taga = TAG(a), tagb = TAG(b);
+        if (taga != tagb) return nil;
+        if (taga == string_TAG)
+            return strcmp(getstring(a), getstring(b)) == 0 ? t : nil;
+        if (taga != conss_TAG) return nil;
+        // cons, iterate
+        if (!eq(car(a), car(b))) return nil;
+        a = cdr(a); b = cdr(b);
+    }
+    return t;
+}
 
 lisp _setqq(lisp* envp, lisp name, lisp v) {
     lisp bind = assoc(name, *envp);
@@ -722,6 +748,7 @@ lisp _setqq(lisp* envp, lisp name, lisp v) {
     }
     return v;
 }
+
 lisp _setq(lisp* envp, lisp name, lisp v) {
     lisp bind = assoc(name, *envp);
     if (!bind) {
@@ -729,9 +756,11 @@ lisp _setq(lisp* envp, lisp name, lisp v) {
         bind = cons(name, nil);
         *envp = cons(bind, *envp);
     }
-    setcdr(bind, eval(v, envp));
+    v = eval(v, envp);
+    setcdr(bind, v);
     return v;
 }
+
 lisp _set(lisp* envp, lisp name, lisp v) {
     name = eval(name, envp);
     lisp bind = assoc(name, *envp);
@@ -740,7 +769,8 @@ lisp _set(lisp* envp, lisp name, lisp v) {
         bind = cons(name, nil);
         *envp = cons(bind, *envp);
     }
-    setcdr(bind, eval(v, envp));
+    v = eval(v, envp);
+    setcdr(bind, v);
     return v;
 }
 
@@ -751,19 +781,6 @@ lisp _quote(lisp* envp, lisp x) {
 // TODO: consider http://picolisp.com/wiki/?ArticleQuote
 lisp quote(lisp x) {
     return list(symbol("quote"), x, END);
-}
-
-// this one is different it returns and extended env, if needed
-// TODO remove?
-lisp setq(lisp name, lisp v, lisp env) {
-    lisp bind = assoc(name, env);
-    if (!bind) {
-        bind = cons(name, nil);
-        env = cons(bind, env);
-    }
-    v = eval(v, &env);
-    setcdr(bind, v);
-    return env;
 }
 
 ///--------------------------------------------------------------------------------
@@ -878,7 +895,7 @@ static lisp readx() {
     return readAtom(c, 0);
 }
 
-lisp reads(char *s) {
+static lisp reads(char *s) {
     input = s;
     nextChar = 0;
     return readx();
@@ -1023,7 +1040,7 @@ lisp evalGC(lisp e, lisp* envp) {
 
     if (level >= MAX_STACK) {
         printf("%%Stack blowup! You're royally screwed! why does it still work?\n");
-        #ifdef TEST
+        #ifdef UNIX
           exit(1);
         #endif
         return nil;
@@ -1129,18 +1146,18 @@ lisp funcapply(lisp f, lisp args, lisp* envp) {
 }
 
 // User, macros, assume a "globaL" env variable implicitly, and updates it
-#define SET(sname, val) env = setq(symbol(#sname), val, env)
-#define SETQc(sname, val) env = setq(symbol(#sname), val, env)
-#define SETQ(sname, val) env = setq(symbol(#sname), reads(#val), env)
-#define SETQQ(sname, val) env = setq(symbol(#sname), quote(reads(#val)), env)
-#define DEF(fname, sbody) env = setq(symbol(#fname), reads(#sbody), env)
+#define SET(sname, val) _setq(&env, symbol(#sname), val)
+#define SETQc(sname, val) _setq(&env, symbol(#sname), val)
+#define SETQ(sname, val) _setq(&env, symbol(#sname), reads(#val))
+#define SETQQ(sname, val) _setq(&env, symbol(#sname), quote(reads(#val)))
+#define DEF(fname, sbody) _setq(&env, symbol(#fname), reads(#sbody))
 #define EVAL(what) eval(reads(#what), &env)
 #define PRINT(what) ({ princ(EVAL(what)); terpri(); })
 #define SHOW(what) ({ printf(#what " => "); princ(EVAL(what)); terpri(); })
 #define TEST(what, expect) ({ printf("TEST: " #what "\n=> "); lisp r = EVAL(what); princ(r); \
             lisp e = reads(#expect); printf("\nexpected: "); princ(e); terpri(); \
-            printf("status: "); printf("%s\n\n", eq(r, e) ? "passed" : "failed"); })
-#define PRIM(fname, argn, fun) env = setq(symbol(#fname), mkprim(#fname, argn, fun), env)
+            printf("status: "); printf("%s\n\n", equal(r, e) ? "passed" : "failed"); })
+#define PRIM(fname, argn, fun) _setq(&env, symbol(#fname), mkprim(#fname, argn, fun))
 
 static lisp test(lisp*);
 
@@ -1168,6 +1185,7 @@ lisp lispinit() {
     PRIM(null?, 1, nullp);
     PRIM(cons?, 1, consp);
     PRIM(atom?, 1, atomp);
+    PRIM(string?, 1, stringp);
     PRIM(symbol?, 1, symbolp);
     PRIM(number?, 1, numberp);
     PRIM(integer?, 1, integerp);
@@ -1179,6 +1197,7 @@ lisp lispinit() {
     PRIM(*, 2, times);
     // PRIM("/", 2, divide);
     PRIM(eq, 2, eq);
+    PRIM(equal, 2, equal);
     PRIM(=, 2, eq);
     PRIM(if, -3, iff);
     PRIM(terpri, 0, terpri);
@@ -1199,7 +1218,7 @@ lisp lispinit() {
     PRIM(eval, 1, eval);
     PRIM(evallist, 2, evallist);
 
-    PRIM(read, 1, read);
+    PRIM(read, 1, read_);
 
     PRIM(set, -2, _set);
     PRIM(setq, -2, _setq);
@@ -1413,13 +1432,39 @@ void newLispTest(lisp env) {
 static lisp test(lisp* envp) {
     lisp env = *envp;
     terpri();
+
+    // make sure have one failure
+    TEST(t, fail);
+
+    // read
+    TEST((read "foo"), foo);
+    TEST((read "(+ 3 4)"), (+ 3 4));
+    TEST((number? (read "42")), t);
+    
+    // equal
+    TEST((equal nil nil), t);
+    TEST((equal 42 42), t);
+    TEST((equal (list 1 2 3) (list 1 2 3)), t);
+    TEST((equal "foo" "bar"), nil);
+    TEST((equal "foo" "foo"), t);
+    TEST((equal equal equal), t);
+
+    // set, setq, setqq
+    TEST((setq a (+ 3 4)), 7);
+    TEST((setqq b a), a);
+    TEST(b, a);
+    TEST((set b 3), 3);
+    TEST(a, 3);
+    TEST(b, a);
+       
+    // progn, progn tail recursion
     TEST((progn 1 2 3), 3);
     TEST((setq a nil), nil);
     TEST((progn (setq a (cons 1 a)) (setq a (cons 2 a)) (setq a (cons 3 a))),
          (3 2 1));
-    PRINT((setq tailprogn (lambda (n) (progn 3 2 1 (if (= n 0) (quote ok) (tailprogn (- n 1)))))));
-    TEST(tailprogn, 3);
-    TEST((tailprogn 10000), ok);
+//    PRINT((setq tailprogn (lambda (n) (progn 3 2 1 (if (= n 0) (quote ok) (tailprogn (- n 1)))))));
+//    TEST(tailprogn, 3);
+//    TEST((tailprogn 10000), ok);
     return nil;
 }
 
@@ -1508,15 +1553,15 @@ void lisptest(lisp env) {
     lisp facif = list(IF, facexp, facthn, facels, END);
     lisp fac = list(LA, list(n, END), facif, END);
     printf("FACCC="); princ(fac); terpri();
-    lisp fenv = setq(fc, fac, lenv);
-    printf("ENVENVENV=="); princ(fenv); terpri();
+    setq(&lenv, fc, fac);
+    printf("ENVENVENV=="); princ(lenv); terpri();
 //    lisp fenv = cons( cons(symbol("fac"), mkint(99)),
 //                      lenv);
 //    lisp FAC = eval(fac, fenv);
 //    lisp facbind = assoc(fc, fenv);
 //    setcdr(facbind, FAC); // create circular dependency on it's own defininition symbol by redefining
 
-    eval(list(fc, mkint(6), END), &fenv);
+    eval(list(fc, mkint(6), END), &lenv);
 
     princ(list(nil, mkstring("fihs"), mkint(1), symbol("fish"), mkint(2), mkint(3), mkint(4), nil, nil, nil, END));
 
@@ -1539,25 +1584,23 @@ void lisptest(lisp env) {
 
         lenv = list(cons(la, LA), END);
 
-        fenv = lenv;
-
         lisp tail = list(LA, list(n, s, END),
                          list(IF, list(EQ, n, mkint(0), END),
                               s,
                               list(tl, list(minuus, n, mkint(1), END), list(plu, s, mkint(1), END)), END),
                          END);
-        lisp tailenv = setq(tl, tail, fenv);
+        _setq(&lenv, tl, tail);
         printf("\n\n----------------------TAIL RECURSION!\n");
-        eval(list(tail, mkint(900), mkint(0), END), &tailenv);
+        eval(list(tail, mkint(900), mkint(0), END), &lenv);
     
         printf("\n\n----------------------TAIL RECURSION!\n");
         lisp aa = symbol("aa");
         lisp bb = symbol("bb");
         lisp BB = list(LA, list(n, END), list(plu, n, mkint(3), END), END);
-        lisp aenv = setq(bb, BB, fenv);
+        setq(&lenv, bb, BB);
         lisp AA = list(LA, list(n, END), list(bb, n, END), END);
-        aenv = setq(aa, AA, aenv);
-        eval(list(aa, mkint(7), END), &aenv);
+        setq(&lenv, aa, AA);
+        eval(list(aa, mkint(7), END), &lenv);
     
         //eval(reads("(lambda (n) (if (eq n 0) 1 (fac (- n 1))))"), lenv);
 
