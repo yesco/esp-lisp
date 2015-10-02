@@ -108,6 +108,9 @@
 // TODO: move all defs into this:
 #include "lisp.h"
 
+// big value ok as it's used mostly no inside evaluation but outside at toplevel
+#define READLINE_MAXLEN 1024
+
 // set to 1 to get GC tracing messages
 static int traceGC = 0;
 static int trace = 0;
@@ -1283,7 +1286,7 @@ void readeval(lisp env) {
     hello();
 
     while(1) {
-        char* ln = readline("lisp> ", 80);
+        char* ln = readline("lisp> ", READLINE_MAXLEN);
 
         if (!ln) {
             break;
