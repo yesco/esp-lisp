@@ -169,7 +169,7 @@ typedef struct {
 
     signed char n; // TODO: maybe could use xx tag above?
     void* f;
-    char* name; // TODO should be char name[1]; // inline allocation!, or actually should point to an ATOM
+    char* name; // TODO: should point to an ATOM! integrate ATOM and prims!
 } prim;
 
 // TODO: somehow an atom is very similar to a conss cell.
