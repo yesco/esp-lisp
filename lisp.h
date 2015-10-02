@@ -6,7 +6,7 @@ typedef struct {
 
 void reportAllocs();
 lisp lispinit();
-void lisptest(lisp env);
+void lisprun(lisp* envp);
 
 lisp princ(lisp x);
 lisp terpri();

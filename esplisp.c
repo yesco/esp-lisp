@@ -16,10 +16,10 @@
 void lispTask(void *pvParameters)
 {
     lisp env = lispinit();
-    lisptest(env);
+    lisprun(&env);
     return;
 
-    //lisp env = lispinit();
+    // TODO: move into a mem info and profile function!
 
     xQueueHandle *queue = (xQueueHandle *)pvParameters;
     printf("Hello from lispTask!\r\n");
@@ -31,7 +31,7 @@ void lispTask(void *pvParameters)
         printf("free=%u\r\n", mem);
         int start = xTaskGetTickCount();
 
-        lisptest(env);
+        lisprun(&env);
 
         int tm = (xTaskGetTickCount() - start) * portTICK_RATE_MS;
         printf("free=%u USED=%u TIME=%d\r\n", xPortGetFreeHeapSize(), (unsigned int)(mem-xPortGetFreeHeapSize()), tm);
@@ -72,11 +72,9 @@ void user_init(void)
 {
     sdk_uart_div_modify(0, UART_CLK_FREQ / 115200);
 
-//    lisp env = lispinit();
-//    lisptest(env);
-//    return;
-
     mainqueue = xQueueCreate(10, sizeof(uint32_t));
+
+    // for now run in a task, in order to allocate a bigger stack
     xTaskCreate(lispTask, (signed char *)"lispTask", 2048, &mainqueue, 2, NULL);
-//    xTaskCreate(recvTask, (signed char *)"recvTask", 256, &mainqueue, 2, NULL);
+    // xTaskCreate(recvTask, (signed char *)"recvTask", 256, &mainqueue, 2, NULL);
 }

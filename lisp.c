@@ -83,6 +83,7 @@
   //#include "FreeRTOS.h" // just for MEM FREE QUESTION
 
   #define LOOP 99999
+  #define LOOPS "99999"
   #define LOOPTAIL "(tail 99999 0)"
 #endif
 
@@ -90,6 +91,7 @@
   #include <stdlib.h>
   #include <stdio.h>
   #define LOOP 2999999
+  #define LOOPS "2999999"
   #define LOOPTAIL "(tail 2999999 0)"
 #endif
 
@@ -703,6 +705,7 @@ lisp stringp(lisp a) { return IS(a, string) ? nil : t; }
 lisp symbolp(lisp a) { return IS(a, atom) ? t : nil; } // rename struct atom to symbol?
 lisp numberp(lisp a) { return IS(a, intint) ? t : nil; } // TODO: extend with float/real
 lisp integerp(lisp a) { return IS(a, intint) ? t : nil; }
+lisp funcp(lisp a) { return IS(a, func) ? t : nil; }
 
 lisp lessthan(lisp a, lisp b) { return getint(a) < getint(b) ?  t : nil; }
 
@@ -1149,24 +1152,23 @@ lisp funcapply(lisp f, lisp args, lisp* envp) {
 }
 
 // User, macros, assume a "globaL" env variable implicitly, and updates it
-#define SET(sname, val) _setq(&env, symbol(#sname), val)
-#define SETQc(sname, val) _setq(&env, symbol(#sname), val)
-#define SETQ(sname, val) _setq(&env, symbol(#sname), reads(#val))
-#define SETQQ(sname, val) _setq(&env, symbol(#sname), quote(reads(#val)))
-#define DEF(fname, sbody) _setq(&env, symbol(#fname), reads(#sbody))
-#define EVAL(what) eval(reads(#what), &env)
+#define SET(sname, val) _setq(envp, symbol(#sname), val)
+#define SETQc(sname, val) _setq(envp, symbol(#sname), val)
+#define SETQ(sname, val) _setq(envp, symbol(#sname), reads(#val))
+#define SETQQ(sname, val) _setq(envp, symbol(#sname), quote(reads(#val)))
+#define DEF(fname, sbody) _setq(envp, symbol(#fname), reads(#sbody))
+#define EVAL(what) eval(reads(#what), envp)
 #define PRINT(what) ({ princ(EVAL(what)); terpri(); })
 #define SHOW(what) ({ printf(#what " => "); princ(EVAL(what)); terpri(); })
-#define TEST(what, expect) ({ printf("TEST: " #what "\n=> "); lisp r = EVAL(what); princ(r); \
-            lisp e = reads(#expect); printf("\nexpected: "); princ(e); terpri(); \
-            printf("status: "); printf("%s\n\n", equal(r, e) ? "passed" : "failed"); })
-#define PRIM(fname, argn, fun) _setq(&env, symbol(#fname), mkprim(#fname, argn, fun))
+#define TEST(what, expect) testss(envp, #what, #expect)
+#define PRIM(fname, argn, fun) _setq(envp, symbol(#fname), mkprim(#fname, argn, fun))
 
 static lisp test(lisp*);
 
 // returns an env with functions
 lisp lispinit() {
     lisp env = nil;
+    lisp* envp = &env;
 
     // free up and start over...
     dogc = 0;
@@ -1192,6 +1194,7 @@ lisp lispinit() {
     PRIM(symbol?, 1, symbolp);
     PRIM(number?, 1, numberp);
     PRIM(integer?, 1, integerp);
+    PRIM(func?, 1, funcp);
 
     PRIM(<, 2, lessthan);
 
@@ -1272,6 +1275,7 @@ char* readline(char* prompt, int maxlen) {
             putchar(ch); fflush(stdout);
             buffer[i++] = ch;
         }
+        if (i == maxlen) printf("\nWarning, result truncated at maxlen=%d!\n", maxlen);
         if (i == maxlen || eol) {
             buffer[i] = 0;
             printf("\n");
@@ -1301,7 +1305,7 @@ void help() {
     terpri();
 }
 
-void readeval(lisp env) {
+void readeval(lisp* envp) {
     hello();
 
     while(1) {
@@ -1322,8 +1326,8 @@ void readeval(lisp env) {
         } else if (strcmp(ln, "trace off") == 0) {
             trace = 0;
         } else if (strlen(ln) > 0) { // lisp
-            princ(evalGC(reads(ln), &env)); terpri();
-            gc(&env);
+            princ(evalGC(reads(ln), envp)); terpri();
+            gc(envp);
         }
 
         free(ln);
@@ -1343,108 +1347,46 @@ int fibo(int n) {
     else return fibo(n-1) + fibo(n-2);
 }
 
-
-
-void newLispTest(lisp env) {
-
-    env = cons( cons(nil, nil) , env);
+// lisp implemented library functions hardcoded
+void load_library(lisp* envp) {
     DEF(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
-
-    readeval(env);
-
-    return;
-
-    printf("\n\n----------------------CLOSURE GENERATOR\n");
-    SETQc(a, mkint(35));
-    SHOW(a);
-    SETQc(a, mkint(99));
-    SHOW(a);
-    //princ(eval(reads("(setq a 11111)"), env));
-
-    terpri();
-    PRINT(set);
-    _setq(&env, symbol("a"), reads("(+ 3 5)"));
-    SHOW(a);
-
-    terpri();
-    PRINT(setq);
-    _setq(&env, symbol("a"), reads("(+ 3 5)"));
-    SHOW(a);
-    
-    // TODO: setqq doesn't do the job...
-    terpri();
-    printf("-setq x a---\n");
-    SETQQ(x, a);
-    SHOW(x);
-
-    terpri();
-    PRINT(setqq);
-    _setqq(&env, symbol("x"), reads("(+ 3 5)"));
-    SHOW(a);
-
-    //return;
-
-    SETQc(b, mkint(777));
-    SHOW(b);
-    SETQ(b, 999);
-    SHOW(b);
-    SETQ(b, (+ 3 4));
-    SHOW(b);
-    printf("----change from lisp!\n");
-    SETQ(c, 11111);
-    SHOW(c);
-    SHOW(c);
-    EVAL((setq c 12345));
-    princ(env); terpri();
-    SHOW(c);
-    
-    printf("\n\n----------------------misc\n");
-    printf("ENV= "); princ(env); terpri();
-    princ(reads("(foo bar 42)")); terpri();
-    princ(mkint(3)); terpri();
-    princ(reads("4711")); terpri();
-    princ(reads("303")); terpri();
-    princ(eval(reads("3"), &env)); terpri();
-    princ(evalGC(reads("33"), &env)); terpri();
-    //princ(eval(reads("(333)"), env)); terpri(); // TODO: crashes!!!???
-
-    // TODO: should nil be a symbol? grrr, eval to nil, no better not because (x) will be true!
-    // TODO: means reader should be special...
-    princ(evalGC(reads("nil"), &env)); terpri();
-    // TODO: should t be a symbol? grrr, eval to t?
-    princ(evalGC(reads("t"), &env)); terpri();
-    princ(reads("(+ 333 444)")); terpri();
-    princ(eval(reads("(+ 33 44)"), &env)); terpri();
-
-    printf("\n\n----------------------TAIL OPT AA BB!\n");
-    DEF(bb, (lambda (b) (+ b 3)));
-    DEF(aa, (lambda (a) (bb a)));
-    printf("\nTEST 10="); princ(eval(reads("(aa 7)"), &env)); terpri();
-
-    printf("\n\n----------------------TAIL RECURSION!\n");
-    printf("1====\n");
-
-    DEF(tail, (lambda (n s) (if (eq n 0) s (tail (- n 1) (+ s 1)))));
-    printf("2====\n");
-    printf("\nTEST %d=", LOOP); princ(evalGC(reads(LOOPTAIL), &env)); terpri();
-
-    printf("\n\n---cleanup\n");
-    gc(&env);
 }
 
-static lisp test(lisp* envp) {
-    lisp env = *envp;
+void testc(lisp* envp , char* whats, lisp val, lisp expect) {
+    printf("TEST: %s\n=> ", whats);
+    lisp r = val;
+    princ(r);
+    printf("\nexpected: "); princ(expect); terpri();
+    printf("status: "); printf("%s\n\n", equal(r, expect) ? "passed" : "failed");
+}
+
+void testee(lisp* envp , lisp what, lisp expect) {
+    printf("TEST: "); princ(what); printf("\n=> ");
+    lisp r = eval(what, envp);
+    princ(r);
+    printf("\nexpected: "); princ(expect); terpri();
+    printf("status: "); printf("%s\n\n", equal(r, expect) ? "passed" : "failed");
+}
+
+void testss(lisp* envp , char* what, char* expect) {
+    testee(envp, reads(what), reads(expect));
+}
+
+static lisp test(lisp* e) {
+    lisp env = *e;
+    lisp* envp = &env; // make local, don't leak out!
+
     terpri();
+
+    TEST(nil, nil);
+    TEST(42, 42);
 
     // make sure have one failure
     TEST(t, fail);
 
-    // read
-    TEST((read "foo"), foo);
-    TEST((read "(+ 3 4)"), (+ 3 4));
-    TEST((number? (read "42")), t);
-    
     // equal
+    //testee(list(symbol("eq"), mkint(42), mkint(42), END), t);
+
     TEST((equal nil nil), t);
     TEST((equal 42 42), t);
     TEST((equal (list 1 2 3) (list 1 2 3)), t);
@@ -1452,50 +1394,17 @@ static lisp test(lisp* envp) {
     TEST((equal "foo" "foo"), t);
     TEST((equal equal equal), t);
 
-    // set, setq, setqq
-    TEST((setq a (+ 3 4)), 7);
-    TEST((setqq b a), a);
-    TEST(b, a);
-    TEST((set b 3), 3);
-    TEST(a, 3);
-    TEST(b, a);
-       
-    // progn, progn tail recursion
-    TEST((progn 1 2 3), 3);
-    TEST((setq a nil), nil);
-    TEST((progn (setq a (cons 1 a)) (setq a (cons 2 a)) (setq a (cons 3 a))),
-         (3 2 1));
-//    PRINT((setq tailprogn (lambda (n) (progn 3 2 1 (if (= n 0) (quote ok) (tailprogn (- n 1)))))));
-//    TEST(tailprogn, 3);
-//    TEST((tailprogn 10000), ok);
-    return nil;
-}
+    // list & read function
+    testee(envp, list(nil, mkstring("fihs"), mkint(1), symbol("fish"), mkint(2), mkint(3), mkint(4), nil, nil, nil, END),
+           reads("(nil fihs 1 fish 2 3 4 nil nil nil)"));
 
-void lisptest(lisp env) {
-    printf("------------------------------------------------------\n");
-    newLispTest(env);
-    return;
-
-    printf("\n---string: "); princ(mkstring("foo"));
-    printf("\n---int: "); princ(mkint(42));
-    printf("\n---cons: "); princ(cons(mkstring("bar"), mkint(99)));
-    printf("\n");
-    printf("\nread1---string: "); princ(mklenstring("bar", 3));
-    printf("\nread2---string: "); princ(mklenstring("bar", 2));
-    printf("\nread3---string: "); princ(mklenstring("bar", 1));
-    printf("\nread4---read.string: "); princ(reads("\"bar\""));
-    printf("\nread5---atom: "); princ(reads("bar"));
-    printf("\nread6---int: "); princ(reads("99"));
-    printf("\nread7---cons: "); princ(reads("(bar . 99)"));
-    printf("\nread8---1: "); princ(reads("1"));
-    printf("\nread9---12: "); princ(reads("12"));
-    treads("123");
-    treads("()");
-    treads("(1)");
-    treads("(1 2)");
+    // misc
+    testss(envp, "123", "123");
+    TEST("()", "nil");
+    TEST("(1)", "(1)");
+    TEST("(1 2)", (1 2));
     treads("(1 2 3)");
     treads("((1) (2) (3))");
-    treads("(lambda (n) if (eq n 0) (* n (fac (- n 1))))");
     treads("(A)");
     treads("(A B)");
     treads("(A B C)");
@@ -1506,111 +1415,69 @@ void lisptest(lisp env) {
     printf("\na=a: "); princ(eq(symbol("a"), symbol("a")));
     printf("\n");
 
-    lisp plu = mkprim("plus", 2, plus);
-    lisp tim = mkprim("times", 2, times);
-    lisp pp = cons(plu, cons(mkint(3), cons(mkint(4), nil)));
-    lisp tt = cons(tim, cons(mkint(3), cons(mkint(4), nil)));
+    treads("(lambda (n) if (eq n 0) (* n (fac (- n 1))))");
 
-    printf("\neval-a: ");
-    lisp a = symbol("a");
-    env = cons(cons(a, mkint(5)), nil);;
-    princ(eval(a, &env));
-
-    //printf("\nchanged neval-a: ");
-    //princ(eval(a, & lol cons(cons(a, mkint(77)), env)));
-
-    printf("\nTHUNK-----");
-    princ(mkthunk(mkint(14), NULL));
-    printf(" ----> ");
-    princ(eval(cons(mkthunk(pp, NULL), nil), NULL));
-    // it has "lexical binding", lol
-    princ(eval(cons(mkthunk(a, env), nil), &env));
-
+    // read
+    TEST((read "foo"), foo);
+    TEST((read "(+ 3 4)"), (+ 3 4));
+    TEST((number? (read "42")), t);
+    
+    // set, setq, setqq
+    TEST((setq a (+ 3 4)), 7);
+    TEST((setqq b a), a);
+    TEST(b, a);
+    TEST((set b 3), 3);
+    TEST(a, 3);
+    TEST(b, a);
+       
+    // if
     lisp IF = mkprim("if", -3, iff);
-    printf("\n\n--------------IF\n");
-    eval(IF, NULL); terpri();
-    eval(cons(IF, cons(mkint(7), cons(pp, cons(tt, nil)))), NULL);
-    eval(cons(IF, cons(nil, cons(pp, cons(tt, nil)))), NULL);
+    testee(envp, IF, IF);
+    testee(envp, cons(IF, cons(mkint(7), cons(mkint(11), cons(mkint(22), nil)))), mkint(11));
+    testee(envp, cons(IF, cons(nil, cons(mkint(11), cons(mkint(22), nil)))), mkint(22));
+    TEST((if 7 11 22), 11);
+    TEST((if nil 11 22), 22);
+    TEST((if nil 11 22 33), 22);
 
-    lisp LA = mkprim("lambda", -16, lambda);
-    printf("\n\n--------------LAMBDA\n");
-    eval(LA, NULL); terpri();
-    eval(list(LA, mkint(7), END), NULL);
-    lisp la = symbol("lambda");
-    lisp lenv = list(cons(la, LA), END);
-    lisp l = list(LA, list(symbol("n"), END),
-                  list(plu, mkint(39), symbol("n"), END),
-                  END);
-    l = eval(l, &lenv);
-    eval(list(l, mkint(3), END), &lenv); // looking up la giving LA doesn't work?
+    // thunk
+    lisp th = mkthunk(mkint(14), NULL);
+    testee(envp, th, th); // eval(thunk)
+    testee(envp, cons(th, nil), th); // (eval (thunk))
 
-    lisp n = symbol("n");
-    lisp EQ = mkprim("eq", 2, eq);
-    lisp minuus = mkprim("minus", 2, minus);
-    lisp facexp = list(EQ, n, mkint(0), END);
-    lisp facthn = mkint(1);
-    lisp fc = symbol("fac");
-    lisp facrec = list(fc, list(minuus, n, mkint(1), END), END);
-    lisp facels = list(tim, n, facrec, END);
-    printf("\nfacels="); princ(facels); terpri();
-    lisp facif = list(IF, facexp, facthn, facels, END);
-    lisp fac = list(LA, list(n, END), facif, END);
-    printf("FACCC="); princ(fac); terpri();
-    setq(&lenv, fc, fac);
-    printf("ENVENVENV=="); princ(lenv); terpri();
-//    lisp fenv = cons( cons(symbol("fac"), mkint(99)),
-//                      lenv);
-//    lisp FAC = eval(fac, fenv);
-//    lisp facbind = assoc(fc, fenv);
-//    setcdr(facbind, FAC); // create circular dependency on it's own defininition symbol by redefining
+    // lambda
+    TEST((func? (lambda (n) 37)), t);
+    TEST(((lambda (n) 37) 99), 37);
+    TEST(((lambda (n) n) 99), 99);
+    TEST(((lambda (a) ((lambda (n) (+ n a)) 33)) 66), 99); // lexical scoping
 
-    eval(list(fc, mkint(6), END), &lenv);
+    // recursion
+    DEF(fac, (lambda (n) (if (= n 0) 1 (* n (fac (- n 1))))));
+    TEST((fac 6), 720);
+    TEST((fac 21), 952369152);
 
-    princ(list(nil, mkstring("fihs"), mkint(1), symbol("fish"), mkint(2), mkint(3), mkint(4), nil, nil, nil, END));
+    // tail recursion optimization test (don't blow up stack!)
+    DEF(bb, (lambda (b) (+ b 3)));
+    DEF(aa, (lambda (a) (bb a)));
+    TEST((aa 7), 10);
 
-    // TODO: remove
-    gc(NULL);
-    gc(NULL);
-    printf("AFTER GC!\n");
+    DEF(tail, (lambda (n s) (if (eq n 0) s (tail (- n 1) (+ s 1)))));
+    TEST(tail, xyz);
+    testss(envp, LOOPTAIL, LOOPS);
 
-    if (0) {
-        dogc = 1;
-        lisp tl = symbol("tail");
-        lisp s = symbol("s");
+    // progn, progn tail recursion
+    TEST((progn 1 2 3), 3);
+    TEST((setq a nil), nil);
+    TEST((progn (setq a (cons 1 a)) (setq a (cons 2 a)) (setq a (cons 3 a))),
+         (3 2 1));
 
-        LA = mkprim("lambda", -16, lambda);
-        EQ = mkprim("eq", 2, eq);
-        IF = mkprim("if", -3, iff);
-        minuus = mkprim("minus", 2, minus);
-        plu = mkprim("plus", 2, plus);
-        tim = mkprim("times", 2, times);
+//    PRINT((setq tailprogn (lambda (n) (progn 3 2 1 (if (= n 0) (quote ok) (tailprogn (- n 1)))))));
+//    TEST(tailprogn, 3);
+//    TEST((tailprogn 10000), ok);
+    return nil;
+}
 
-        lenv = list(cons(la, LA), END);
-
-        lisp tail = list(LA, list(n, s, END),
-                         list(IF, list(EQ, n, mkint(0), END),
-                              s,
-                              list(tl, list(minuus, n, mkint(1), END), list(plu, s, mkint(1), END)), END),
-                         END);
-        _setq(&lenv, tl, tail);
-        printf("\n\n----------------------TAIL RECURSION!\n");
-        eval(list(tail, mkint(900), mkint(0), END), &lenv);
-    
-        printf("\n\n----------------------TAIL RECURSION!\n");
-        lisp aa = symbol("aa");
-        lisp bb = symbol("bb");
-        lisp BB = list(LA, list(n, END), list(plu, n, mkint(3), END), END);
-        setq(&lenv, bb, BB);
-        lisp AA = list(LA, list(n, END), list(bb, n, END), END);
-        setq(&lenv, aa, AA);
-        eval(list(aa, mkint(7), END), &lenv);
-    
-        //eval(reads("(lambda (n) (if (eq n 0) 1 (fac (- n 1))))"), lenv);
-
-//    reportAllocs();
-//    printf("SIZEOF int = %d\nSIZEOF ptr = %d\n", sizeof(int), sizeof(int*));
-    } else {
-        newLispTest(env);
-    }
-    printf("\n========================================================END=====================================================\n");
+void lisprun(lisp* envp) {
+    load_library(envp);
+    readeval(envp);
+    return;
 }

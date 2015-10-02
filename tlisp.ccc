@@ -5,5 +5,5 @@
 
 int main() {
     lisp env = lispinit();
-    lisptest(env);
+    lisprun(&env);
 }
