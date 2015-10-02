@@ -1118,7 +1118,6 @@ lisp progn(lisp* envp, lisp all) {
         all = cdr(all);
     }
     // only last form needs be tail recursive..., or if have "return"?
-    //printf("\nPROGN: "); princ(car(all)); terpri();
     return mkimmediate(car(all), *envp);
 }
 
@@ -1147,8 +1146,7 @@ lisp funcapply(lisp f, lisp args, lisp* envp) {
     //printf("FUNCAPPLY:"); princ(f); printf(" body="); princ(l); printf(" args="); princ(args); printf(" env="); princ(lenv); terpri();
     lisp fargs = car(l); // skip #lambda // TODO: check if NLAMBDA!
     lenv = bindEvalList(fargs, args, envp, lenv);
-    lisp prog = car(cdr(l)); // skip #lambda (...) TODO: implicit PROGN? how to do?
-    return mkimmediate(prog, lenv);
+    return progn(&lenv, cdr(l)); // tail recurse on rest
 }
 
 // User, macros, assume a "globaL" env variable implicitly, and updates it
@@ -1469,6 +1467,10 @@ static lisp test(lisp* e) {
     TEST((setq a nil), nil);
     TEST((progn (setq a (cons 1 a)) (setq a (cons 2 a)) (setq a (cons 3 a))),
          (3 2 1));
+
+    // implicit progn in lambda
+    DEF(f, (lambda (n) (setq n (+ n 1)) (setq n (+ n 1)) (setq n (+ n 1))));
+    TEST((f 0), 3);
 
 //    PRINT((setq tailprogn (lambda (n) (progn 3 2 1 (if (= n 0) (quote ok) (tailprogn (- n 1)))))));
 //    TEST(tailprogn, 3);
