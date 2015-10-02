@@ -37,7 +37,7 @@ Lot's of stuff is missing...
 
 ## performace
 
-The esp-lisp is interpreted, too keep the code small and simple. Compared to lua from the NodeMcu it's about 2x slower, but lua is compiled and uses lots of memory for functions (about 600 bytes for a simple call).
+The esp-lisp is interpreted, to keep the code small and simple. Compared to lua from the NodeMcu it's about 2x slower, but lua is compiled and uses lots of memory for functions (about 600 bytes for a simple call).
 
 ## how to build
 
