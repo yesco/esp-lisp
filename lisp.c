@@ -72,15 +72,11 @@
 #include <ctype.h>
 #include <stdarg.h>
 #include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 #ifndef UNIX
   #include "FreeRTOS.h"
-  #include "task.h"
-
-  #include <espressif/esp_common.h>
-  //#include <serial_driver.h> // enable for uart0_num_char(void)
-
-  //#include "FreeRTOS.h" // just for MEM FREE QUESTION
 
   #define LOOP 99999
   #define LOOPS "99999"
@@ -88,8 +84,6 @@
 #endif
 
 #ifdef UNIX
-  #include <stdlib.h>
-  #include <stdio.h>
   #define LOOP 2999999
   #define LOOPS "2999999"
   #define LOOPTAIL "(tail 2999999 0)"
@@ -109,6 +103,8 @@
 
 // TODO: move all defs into this:
 #include "lisp.h"
+
+#include "compat.h"
 
 // big value ok as it's used mostly no inside evaluation but outside at toplevel
 #define READLINE_MAXLEN 1024
@@ -1323,6 +1319,22 @@ void readeval(lisp* envp) {
             trace = 1;
         } else if (strcmp(ln, "trace off") == 0) {
             trace = 0;
+        } else if (strncmp(ln, "wifi", 4) == 0) {
+            strtok(ln, " "); // skip wifi
+            char* ssid = strtok(NULL, " ");
+            char* pass = strtok(NULL, " ");
+            connect_wifi(ssid, pass);
+        } else if (strncmp(ln, "wget", 4) == 0) {
+            strtok(ln, " "); // skip wget
+            char* server = strtok(NULL, " ");
+            char* url = strtok(NULL, " ");
+            int buffsize = 1024*16;
+            char* buff = calloc(buffsize, 1);
+            printf("SERVER=%s URL=%s\n", server, url);
+            int r = http_get(buff, buffsize, url, server);
+            printf("GET=> %d\n", r);
+            printf("%s<<<\n", buff);
+            free(buff);
         } else if (strlen(ln) > 0) { // lisp
             princ(evalGC(reads(ln), envp)); terpri();
             gc(envp);
