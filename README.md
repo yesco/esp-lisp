@@ -41,6 +41,29 @@ The esp-lisp is interpreted, to keep the code small and simple. Compared to lua 
 
 ## how to build
 
+### I want to run it on my linux/cygwin, I have GCC
+
+- Get https://github.com/yesco/esp-lisp
+- esp-lisp> ./run
+
+It'll compile and run it for you, you'll have a lisp prompt.
+
+	lisp> help
+	...
+
+try out the commands, it also shows what functions/symbols there are
+
+	lisp> (+ 3 4)
+	7
+
+	lisp> (setq fac (lambda (n) (if (= n 0) 1 (* n (fac (- n 1))))))
+	#func[]
+
+	lisp> (fac 6)
+	720
+
+### build embeddable image and flash it to a nodemcu/EPS8266 device
+
 In a directory:
 
 - Get https://github.com/SuperHouse/esp-open-rtos (and all it wants)
