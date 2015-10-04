@@ -26,8 +26,8 @@
 
 void lispTask(void *pvParameters)
 {
-    lisp env = lispinit();
-    lisprun(&env);
+    lisp env = lisp_init();
+    lisp_run(&env);
     return;
 
     // TODO: move into a mem info and profile function!
@@ -38,24 +38,7 @@ void lispTask(void *pvParameters)
     while(1) {
         //vTaskDelay(300); // 3s
 
-        unsigned int mem = xPortGetFreeHeapSize();
-        printf("free=%u\r\n", mem);
-        int start = xTaskGetTickCount();
-
         lisprun(&env);
-
-        int tm = (xTaskGetTickCount() - start) * portTICK_RATE_MS;
-        printf("free=%u USED=%u TIME=%d\r\n", xPortGetFreeHeapSize(), (unsigned int)(mem-xPortGetFreeHeapSize()), tm);
-        printf("======================================================================\n");
-        reportAllocs();
-
-        start = xTaskGetTickCount();
-        int i, s = 0;
-        for(i=0; i<1000000; i++) { s = s + 1; }
-        tm = (xTaskGetTickCount() - start) * portTICK_RATE_MS;
-
-        printf("10,000,000 LOOP (100x lua) TIME=%d\r\n", tm);
-        printf("======================================================================\n");
 
         xQueueSend(*queue, &count, 0);
         count++;
@@ -78,6 +61,26 @@ void recvTask(void *pvParameters)
 }
 
 static xQueueHandle mainqueue;
+
+unsigned int lastTick = 0;
+int lastMem = 0;
+
+void print_memory_info(int verbose) {
+    report_allocs(verbose);
+
+    int tick = xTaskGetTickCount();
+    int ms = (tick - lastTick) / portTICK_RATE_MS;
+    int mem = xPortGetFreeHeapSize();
+    if (verbose)
+        printf("=== free=%u USED=%u bytes TIME=%d ms ===\n", mem, lastMem-mem, ms);
+    else {
+        if (mem) printf("free=%u ", mem);
+        if (lastMem-mem) printf("USED=%u bytes ", lastMem-mem);
+        if (ms) printf("TIME=%d ms ", ms);
+    }
+    lastTick = tick;
+    lastMem = mem;
+}
 
 #define max(a,b) \
     ({ __typeof__ (a) _a = (a); \
@@ -103,93 +106,12 @@ void connect_wifi(char* ssid, char* password) {
 // However, how to handle multiple gets at same time?
 // TODO: keep as task as maybe it's blocking? 
 //void http_get_task(void *pvParameters) {
-int http_get(char* buff, int size, char* url, char* server) {
-    int successes = 0, failures = 0;
-
-    printf("HTTP get task starting...\r\n");
-
-    const struct addrinfo hints = {
-        .ai_family = AF_INET,
-        .ai_socktype = SOCK_STREAM,
-    };
-    struct addrinfo *res;
-
-    printf("Running DNS lookup for %s...\r\n", url);
-    int err = getaddrinfo(server, "80", &hints, &res);
-
-    if (err != 0 || res == NULL) {
-        printf("DNS lookup failed err=%d res=%p\r\n", err, res);
-        if (res)
-            freeaddrinfo(res);
-        failures++;
-        return 1;
-    }
-
-    /* Note: inet_ntoa is non-reentrant, look at ipaddr_ntoa_r for "real" code */
-    struct in_addr *addr = &((struct sockaddr_in *)res->ai_addr)->sin_addr;
-    printf("DNS lookup succeeded. IP=%s\r\n", inet_ntoa(*addr));
-
-    int s = socket(res->ai_family, res->ai_socktype, 0);
-    if(s < 0) {
-        printf("... Failed to allocate socket.\r\n");
-        freeaddrinfo(res);
-        vTaskDelay(1000 / portTICK_RATE_MS);
-        failures++;
-        return 2;
-    }
-
-    printf("... allocated socket\r\n");
-
-    if(connect(s, res->ai_addr, res->ai_addrlen) != 0) {
-        close(s);
-        freeaddrinfo(res);
-        printf("... socket connect failed.\r\n");
-        failures++;
-        return 3;
-    }
-
-    printf("... connected\r\n");
-    freeaddrinfo(res);
-
-    // TODO: not efficient?
-    #define WRITE(msg) (write((s), (msg), strlen(msg)) < 0)
-    if (WRITE("GET ") ||
-        WRITE(url) ||
-        WRITE("\r\n") ||
-        WRITE("User-Agent: esp-open-rtos/0.1 esp8266\r\n\r\n"))
-    #undef WRITE
-    {
-        printf("... socket send failed\r\n");
-        close(s);
-        failures++;
-        return 4;
-    }
-    printf("... socket send success\r\n");
-
-    int r;
-    char* p = buff;
-    size--; // remove one for \0
-    do {
-        bzero(buff, size);
-        r = read(s, p, size);
-        if (r > 0) {
-            p += r;
-            size -= r;
-            // printf("%s", recv_buf);
-        }
-    } while (r > 0);
-
-    printf("... done reading from socket. Last read return=%d errno=%d\r\n", r, errno);
-    if (r != 0)
-        failures++;
-    else
-        successes++;
-    close(s);
-    return 0;
-}
 //  vTaskDelay(1000 / portTICK_RATE_MS);
 
 void user_init(void) {
+    lastTick = xTaskGetTickCount();
+    lastMem = xPortGetFreeHeapSize();
+
     sdk_uart_div_modify(0, UART_CLK_FREQ / 115200);
 
     mainqueue = xQueueCreate(10, sizeof(uint32_t));

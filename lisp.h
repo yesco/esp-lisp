@@ -4,9 +4,9 @@ typedef struct {
     short index; // index into allocs_ptr array
 } *lisp;
 
-void reportAllocs();
-lisp lispinit();
-void lisprun(lisp* envp);
+void report_allocs(int verbose);
+lisp lisp_init();
+void lisp_run(lisp* envp);
 
 lisp princ(lisp x);
 lisp terpri();

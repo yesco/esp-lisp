@@ -1,9 +1,48 @@
+/* Distributed under Mozilla Public Licence 2.0   */
+/* https://www.mozilla.org/en-US/MPL/2.0/         */
 /* 2015-09-22 (C) Jonas S Karlsson, jsk@yesco.org */
-/* "test" for esp-open-rtos put in examples/lisp */
+/* "test" driver for "unix"                       */
+/* provides alt implementations to esplisp.c      */
+
+#include <stdio.h>
+#include <time.h>
 
 #include "lisp.h"
+#include "compat.h"
+
+unsigned int lastClock = 0;
+int lastMem = 0;
+
+// TODO: use this! mcheck, mcheck_check_all, mcheck_pedantic, mprobe - heap consistency checking
+// http://www.gnu.org/software/libc/manual/html_node/Heap-Consistency-Checking.html#Heap-Consistency-Checking
+// http://www.gnu.org/software/libc/manual/html_node/Hooks-for-Malloc.html#Hooks-for-Malloc
+// http://www.gnu.org/software/libc/manual/html_node/Obstacks.html#Obstacks
+// http://stackoverflow.com/questions/10472929/gettotalmemory-allocation-in-c
+// http://stackoverflow.com/questions/910172/track-c-memory-allocations
+void print_memory_info(int verbose) {
+    report_allocs(verbose);
+
+    int clk = clock();
+    int ms = (int)((clk- lastClock) * 1000 / CLOCKS_PER_SEC);
+    int mem = 0;
+    if (verbose == 2) 
+        printf("=== free=%u USED=%u bytes TIME=%d ms ===\n", mem, lastMem-mem, ms);
+    else if (verbose == 1) {
+        if (mem) printf("free=%u ", mem);
+        if (lastMem-mem) printf("USED=%u bytes ", lastMem-mem);
+        if (ms) printf("TIME=%d ms ", ms);
+	printf("\n");
+    }
+    lastClock = clk;
+    lastMem = mem;
+}
+
+void connect_wifi(char* ssid, char* password) { /* dummy */ }
 
 int main() {
-    lisp env = lispinit();
-    lisprun(&env);
+    lastClock = clock();
+    lastMem = 0;
+
+    lisp env = lisp_init();
+    lisp_run(&env);
 }

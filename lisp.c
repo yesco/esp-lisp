@@ -1,5 +1,6 @@
 /* Distributed under Mozilla Public Licence 2.0   */
 /* https://www.mozilla.org/en-US/MPL/2.0/         */
+/* 2015-09-22 (C) Jonas S Karlsson, jsk@yesco.org */
 /* A mini "lisp machine" */
 
 // in speed it's comparable to compiled LUA
@@ -116,7 +117,7 @@ static int trace = 0;
 // use for list(mkint(1), symbol("foo"), mkint(3), END);
 lisp END = (lisp) -1;
 
-// global symbol variables, set in lispinit()
+// global symbol variables, set in lisp_init()
 lisp nil = NULL;
 lisp t = NULL;
 lisp LAMBDA = NULL;
@@ -219,14 +220,17 @@ typedef struct func {
 #define MAX_TAGS 16
 int tag_count[MAX_TAGS] = {0};
 int tag_bytes[MAX_TAGS] = {0};
-char* tag_name[MAX_TAGS] = { "TOTAL", "string", "cons", "int", "prim", "atom", "thunk", "immediate", "func", 0 };
+int tag_freed_count[MAX_TAGS] = {0};
+int tag_freed_bytes[MAX_TAGS] = {0};
+
+char* tag_name[MAX_TAGS] = { "total", "string", "cons", "int", "prim", "atom", "thunk", "immediate", "func", 0 };
 int tag_size[MAX_TAGS] = { 0, sizeof(string), sizeof(conss), sizeof(intint), sizeof(prim), sizeof(thunk), sizeof(immediate), sizeof(func) };
 
 // essentially total number of cons+atom+prim
 // TODO: remove ATOM since they are never GC:ed! (thunk are special too, not tracked)
 //#define MAX_ALLOCS 819200 // (fibo 22)
 //#define MAX_ALLOCS 8192
-#define MAX_ALLOCS 1024
+#define MAX_ALLOCS 1024 // keesp 15K free
 //#define MAX_ALLOCS 512 // keeps 17K free
 //#define MAX_ALLOCS 256 // keeps 21K free
 //#define MAX_ALLOCS 128 // keeps 21K free
@@ -247,8 +251,6 @@ unsigned int used[MAX_ALLOCS/32 + 1] = { 0 };
 #define ALLOC(type) ({type* x = myMalloc(sizeof(type), type ## _TAG); x->tag = type ## _TAG; x;})
 #define ATTR(type, x, field) ((type*)x)->field
 #define IS(x, type) (x && TAG(x) == type ## _TAG)
-
-void reportAllocs();
 
 int gettag(lisp x) {
     return TAG(x);
@@ -285,14 +287,20 @@ void* salloc(int bytes) {
     return p;
 }
 
-void sfree(void** p, int bytes) {
+void sfree(void** p, int bytes, int tag) {
     if (bytes >= SALLOC_MAX_SIZE) {
         used_bytes -= bytes;
         return free(p);
     }
+    // store for reuse
     void* n = alloc_slot[bytes];
     *p = n;
     alloc_slot[bytes] = p;
+    // stats
+    tag_freed_count[tag]++;
+    tag_freed_bytes[tag] += bytes;
+    tag_freed_count[0]++;
+    tag_freed_bytes[0] += bytes;
 }
 
 // call this malloc using ALLOC(typename) macro
@@ -326,7 +334,7 @@ void* myMalloc(int bytes, int tag) {
 
     if (allocs_count >= MAX_ALLOCS) {
         printf("Exhaused myMalloc array!\n");
-        reportAllocs();
+        report_allocs(2);
         #ifdef UNIX
           exit(1);
         #endif
@@ -356,9 +364,6 @@ lisp gc(lisp* envp) {
 
     if (envp) mark(*envp);
 
-    // if not need let's not gc
-    if (!needGC()) return mem_usage(0); 
-
     int count = 0;
     int i ;
     for(i = 0; i < allocs_count; i++) {
@@ -377,7 +382,7 @@ lisp gc(lisp* envp) {
         } else {
             count++;
             if (1) {
-                sfree((void*)p, tag_size[TAG(p)]);;
+                sfree((void*)p, tag_size[TAG(p)], TAG(p));;
             } else {
                 printf("FREE: %d ", i); princ(p); terpri();
                 // simulate free
@@ -392,15 +397,61 @@ lisp gc(lisp* envp) {
     return mem_usage(count);
 }
 
-void reportAllocs() {
-    terpri();
-    printf("--- Allocation stats ---\n");
+void report_allocs(int verbose) {
     int i;
+
+    terpri();
+    if (verbose == 2)
+        printf("--- Allocation stats ---\n");
+
+
+    if (verbose == 1) {
+        printf("\nAllocated: ");
+        for(i = 0; i<16; i++)
+            if (tag_count[i] > 0) printf("%d %s=%d bytes, ", tag_count[i], tag_name[i], tag_bytes[i]);
+        
+        printf("\n    Freed: ");
+        for(i = 0; i<16; i++)
+            if (tag_freed_count[i] > 0) printf("%d %s=%d bytes, ", tag_count[i], tag_name[i], tag_bytes[i]);
+
+        printf("\n     Used: ");
+    }
+
     for(i = 0; i<16; i++) {
-        if (tag_count[i] > 0)
-            printf("%7s: %3d allocations of %5d bytes\n", tag_name[i], tag_count[i], tag_bytes[i]);
+        if (tag_count[i] > 0 || tag_freed_count[i] > 0) {
+            int count = tag_count[i] - tag_freed_count[i];
+            int bytes = tag_bytes[i] - tag_freed_bytes[i];
+            if (verbose == 2) 
+                printf("%12s: %3d allocations of %5d bytes, and still use %3d total %5d bytes\n",
+                       tag_name[i], tag_count[i], tag_bytes[i], count, bytes);
+            else if (verbose == 1 && (count > 0 || bytes > 0))
+                printf("%d %s=%d bytes, ", count, tag_name[i], bytes);
+        }
+    }
+
+    if (verbose == 2) {
+        for(i = 0; i<16; i++) {
+            if (tag_count[i] > 0 || tag_freed_count[i] > 0) {
+                int count = tag_count[i] - tag_freed_count[i];
+                int bytes = tag_bytes[i] - tag_freed_bytes[i];
+
+                if (verbose == 1 && (tag_count[i] != count || tag_bytes[i] != bytes) && (tag_count[i] || tag_bytes[i]))
+                    printf("churn %d %s=%d bytes, ", tag_count[i], tag_name[i], tag_bytes[i]);
+            }
+        }
+    }
+    
+    for(i = 0; i<16; i++) {
         tag_count[i] = 0;
         tag_bytes[i] = 0;
+        tag_freed_count[i] = 0;
+        tag_freed_bytes[i] = 0;
+    }
+
+    // TODO: this one doesn't make sense?
+    if (verbose) {
+        printf("\nused_count=%d ", used_count);
+        fflush(stdout);
     }
 }
 
@@ -713,6 +764,11 @@ lisp divide(lisp a, lisp b) { return mkint(getint(a) / getint(b)); }
 lisp read_(lisp s) { return reads(getstring(s)); }
 lisp terpri() { printf("\n"); return nil; }
 
+// TODO: consider http://picolisp.com/wiki/?ArticleQuote
+lisp _quote(lisp* envp, lisp x) { return x; }
+lisp quote(lisp x) { return list(symbol("quote"), x, END); } // TODO: optimize
+lisp _env(lisp* e, lisp all) { return *e; }
+
 // longer functions
 lisp eq(lisp a, lisp b) {
     if (a == b) return t;
@@ -774,15 +830,6 @@ lisp _set(lisp* envp, lisp name, lisp v) {
     v = eval(v, envp);
     setcdr(bind, v);
     return v;
-}
-
-lisp _quote(lisp* envp, lisp x) {
-    return x;
-}
-
-// TODO: consider http://picolisp.com/wiki/?ArticleQuote
-lisp quote(lisp x) {
-    return list(symbol("quote"), x, END);
 }
 
 ///--------------------------------------------------------------------------------
@@ -1084,7 +1131,7 @@ lisp evalGC(lisp e, lisp* envp) {
             r = eval_hlp(ATTR(thunk, r, e), &ATTR(thunk, r, env));
         // immediates are immediately consumed after evaluation, so they can be free:d directly
         tofree->tag = 0;
-        sfree((void*)tofree, sizeof(thunk));
+        sfree((void*)tofree, sizeof(thunk), immediate_TAG);
         used_count--; // TODO: move to sfree?
     }
 
@@ -1160,7 +1207,7 @@ lisp funcapply(lisp f, lisp args, lisp* envp) {
 static lisp test(lisp*);
 
 // returns an env with functions
-lisp lispinit() {
+lisp lisp_init() {
     lisp env = nil;
     lisp* envp = &env;
 
@@ -1217,6 +1264,7 @@ lisp lispinit() {
     PRIM(progn, -16, progn);
     PRIM(eval, 1, eval);
     PRIM(evallist, 2, evallist);
+    PRIM(env, -16, _env);
 
     PRIM(read, 1, read_);
 
@@ -1237,6 +1285,11 @@ lisp lispinit() {
 
     // another small lisp in 1K lines
     // - https://github.com/rui314/minilisp/blob/master/minilisp.c
+
+    // neat "trick" - limit how much 'trace on' will print by injecting nil bound to nil
+    // in evalGC function the print ENV stops when arriving at this token, thusly
+    // will not show any variables defined above...
+    env = cons( cons(nil, nil), env );
 
     dogc = 1;
     return env;
@@ -1299,6 +1352,14 @@ void help() {
     terpri();
 }
 
+void run(char* s, lisp* envp) {
+    lisp r = reads(s);
+    princ(evalGC(r, envp)); terpri();
+    // TODO: report parsing allocs separately?
+    // mark(r);
+    gc(envp);
+}
+
 void readeval(lisp* envp) {
     hello();
 
@@ -1326,18 +1387,26 @@ void readeval(lisp* envp) {
             connect_wifi(ssid, pass);
         } else if (strncmp(ln, "wget", 4) == 0) {
             strtok(ln, " "); // skip wget
-            char* server = strtok(NULL, " ");
-            char* url = strtok(NULL, " ");
-            int buffsize = 1024*16;
+            char* server = strtok(NULL, " "); if (!server) server = "yesco.org";
+            char* url = strtok(NULL, " ");    if (!url) url = "http://yesco.org/index.html";
+            int buffsize = 128;
             char* buff = calloc(buffsize, 1);
             printf("SERVER=%s URL=%s\n", server, url);
             int r = http_get(buff, buffsize, url, server);
             printf("GET=> %d\n", r);
             printf("%s<<<\n", buff);
             free(buff);
+        } else if (strncmp(ln, "mem", 3) == 0) {
+            char* e = ln + 3;
+            print_memory_info(0);
+            if (*e) {
+                run(e+1, envp);
+                print_memory_info(2);
+            }
         } else if (strlen(ln) > 0) { // lisp
-            princ(evalGC(reads(ln), envp)); terpri();
-            gc(envp);
+            print_memory_info(0);
+            run(ln, envp);
+            print_memory_info(1);
         }
 
         free(ln);
@@ -1490,7 +1559,7 @@ static lisp test(lisp* e) {
     return nil;
 }
 
-void lisprun(lisp* envp) {
+void lisp_run(lisp* envp) {
     load_library(envp);
     readeval(envp);
     return;
