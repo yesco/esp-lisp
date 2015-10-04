@@ -38,7 +38,7 @@ void lispTask(void *pvParameters)
     while(1) {
         //vTaskDelay(300); // 3s
 
-        lisprun(&env);
+        lisp_run(&env);
 
         xQueueSend(*queue, &count, 0);
         count++;
