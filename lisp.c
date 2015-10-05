@@ -1370,6 +1370,11 @@ void testss(lisp* envp , char* what, char* expect) {
     testee(envp, reads(what), reads(expect));
 }
 
+// TODO: implement, (port 8080) => p, (listen p) (http @) (close @)
+//   https://github.com/SuperHouse/esp-open-rtos/commit/147257efa472307608019f04f38f8ebadadd7c01
+//   http://john.freml.in/teepeedee2-vs-picolisp
+//   http://picolisp.com/wiki/?ErsatzWebApp
+
 static lisp test(lisp* e) {
     lisp env = *e;
     lisp* envp = &env; // make local, don't leak out!
