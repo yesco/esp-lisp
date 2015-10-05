@@ -37,9 +37,32 @@ Lot's of stuff is missing...
 
 ## performace
 
-The esp-lisp is interpreted, too keep the code small and simple. Compared to lua from the NodeMcu it's about 2x slower, but lua is compiled and uses lots of memory for functions (about 600 bytes for a simple call).
+The esp-lisp is interpreted, to keep the code small and simple. Compared to lua from the NodeMcu it's about 2x slower, but lua is compiled and uses lots of memory for functions (about 600 bytes for a simple call).
 
 ## how to build
+
+### I want to run it on my linux/cygwin, I have GCC
+
+- Get https://github.com/yesco/esp-lisp
+- esp-lisp> ./run
+
+It'll compile and run it for you, you'll have a lisp prompt.
+
+	lisp> help
+	...
+
+try out the commands, it also shows what functions/symbols there are
+
+	lisp> (+ 3 4)
+	7
+
+	lisp> (setq fac (lambda (n) (if (= n 0) 1 (* n (fac (- n 1))))))
+	#func[]
+
+	lisp> (fac 6)
+	720
+
+### build embeddable image and flash it to a nodemcu/EPS8266 device
 
 In a directory:
 
