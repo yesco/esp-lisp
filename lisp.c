@@ -472,11 +472,12 @@ char* getstring(lisp s) {
     return IS(s, string) ? ATTR(string, s, p) : NULL;
 }
 
-// macros car/cdr save 5%
-lisp carr(lisp x) { return x && IS(x, conss) ? ATTR(conss, x, car) : nil; }
+#define CARCDRP(x) ({ int _x = (x); _x && (IS(_x, conss) || IS(_x, thunk) || IS(_x, immediate) || IS(_x, func)); })
+
+lisp carr(lisp x) { return CARCDRP(x) ? ATTR(conss, x, car) : nil; }
 #define car(x) ({ lisp _x = (x); _x && IS(_x, conss) ? ATTR(conss, _x, car) : nil; })
 
-lisp cdrr(lisp x) { return x && IS(x, conss) ? ATTR(conss, x, cdr) : nil; }
+lisp cdrr(lisp x) { return CARCDRP(x) ? ATTR(conss, x, cdr) : nil; }
 #define cdr(x) ({ lisp _x = (x); _x && IS(_x, conss) ? ATTR(conss, _x, cdr) : nil; })
 
 lisp cons(lisp a, lisp b) {
@@ -1150,6 +1151,44 @@ lisp iff(lisp* envp, lisp exp, lisp thn, lisp els) {
     return evalGC(exp, envp) ? mkimmediate(thn, *envp) : mkimmediate(els, *envp);
 }
 
+lisp progn(lisp* envp, lisp all);
+
+lisp cond(lisp* envp, lisp all) {
+    while (all) {
+        lisp nxt = car(all);
+        lisp e = car(nxt);
+        if (evalGC(e, envp)) return progn(envp, cdr(nxt));
+        all = cdr(all);
+    }
+    return nil;
+}
+
+lisp and(lisp* envp, lisp all) {
+    lisp r = nil;
+    while(all) {
+        // TODO: tail call on last?
+        r = evalGC(car(all), envp);
+        if (!r) return nil;
+        all = cdr(all);
+    }
+    return r;
+}
+
+lisp or(lisp* envp, lisp all) {
+    lisp r = nil;
+    while(all) {
+        // TODO: tail call on last?
+        r = evalGC(car(all), envp);
+        if (r) return r;
+        all = cdr(all);
+    }
+    return nil;
+}
+
+lisp not(lisp x) {
+    return x ? nil : t;
+}
+
 // essentially this is a quote but it stores the environment so it's a closure!
 lisp lambda(lisp* envp, lisp all) {
     return mkfunc(all, *envp);
@@ -1247,6 +1286,10 @@ lisp lisp_init() {
     PRIM(equal, 2, equal);
     PRIM(=, 2, eq);
     PRIM(if, -3, iff);
+    PRIM(cond, -16, cond);
+    PRIM(and, -16, and);
+    PRIM(or, -16, or);
+    PRIM(not, 1, not);
     PRIM(terpri, 0, terpri);
     PRIM(princ, 1, princ);
 
@@ -1561,6 +1604,27 @@ static lisp test(lisp* e) {
 //    PRINT((setq tailprogn (lambda (n) (progn 3 2 1 (if (= n 0) (quote ok) (tailprogn (- n 1)))))));
 //    TEST(tailprogn, 3);
 //    TEST((tailprogn 10000), ok);
+
+
+    // cond
+    TEST((cond), nil);
+    TEST((cond (1 2 3)), 3);
+    TEST((cond (nil 7)), nil);
+    TEST((cond (nil 7)(2 3 4)(7 99)), 4);
+    TEST((cond (nil 7)((eq 3 5) 9)((eq 5 5) 77)), 77);
+
+    TEST((and), nil);
+    TEST((and 1 2 3), 3);
+    TEST((and 1 nil 3), nil);
+    TEST((and 1 (eq 3 3) 7), 7);
+    TEST((and 1 (eq 3 4) 7), nil);
+
+    TEST((or), nil);
+    TEST((or 1 2 3), 1);
+    TEST((or nil 1 3), 1);
+    TEST((or (eq 3 3) 7), t);
+    TEST((or (eq 3 4) 7), 7);
+
     return nil;
 }
 
