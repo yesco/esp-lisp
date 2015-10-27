@@ -536,6 +536,14 @@ lisp mkprim(char* name, int n, void *f) {
 lisp eval(lisp e, lisp* env);
 lisp eq(lisp a, lisp b);
 
+lisp member(lisp e, lisp r) {
+    while (r) {
+        if (eq(e, car(r))) return r;
+        r = cdr(r);
+    }
+    return nil;
+}
+
 // lookup binding of atom variable name (not work for int names)
 lisp assoc(lisp name, lisp env) {
     while (env) {
@@ -831,6 +839,19 @@ lisp _set(lisp* envp, lisp name, lisp v) {
     v = eval(v, envp);
     setcdr(bind, v);
     return v;
+}
+
+lisp eval(lisp e, lisp* envp);
+
+lisp apply(lisp f, lisp args) {
+    // TODO: make more efficient? combine with eval_hlp
+    lisp e = nil;
+    return eval(cons(f, args), &e);
+}
+
+lisp mapcar(lisp f, lisp r) {
+    if (!r || !consp(r) || !funcp(f)) return nil;
+    return cons(apply(f, cons(car(r), nil)), mapcar(f, cdr(r)));
 }
 
 ///--------------------------------------------------------------------------------
@@ -1301,12 +1322,15 @@ lisp lisp_init() {
 
     PRIM(list, 16, _quote);
     PRIM(assoc, 2, assoc);
+    PRIM(member, 2, member);
+    PRIM(mapcar, 2, mapcar);
     // PRIM(quote, -16, quote);
     // PRIM(list, 16, listlist);
 
     PRIM(progn, -16, progn);
     PRIM(eval, 1, eval);
     PRIM(evallist, 2, evallist);
+    PRIM(apply, 2, apply);
     PRIM(env, -16, _env);
 
     PRIM(read, 1, read_);
