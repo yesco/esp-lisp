@@ -1423,12 +1423,12 @@ void readeval(lisp* envp) {
             trace = 1;
         } else if (strcmp(ln, "trace off") == 0) {
             trace = 0;
-        } else if (strncmp(ln, "wifi", 4) == 0) {
+        } else if (strncmp(ln, "wifi ", 5) == 0) {
             strtok(ln, " "); // skip wifi
             char* ssid = strtok(NULL, " ");
             char* pass = strtok(NULL, " ");
             connect_wifi(ssid, pass);
-        } else if (strncmp(ln, "wget", 4) == 0) {
+        } else if (strncmp(ln, "wget ", 5) == 0) {
             strtok(ln, " "); // skip wget
             char* server = strtok(NULL, " "); if (!server) server = "yesco.org";
             char* url = strtok(NULL, " ");    if (!url) url = "http://yesco.org/index.html";
@@ -1439,7 +1439,7 @@ void readeval(lisp* envp) {
             printf("GET=> %d\n", r);
             printf("%s<<<\n", buff);
             free(buff);
-        } else if (strncmp(ln, "mem", 3) == 0) {
+        } else if (strncmp(ln, "mem ", 4) == 0) {
             char* e = ln + 3;
             print_memory_info(0);
             if (*e) {
