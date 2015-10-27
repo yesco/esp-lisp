@@ -114,4 +114,10 @@ Optimize more for storage/simplify and avoid using malloc here are some ideas fr
 - picolisp speed tests... http://software-lab.de/radical.pdf
 - picolisp puts compiled lisp in ROM - http://picolisp.com/wiki/!pdf?-B1054
 
+## Related stuff
+
+- https://hackaday.io/project/3116-pip-arduino-web-browser/log/17804-a-picture-is-worth-2-re-writes
+- https://github.com/obdev/v-usb
+- https://github.com/denilsonsa/atmega8-magnetometer-usb-mouse
+- http://blog.tynemouthsoftware.co.uk/2012/02/arduino-based-zx81-usb-keyboard.html
 

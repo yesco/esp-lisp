@@ -1435,7 +1435,7 @@ void help() {
         s = s->next;
     }
     terpri();
-    printf("Commands: hello/help/trace on/trace off/gc on/gc off\n");
+    printf("Commands: hello/help/trace on/trace off/gc on/gc off/wifi SSID PSWD/wget SERVER URL/mem EXPR\n");
     terpri();
 }
 
@@ -1469,8 +1469,8 @@ void readeval(lisp* envp) {
             trace = 0;
         } else if (strncmp(ln, "wifi ", 5) == 0) {
             strtok(ln, " "); // skip wifi
-            char* ssid = strtok(NULL, " ");
-            char* pass = strtok(NULL, " ");
+            char* ssid = strtok(NULL, " "); if (!ssid) ssid = "dsl";
+            char* pass = strtok(NULL, " "); if (!pass) pass = "0xdeadbeef";
             connect_wifi(ssid, pass);
         } else if (strncmp(ln, "wget ", 5) == 0) {
             strtok(ln, " "); // skip wget
