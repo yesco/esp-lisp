@@ -472,7 +472,7 @@ char* getstring(lisp s) {
     return IS(s, string) ? ATTR(string, s, p) : NULL;
 }
 
-#define CARCDRP(x) ({ int _x = (x); _x && (IS(_x, conss) || IS(_x, thunk) || IS(_x, immediate) || IS(_x, func)); })
+#define CARCDRP(x) ({ lisp _x = (x); _x && (IS(_x, conss) || IS(_x, thunk) || IS(_x, immediate) || IS(_x, func)); })
 
 lisp carr(lisp x) { return CARCDRP(x) ? ATTR(conss, x, car) : nil; }
 #define car(x) ({ lisp _x = (x); _x && IS(_x, conss) ? ATTR(conss, _x, car) : nil; })
