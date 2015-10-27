@@ -761,7 +761,7 @@ lisp stringp(lisp a) { return IS(a, string) ? nil : t; }
 lisp symbolp(lisp a) { return IS(a, atom) ? t : nil; } // rename struct atom to symbol?
 lisp numberp(lisp a) { return IS(a, intint) ? t : nil; } // TODO: extend with float/real
 lisp integerp(lisp a) { return IS(a, intint) ? t : nil; }
-lisp funcp(lisp a) { return IS(a, func) ? t : nil; }
+lisp funcp(lisp a) { return IS(a, func) || IS(a, thunk) || IS(a, prim) ? t : nil; }
 
 lisp lessthan(lisp a, lisp b) { return getint(a) < getint(b) ?  t : nil; }
 
@@ -852,6 +852,24 @@ lisp apply(lisp f, lisp args) {
 lisp mapcar(lisp f, lisp r) {
     if (!r || !consp(r) || !funcp(f)) return nil;
     return cons(apply(f, cons(car(r), nil)), mapcar(f, cdr(r)));
+}
+
+
+lisp map(lisp f, lisp r) {
+    while (r && consp(r) && funcp(f)) {
+        apply(f, cons(car(r), nil));
+        r = cdr(r);
+    }
+    return nil;
+}
+
+lisp length(lisp r) {
+    int c = 0;
+    while (r) {
+        c++;
+        r = cdr(r);
+    }
+    return mkint(c);
 }
 
 ///--------------------------------------------------------------------------------
@@ -1321,9 +1339,11 @@ lisp lisp_init() {
     PRIM(setcdr, 2, setcdr);
 
     PRIM(list, 16, _quote);
+    PRIM(length, 1, length);
     PRIM(assoc, 2, assoc);
     PRIM(member, 2, member);
     PRIM(mapcar, 2, mapcar);
+    PRIM(map, 2, map);
     // PRIM(quote, -16, quote);
     // PRIM(list, 16, listlist);
 
@@ -1648,6 +1668,9 @@ static lisp test(lisp* e) {
     TEST((or nil 1 3), 1);
     TEST((or (eq 3 3) 7), t);
     TEST((or (eq 3 4) 7), 7);
+
+    // mapcar
+    TEST((mapcar (lambda (x) (+ 5 x)) (list 1 2 3)), (6 7 8));
 
     return nil;
 }
