@@ -1476,13 +1476,9 @@ void readeval(lisp* envp) {
             strtok(ln, " "); // skip wget
             char* server = strtok(NULL, " "); if (!server) server = "yesco.org";
             char* url = strtok(NULL, " ");    if (!url) url = "http://yesco.org/index.html";
-            int buffsize = 128;
-            char* buff = calloc(buffsize, 1);
             printf("SERVER=%s URL=%s\n", server, url);
-            int r = http_get(buff, buffsize, url, server);
+            int r = http_get(url, server);
             printf("GET=> %d\n", r);
-            printf("%s<<<\n", buff);
-            free(buff);
         } else if (strncmp(ln, "mem ", 4) == 0) {
             char* e = ln + 3;
             print_memory_info(0);
