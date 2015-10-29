@@ -42,144 +42,161 @@
 #define TAG_SIZE 32 // tag name size, attr name size
 #define VALUE_SIZE 128 // value size
 
-//
-#define TAG_NORMAL 0
-#define TAG_START 1
-#define TAG_ATTR 2
+typedef struct {
+    int state;
+
+    char tag[TAG_SIZE + 1];
+    int tag_pos;
+
+    char attr[TAG_SIZE + 1];
+    int attr_pos;
+
+    char* path[TAG_SIZE + 1];
+    int path_pos;
+
+    char value[VALUE_SIZE + 1];
+    int value_pos;
+
+    void (*xml_emit_text)(char* path[], char c);
+    void (*xml_emit_tag)(char* path[], char* tag);
+    void (*xml_emit_attr)(char* path[], char* tag, char* attr, char* value);
+} wget_data;
 
 // TODO: abstract this?
-static char tag[TAG_SIZE + 1] = {0};
-static int tag_pos = 0;
 
-static char attr[TAG_SIZE + 1] = {0};
-static int attr_pos = 0;
-
-static char* path[TAG_SIZE + 1] = {0};
-static int path_pos = 0;
-
-static char value[VALUE_SIZE + 1] = {0};
-static int value_pos = 0;
-
-void xml_emit_text(char* path[], char c) {
+void f_xml_emit_text(char* path[], char c) {
     //printf("%c", c);
 }
 
-void xml_emit_tag(char* path[], char* tag) {
+void f_xml_emit_tag(char* path[], char* tag) {
     printf("TAG=%s\n", tag);
 }
 
-void xml_emit_attr(char* path[], char* tag, char* attr, char* value) {
+void f_xml_emit_attr(char* path[], char* tag, char* attr, char* value) {
     printf("TAG=%s ATTR=%s VALUE=%s\n", tag, attr, value);
 }
 
-void xml_tag(char c) {
-    tag[tag_pos++] = c;
-    if (tag_pos > TAG_SIZE) tag_pos--; // overwrite
-    tag[tag_pos] = 0;
+int http_get(char* url, char* server) {
+    wget_data data;
+    memset(&data, 0, sizeof(data));
+    data.xml_emit_text = f_xml_emit_text;
+    data.xml_emit_tag = f_xml_emit_tag;
+    data.xml_emit_attr = f_xml_emit_attr;
+
+    wget(&data, url, server);
 }
 
-void xml_tag_name(char c) {
+void xml_tag(wget_data* data, char c) {
+    data->tag[data->tag_pos++] = c;
+    if (data->tag_pos > TAG_SIZE) data->tag_pos--; // overwrite
+    data->tag[data->tag_pos] = 0;
+}
+
+void xml_tag_name(wget_data* data, char c) {
     // print path
     if (0) {
         int i = 0;
-        for(i = 0; i < path_pos; i++) printf("%s -> ", path[i]);
+        for(i = 0; i < data->path_pos; i++) printf("%s -> ", data->path[i]);
         printf("\n");
     }
 
-    if (c == '/' || tag[tag_pos-1] == '/') {
-        xml_emit_tag(path, tag);
-        tag[tag_pos--] = 0; // remove '/'
-    } else if (tag[0] == '/') { // </TAG>
-        xml_emit_tag(path, tag);
+    if (c == '/' || data->tag[data->tag_pos-1] == '/') {
+        data->xml_emit_tag(data->path, data->tag);
+        data->tag[data->tag_pos--] = 0; // remove '/'
+    } else if (data->tag[0] == '/') { // </TAG>
+        data->xml_emit_tag(data->path, data->tag);
         //printf("STRCMP(%s, %s)\n", xml_path[xml_pos-1], &current_tag[1]);
-        if (strcmp(path[path_pos - 1], &tag[1]) == 0) {
-            path[path_pos] = NULL;
-            path_pos--;
+        if (strcmp(data->path[data->path_pos - 1], &(data->tag[1])) == 0) {
+            data->path[data->path_pos] = NULL;
+            data->path_pos--;
         } else {
             // mismatch
             // TODO:????
         }
     } else { // <TAG>
-        xml_emit_tag(path, tag);
-        path[path_pos++] = strdup(tag);
-        if (path_pos > TAG_SIZE-1) path_pos--;
+        data->xml_emit_tag(data->path, data->tag);
+        data->path[data->path_pos++] = strdup(data->tag);
+        if (data->path_pos > TAG_SIZE-1) data->path_pos--;
     }
 
-    tag[0] = 0;
-    tag_pos = 0;
+    data->tag[0] = 0;
+    data->tag_pos = 0;
 }
 
-void xml_attr(char c) {
-    attr[attr_pos++] = c;
-    if (attr_pos > TAG_SIZE) attr_pos--;
-    attr[attr_pos] = 0;
+void xml_attr(wget_data* data, char c) {
+    data->attr[data->attr_pos++] = c;
+    if (data->attr_pos > TAG_SIZE) data->attr_pos--;
+    data->attr[data->attr_pos] = 0;
 }
 
-void xml_attr_value(char c) {
-    value[value_pos++] = c;
-    if (value_pos > VALUE_SIZE) value_pos--;
-    value[value_pos] = 0;
+void xml_attr_value(wget_data* data, char c) {
+    data->value[data->value_pos++] = c;
+    if (data->value_pos > VALUE_SIZE) data->value_pos--;
+    data->value[data->value_pos] = 0;
 }
 
-void xml_char(int c) {
-    static int state = TAG_NORMAL;
+// states
+#define TAG_NORMAL 0
+#define TAG_START 1
+#define TAG_ATTR 2
 
+void xml_char(wget_data* data, int c) {
     // reset at beginning and end
     if (c < 0) {
-        state = TAG_NORMAL;
+        data->state = TAG_NORMAL;
         return;
     }
 
-    switch (state) {
+    switch (data->state) {
     case TAG_NORMAL: 
-        if (c == '<') state = TAG_START;
-        else xml_emit_text(path, c);
+        if (c == '<') data->state = TAG_START;
+        else data->xml_emit_text(data->path, c);
 
         break;
     case TAG_START:
-        if (c == '>') state = TAG_NORMAL;
-        else if (c == ' ' || c == '\n' || c == '\r') state = TAG_ATTR;
-        else xml_tag(c);
+        if (c == '>') data->state = TAG_NORMAL;
+        else if (c == ' ' || c == '\n' || c == '\r') data->state = TAG_ATTR;
+        else xml_tag(data, c);
 
-        if (state == TAG_NORMAL) xml_tag_name(c);
+        if (data->state == TAG_NORMAL) xml_tag_name(data, c);
         break;
     case TAG_ATTR:
-        if (c == '>') state = TAG_NORMAL;
-        else if (c == ' ' || c == '\n' || c == '\r') state = TAG_ATTR;
-        else if (c == '/') { xml_tag(c); xml_tag_name(c); state = TAG_NORMAL; }
-        else if (c == '"' || c == '\'') state = c;
+        if (c == '>') data->state = TAG_NORMAL;
+        else if (c == ' ' || c == '\n' || c == '\r') data->state = TAG_ATTR;
+        else if (c == '/') { xml_tag(data, c); xml_tag_name(data, c); data->state = TAG_NORMAL; }
+        else if (c == '"' || c == '\'') data->state = c;
         else if (c == '=') ; // ignore // TODO: fix
-        else xml_attr(c);
+        else xml_attr(data, c);
 
-        if (state == TAG_NORMAL) xml_tag_name(c);
+        if (data->state == TAG_NORMAL) xml_tag_name(data, c);
         break;
     case '"': case '\'':
-        if (c == state) state = TAG_ATTR;
+        if (c == data->state) data->state = TAG_ATTR;
         // TODO: \' \" ???
-        else xml_attr_value(c);
+        else xml_attr_value(data, c);
 
-        if (state == TAG_ATTR) {
-            xml_emit_attr(path, tag, attr, value);
+        if (data->state == TAG_ATTR) {
+            data->xml_emit_attr(data->path, data->tag, data->attr, data->value);
 
-            attr_pos = 0;
-            attr[0] = 0;
+            data->attr_pos = 0;
+            data->attr[0] = 0;
 
-            value_pos = 0;
-            value[0] = 0;
+            data->value_pos = 0;
+            data->value[0] = 0;
         }
 
         break;
     }
 }
 
-int xml_out(char* buff, int bytes) {
+int xml_out(wget_data* data, char* buff, int bytes) {
     int i = 0;
-    for (i = 0; i < bytes; i++) xml_char(buff[i]);
+    for (i = 0; i < bytes; i++) xml_char(data, buff[i]);
     
     return 1; // continue
 }
 
-int http_get(char* url, char* server) {
+int wget(wget_data* data, char* url, char* server) {
     int successes = 0, failures = 0;
 
     //printf("HTTP get task starting...\r\n");
@@ -242,14 +259,14 @@ int http_get(char* url, char* server) {
     char buff[MAX_BUFF] = {0};
 
     int r = 0;
-    xml_char(-1);
+    xml_char(data, -1);
     do {
         r = read(s, buff, sizeof(buff));
-        if (r > 0 && !xml_out(buff, r)) break;
+        if (r > 0 && !xml_out(data, buff, r)) break;
     } while (r > 0);
 
     // mark end
-    xml_char(-2);
+    xml_char(data, -2);
 
     //printf("... done reading from socket. Last read return=%d errno=%d\r\n", r, errno);
     if (r != 0)
