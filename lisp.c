@@ -544,6 +544,42 @@ lisp member(lisp e, lisp r) {
     return nil;
 }
 
+lisp symbol(char* s);
+lisp funcall(lisp f, lisp args, lisp* envp, lisp e);
+lisp quote(lisp x);
+
+// (echo ""; echo '(wget "yesco.org" "http://yesco.org/index.html" (lambda (t a v) (princ t) (princ " ") (princ a) (princ "=") (princ v)(terpri)))') | ./run
+
+static void f_emit_text(lisp callback, char* path[], char c) {
+    return;
+    lisp env = cdrr(callback);
+    char s[2] = {0};
+    s[0] = c;
+    eval(list(callback, mkstring(s), END), &env);
+}
+
+static void f_emit_tag(lisp callback, char* path[], char* tag) {
+    lisp env = cdrr(callback);
+    eval(list(callback, quote(symbol(tag)), END), &env);
+}
+
+static void f_emit_attr(lisp callback, char* path[], char* tag, char* attr, char* value) {
+    lisp env = cdrr(callback);
+    eval(list(callback, quote(symbol(tag)), quote(symbol(attr)), mkstring(value), END), &env);
+}
+
+lisp wget_(lisp server, lisp url, lisp callback) {
+    wget_data data;
+    memset(&data, 0, sizeof(data));
+    data.userdata = callback;
+    data.xml_emit_text = (void*)f_emit_text;
+    data.xml_emit_tag = (void*)f_emit_tag;
+    data.xml_emit_attr = (void*)f_emit_attr;
+
+    wget(&data, getstring(url), getstring(server));
+    return nil;
+}
+
 // lookup binding of atom variable name (not work for int names)
 lisp assoc(lisp name, lisp env) {
     while (env) {
@@ -569,6 +605,7 @@ lisp primapply(lisp ff, lisp args, lisp* envp, lisp all) {
     int an = abs(n);
 
     // these special cases are redundant, can be done at general solution
+    // but for optimization we extracted them, it improves speed quite a lot
     if (n == 2) { // eq/plus etc
         lisp (*fp)(lisp,lisp) = ATTR(prim, ff, f);
         return (*fp)(evalGC(car(args), envp), evalGC(car(cdr(args)), envp)); // safe!
@@ -576,6 +613,10 @@ lisp primapply(lisp ff, lisp args, lisp* envp, lisp all) {
     if (n == -3) { // if...
         lisp (*fp)(lisp*,lisp,lisp,lisp) = ATTR(prim, ff, f);
         return (*fp)(envp, car(args), car(cdr(args)), car(cdr(cdr(args))));
+    }
+    if (n == -1) { // quote...
+        lisp (*fp)(lisp*,lisp) = ATTR(prim, ff, f);
+        return (*fp)(envp, car(args));
     }
     if (n == 1) {
         lisp (*fp)(lisp) = ATTR(prim, ff, f);
@@ -664,6 +705,7 @@ lisp find_symbol(char *s, int len) {
 // linear search to intern the string
 // will always return same atom
 lisp symbol(char* s) {
+    if (!s) return nil;
     lisp sym = find_symbol(s, strlen(s));
     if (sym) return sym;
     return secretMkAtom(s);
@@ -1073,13 +1115,7 @@ static lisp eval_hlp(lisp e, lisp* envp) {
         setcar(e, f);
     }
 
-    if (tag == prim_TAG) return primapply(f, cdr(e), envp, e);
-    if (tag == func_TAG) return funcapply(f, cdr(e), envp);
-    if (tag == thunk_TAG) return f; // ignore args
-
-    printf("\n-- ERROR: car is not a function: "); princ(f); printf(" in "); princ(e); terpri();
-    //printf(" ENV="); princ(env); terpri();
-    return nil;
+    return funcall(f, cdr(e), envp, e);
 }
 
 static void mymark(lisp x) {
@@ -1234,7 +1270,7 @@ lisp lambda(lisp* envp, lisp all) {
 }
 
 lisp progn(lisp* envp, lisp all) {
-    while(all && cdr(all)) {
+    while (all && cdr(all)) {
         evalGC(car(all), envp);
         all = cdr(all);
     }
@@ -1260,14 +1296,29 @@ lisp bindEvalList(lisp fargs, lisp args, lisp* envp, lisp extend) {
     return extend;
 }
 
-// TODO: nlambda?
 lisp funcapply(lisp f, lisp args, lisp* envp) {
     lisp lenv = ATTR(thunk, f, env);
     lisp l = ATTR(thunk, f, e);
     //printf("FUNCAPPLY:"); princ(f); printf(" body="); princ(l); printf(" args="); princ(args); printf(" env="); princ(lenv); terpri();
-    lisp fargs = car(l); // skip #lambda // TODO: check if NLAMBDA!
+    lisp fargs = car(l);
+    // TODO: check if NLAMBDA!
     lenv = bindEvalList(fargs, args, envp, lenv);
+    //printf("NEWENV: "); princ(lenv); terpri();
     return progn(&lenv, cdr(l)); // tail recurse on rest
+}
+
+// TODO: evals it's arguments, shouldn't... 
+// TODO: prim apply/funcapply may return immediate, it should be handled and not returned from here?
+lisp funcall(lisp f, lisp args, lisp* envp, lisp e) {
+    //printf("FUNCALL: "); princ(f); princ(args); terpri();
+    int tag = TAG(f);
+    if (tag == prim_TAG) return primapply(f, args, envp, e);
+    if (tag == func_TAG) return funcapply(f, args, envp);
+    if (tag == thunk_TAG) return f; // ignore args
+
+    printf("\n-- ERROR: "); princ(f); printf(" is not a function: "); printf(" in "); princ(e ? e : args); terpri();
+    //printf(" ENV="); princ(env); terpri();
+    return nil;
 }
 
 // User, macros, assume a "globaL" env variable implicitly, and updates it
@@ -1365,6 +1416,9 @@ lisp lisp_init() {
     // defmacro
     // while
     // gensym
+
+    // network
+    PRIM(wget, 3, wget_);
 
     // system stuff
     PRIM(gc, -1, gc);

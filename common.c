@@ -32,47 +32,16 @@
 // simplistic XML parser:
 //   xml_out -> xml_char -> xml_tag/xml_tag_name/xml_attr_value
 //
-// These are called to emit result:
-// - xml_emit_text(char c) // for each textual/content char
-// - xml_emit_tag(char* tag) // for each tag as it's enters it, finalizes it: TAG /TAG or TAG/
-// - xml_emit_attr(char* tag, char* attr, char* value) // for each <TAG ATTR="VALUE"
 
-// limits
-#define MAX_BUFF 128 // efficency
-#define TAG_SIZE 32 // tag name size, attr name size
-#define VALUE_SIZE 128 // value size
-
-typedef struct {
-    int state;
-
-    char tag[TAG_SIZE + 1];
-    int tag_pos;
-
-    char attr[TAG_SIZE + 1];
-    int attr_pos;
-
-    char* path[TAG_SIZE + 1];
-    int path_pos;
-
-    char value[VALUE_SIZE + 1];
-    int value_pos;
-
-    void (*xml_emit_text)(char* path[], char c);
-    void (*xml_emit_tag)(char* path[], char* tag);
-    void (*xml_emit_attr)(char* path[], char* tag, char* attr, char* value);
-} wget_data;
-
-// TODO: abstract this?
-
-void f_xml_emit_text(char* path[], char c) {
+void f_xml_emit_text(void* userdata, char* path[], char c) {
     //printf("%c", c);
 }
 
-void f_xml_emit_tag(char* path[], char* tag) {
+void f_xml_emit_tag(void* userdata, char* path[], char* tag) {
     printf("TAG=%s\n", tag);
 }
 
-void f_xml_emit_attr(char* path[], char* tag, char* attr, char* value) {
+void f_xml_emit_attr(void* userdata, char* path[], char* tag, char* attr, char* value) {
     printf("TAG=%s ATTR=%s VALUE=%s\n", tag, attr, value);
 }
 
@@ -84,6 +53,7 @@ int http_get(char* url, char* server) {
     data.xml_emit_attr = f_xml_emit_attr;
 
     wget(&data, url, server);
+    return 1;
 }
 
 void xml_tag(wget_data* data, char c) {
@@ -101,10 +71,10 @@ void xml_tag_name(wget_data* data, char c) {
     }
 
     if (c == '/' || data->tag[data->tag_pos-1] == '/') {
-        data->xml_emit_tag(data->path, data->tag);
+        data->xml_emit_tag(data->userdata, data->path, data->tag);
         data->tag[data->tag_pos--] = 0; // remove '/'
     } else if (data->tag[0] == '/') { // </TAG>
-        data->xml_emit_tag(data->path, data->tag);
+        data->xml_emit_tag(data->userdata, data->path, data->tag);
         //printf("STRCMP(%s, %s)\n", xml_path[xml_pos-1], &current_tag[1]);
         if (strcmp(data->path[data->path_pos - 1], &(data->tag[1])) == 0) {
             data->path[data->path_pos] = NULL;
@@ -114,7 +84,7 @@ void xml_tag_name(wget_data* data, char c) {
             // TODO:????
         }
     } else { // <TAG>
-        data->xml_emit_tag(data->path, data->tag);
+        data->xml_emit_tag(data->userdata, data->path, data->tag);
         data->path[data->path_pos++] = strdup(data->tag);
         if (data->path_pos > TAG_SIZE-1) data->path_pos--;
     }
@@ -148,9 +118,9 @@ void xml_char(wget_data* data, int c) {
     }
 
     switch (data->state) {
-    case TAG_NORMAL: 
+    case TAG_NORMAL:
         if (c == '<') data->state = TAG_START;
-        else data->xml_emit_text(data->path, c);
+        else data->xml_emit_text(data->userdata, data->path, c);
 
         break;
     case TAG_START:
@@ -176,7 +146,7 @@ void xml_char(wget_data* data, int c) {
         else xml_attr_value(data, c);
 
         if (data->state == TAG_ATTR) {
-            data->xml_emit_attr(data->path, data->tag, data->attr, data->value);
+            data->xml_emit_attr(data->userdata, data->path, data->tag, data->attr, data->value);
 
             data->attr_pos = 0;
             data->attr[0] = 0;
@@ -211,7 +181,7 @@ int wget(wget_data* data, char* url, char* server) {
     int err = getaddrinfo(server, "80", &hints, &res);
 
     if (err != 0 || res == NULL) {
-        printf("DNS lookup failed err=%d res=%p\r\n", err, res);
+        printf("DNS lookup failed err=%d res=%p server=%s\r\n", err, res, server);
         if (res)
             freeaddrinfo(res);
         failures++;
@@ -223,7 +193,7 @@ int wget(wget_data* data, char* url, char* server) {
     //printf("DNS lookup succeeded. IP=%s\r\n", inet_ntoa(*addr));
 
     int s = socket(res->ai_family, res->ai_socktype, 0);
-    if(s < 0) {
+    if (s < 0) {
         printf("... Failed to allocate socket.\r\n");
         freeaddrinfo(res);
         failures++;
