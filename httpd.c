@@ -1,12 +1,12 @@
 // simplified from: http://blog.manula.org/2011/05/writing-simple-web-server-in-c.html
-#include<netinet/in.h>
-#include<stdio.h>
-#include<stdlib.h>
-#include<sys/socket.h>
-#include<sys/stat.h>
-#include<sys/types.h>
-#include<unistd.h>
-#include <fcntl.h>
+//#include <netinet/in.h> // missing on esp-open-rtos
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+//#include <fcntl.h> // duplicate def on esp-open-rtos
 
 #define BUFSIZE 1024
 
@@ -35,7 +35,8 @@ char* httpd(int port) {
         socklen_t addrlen = sizeof(address);
         int req = accept(s, (struct sockaddr*) &address, &addrlen);
 
-        // non-block - loop, this allows polling...
+        // TODO: non-block - loop, this allows polling... or use thread...
+        // http://stackoverflow.com/questions/735249/blocking-socket-returns-eagain
         if (req < 0) continue; // TODO: detect E_AGAIN?
         //if (req < 0) return "accept";
 
@@ -51,7 +52,7 @@ char* httpd(int port) {
     return NULL;
 }
 
-void main() {
+int main() {
     char* err = httpd(1111);
     if (err) printf("ERROR: %s\n", err);
 }
