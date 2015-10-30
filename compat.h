@@ -36,3 +36,11 @@ void connect_wifi(char* ssid, char* password);
 int http_get(char* url, char* server);
 int wget(wget_data* data, char* url, char* server);
 
+typedef int (*httpd_header)(char* buffer);
+typedef int (*httpd_body)(char* buffer);
+typedef int (*httpd_response)(int req);
+
+int httpd_init(int port);
+void httpd_next(int s, httpd_header emit_header, httpd_body emit_body, httpd_response emit_response);
+void httpd_loop(int s);
+

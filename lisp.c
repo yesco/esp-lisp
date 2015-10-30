@@ -75,6 +75,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
 
 #ifndef UNIX
   #include "FreeRTOS.h"
@@ -1535,6 +1536,15 @@ void readeval(lisp* envp) {
             printf("SERVER=%s URL=%s\n", server, url);
             int r = http_get(url, server);
             printf("GET=> %d\n", r);
+        } else if (strncmp(ln, "web ", 4) == 0) {
+            strtok(ln, " "); // skip web
+            int port = atoi(strtok(NULL, " ")); if (!port) port = 8080;
+            printf("WEBSERVER on port=%d\n", port);
+            int s = httpd_init(port);
+            if (s < 0) printf("WEBSERVER.errno=%d: s=%d\n", errno, s);
+            while(1) {
+                httpd_loop(s);
+            }
         } else if (strncmp(ln, "mem ", 4) == 0) {
             char* e = ln + 3;
             print_memory_info(0);
