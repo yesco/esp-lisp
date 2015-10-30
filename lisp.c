@@ -548,24 +548,26 @@ lisp symbol(char* s);
 lisp funcall(lisp f, lisp args, lisp* envp, lisp e);
 lisp quote(lisp x);
 
-// (echo ""; echo '(wget "yesco.org" "http://yesco.org/index.html" (lambda (t a v) (princ t) (princ " ") (princ a) (princ "=") (princ v)(terpri)))') | ./run
+// echo '
+// (wget "yesco.org" "http://yesco.org/index.html" (lambda (t a v) (princ t) (cond (a (princ " ") (princ a) (princ "=") (princ v)(terpri)))))
+// ' | ./run
 
 static void f_emit_text(lisp callback, char* path[], char c) {
-    return;
+//    return;
     lisp env = cdrr(callback);
     char s[2] = {0};
     s[0] = c;
-    eval(list(callback, mkstring(s), END), &env);
+    evalGC(list(callback, mkstring(s), END), &env);
 }
 
 static void f_emit_tag(lisp callback, char* path[], char* tag) {
     lisp env = cdrr(callback);
-    eval(list(callback, quote(symbol(tag)), END), &env);
+    evalGC(list(callback, quote(symbol(tag)), END), &env);
 }
 
 static void f_emit_attr(lisp callback, char* path[], char* tag, char* attr, char* value) {
     lisp env = cdrr(callback);
-    eval(list(callback, quote(symbol(tag)), quote(symbol(attr)), mkstring(value), END), &env);
+    evalGC(list(callback, quote(symbol(tag)), quote(symbol(attr)), mkstring(value), END), &env);
 }
 
 lisp wget_(lisp server, lisp url, lisp callback) {
