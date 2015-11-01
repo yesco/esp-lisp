@@ -13,6 +13,8 @@
 #include <errno.h>
 #include <string.h>
 
+#include "compat.h"
+
 #define BUFSIZE 1024
 #define MAXQUEUE 10
 
@@ -23,7 +25,6 @@
 //   == -2, setsockopt()
 //   == -3, bind()
 //   == -4, listen()
-//   ==
 int httpd_init(int port) {
     int s = socket(AF_INET, SOCK_STREAM, 0);
     if (s < 0) printf("SOCKET=%d\n", s);
@@ -49,69 +50,102 @@ int httpd_init(int port) {
     return s;
 }
 
-typedef int (*httpd_header)(char* buffer);
-typedef int (*httpd_body)(char* buffer);
-typedef int (*httpd_response)(int req);
+// simple implementation of getline for fd instead of FILE*
+int fdgetline(char** b, int* len, int fd) {
+    int n = 0;
+    do {
+        if (n + 1 > *len) {
+            *len *= 1.3;
+            *b = realloc(*b, *len);
 
-int header(char* buff) {
-    printf("HEADER: %s\n", buff);
-    return 0;
-}
-int body(char* buff) {
-    printf("BODY: %s\n", buff);
-    printf("strlen=%d\n", strlen(buff));
-    return 0;
-}
-int response(int req) {
-    char *buffer = malloc(BUFSIZE + 1);
-    sprintf(buffer, "HELLO DUDE!\n");
-    write(req, buffer, strlen(buffer));
-    free(buffer);
-    return 0;
+        }
+
+        if (read(fd, *b + n, 1) < 1) { // eof
+            if (!n) 
+                return -1; // no trailing line
+            else
+                break; // have trailing line (no \n)
+        }
+
+        char c = *(*b + n);
+        n++;
+        if (c == '\n') break; // new line
+        if (c == '\r') n--; // ingore cr
+    } while (1);
+    *(*b + n) = 0;
+    return n;
 }
 
-void httpd_next(int s, httpd_header emit_header, httpd_body emit_body, httpd_response emit_response) {
+int httpd_next(int s, httpd_header emit_header, httpd_body emit_body, httpd_response emit_response) {
     struct sockaddr_in address;
     socklen_t addrlen = sizeof(address);
     int req = accept(s, (struct sockaddr*) &address, &addrlen);
     //if (req < 0) printf("ACCEPT=%d, errno=%d\n", req, errno);
-    if (req < 0) return;
+    if (req < 0) return 0;
 
-    char *buffer = malloc(BUFSIZE + 1);
-    int n = recv(req, buffer, BUFSIZE, 0);
-    buffer[n] = 0;
-    printf("%s\n", buffer);
+    // process headers
+    int len = BUFSIZE + 1;
+    char *buffer = malloc(len);
 
-    char *b = buffer;
-    char *p = b;
-    int nls = 0; // number of empty lines in a row
-    while (n) {
-        while (*b) {
-            if (*p == '\n' || *p == '\r') {
-                *p = 0;
-                nls = (p == b) ? nls+1 : 0;
-                if (nls == 2) break;
-                if (b != p) emit_header(b);
-                b = p + 1;
-            }
-            p++;
+    if (fdgetline(&buffer, &len, req) <= 0) return 0;
+    char method[8];
+    strncpy(method, strtok(buffer, " "), 8);
+    method[7] = 0;
+    char *path = strdup(strtok(NULL, " "));
+
+    int expectedsize = -1;
+    while (fdgetline(&buffer, &len, req) > 1) {
+        int l = strlen(buffer);
+        if (buffer[l - 1] == '\n') buffer[--l] = 0; // remove nl if present
+
+        emit_header(buffer, method, path);
+        if (strcmp(buffer, "Content-Length: ") == 0) {
+            // http://www.w3.org/Protocols/rfc2616/rfc2616-sec4.html#sec4.4
+            // http://stackoverflow.com/questions/2773396/whats-the-content-length-field-in-http-header
+            strtok(buffer, " ");
+            expectedsize = atoi(strtok(NULL, " "));
         }
-        n = recv(req, buffer, BUFSIZE, 0);
-        buffer[n] = 0;
     }
+    emit_header(NULL, method, path);
 
-    emit_body(b);
+    // TODO: handle POST get parameters, also add paramter getter for path
 
-    while (n > 0) {
-        n = recv(req, buffer, BUFSIZE, 0);
+    // process body
+    int bodycount = 0;
+
+    // stop reading when got expectedsize bytes,
+    // otherwise it'll block as browser keepalive doesn't close, thus no EOF
+    int n = 1;
+    while (n > 0 && bodycount < expectedsize) {
+        n = read(req, buffer, len);
+        bodycount += n;
         buffer[n] = 0;
-        emit_body(buffer);
+        if (n > 0) emit_body(buffer, method, path);
     }
+    emit_body(NULL, method, path);
+
     free(buffer);
+    if (path) free(path);
 
-    emit_response(req);
-
+    emit_response(req, method, path);
     close(req);
+
+    return 1;
+}
+
+// simple for test
+void header(char* buff, char* method, char* path) {
+    printf("HEADER: %s\n", buff);
+}
+
+void body(char* buff, char* method, char* path) {
+    printf("BODY: %s\n", buff);
+}
+
+void response(int req, char* method, char* path) {
+    static char* hello = "HELLO DUDE!\n";
+    write(req, hello, strlen(hello));
+    printf("------------------------------\n\n");
 }
 
 void httpd_loop(int s) {
@@ -120,7 +154,9 @@ void httpd_loop(int s) {
     }
 }
 
-int main() {
-    int s = httpd_init(1111);
-    if (s < 0 ) { printf("ERROR.errno=%d\n", errno); return -1; }
-}
+#ifdef HTTPD_MAIN
+  int main() {
+      int s = httpd_init(1111);
+      if (s < 0 ) { printf("ERROR.errno=%d\n", errno); return -1; }
+  }
+#endif

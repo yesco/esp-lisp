@@ -1,4 +1,8 @@
-void print_memory_info(int verbose);
+#ifndef COMPAT_H
+#define COMPAT_H
+
+//////////////////////////////////////////////////////////////////////
+// gpio/esp8266 hardware stuff
 
 // limits
 #define MAX_BUFF 128 // efficency
@@ -32,15 +36,38 @@ typedef struct {
     void (*xml_emit_attr)(void* userdata, char* path[], char* tag, char* attr, char* value);
 } wget_data;
 
+//////////////////////////////////////////////////////////////////////
+// system stuff
+void print_memory_info(int verbose);
+
+//////////////////////////////////////////////////////////////////////
+// wifi stuff
 void connect_wifi(char* ssid, char* password);
+
 int http_get(char* url, char* server);
+
 int wget(wget_data* data, char* url, char* server);
 
-typedef int (*httpd_header)(char* buffer);
-typedef int (*httpd_body)(char* buffer);
-typedef int (*httpd_response)(int req);
+//////////////////////////////////////////////////////////////////////
+// web stuff
+typedef void (*httpd_header)(char* buffer, char* method, char* path); // will be called for each header line, last time NULL
+typedef void (*httpd_body)(char* buffer, char* method, char* path); // may be called several times, last time NULL
+typedef void (*httpd_response)(int req, char* method, char* path); // you can write(req, ... don't close it, it'll be closed for you
 
 int httpd_init(int port);
-void httpd_next(int s, httpd_header emit_header, httpd_body emit_body, httpd_response emit_response);
+int httpd_next(int s, httpd_header emit_header, httpd_body emit_body, httpd_response emit_response);
 void httpd_loop(int s);
 
+//////////////////////////////////////////////////////////////////////
+// gpio/esp8266 hardware stuff
+#ifdef UNIX
+  // dummy
+  #define GPIO_OUTPUT 1
+  #define GPIO_INPUT 0
+  
+  void gpio_enable(int pin, int state);
+  void gpio_write(int pin, int value);
+  int gpio_read(int pin);
+#endif
+
+#endif // COMPAT_H

@@ -571,6 +571,19 @@ static void f_emit_attr(lisp callback, char* path[], char* tag, char* attr, char
     evalGC(list(callback, quote(symbol(tag)), quote(symbol(attr)), mkstring(value), END), &env);
 }
 
+lisp out(lisp pin, lisp value) {
+    gpio_enable(getint(pin), GPIO_OUTPUT);
+    gpio_write(getint(pin), getint(value));
+    return value;
+}
+
+lisp in(lisp pin) {
+    gpio_enable(getint(pin), GPIO_INPUT);
+    return mkint(gpio_read(getint(pin)));
+}
+
+//    gpio_set_interrupt(gpio, int_type);
+
 lisp wget_(lisp server, lisp url, lisp callback) {
     wget_data data;
     memset(&data, 0, sizeof(data));
@@ -1422,6 +1435,8 @@ lisp lisp_init() {
 
     // network
     PRIM(wget, 3, wget_);
+    PRIM(out, 2, out);
+    PRIM(in, 1, in);
 
     // system stuff
     PRIM(gc, -1, gc);
@@ -1742,3 +1757,18 @@ void lisp_run(lisp* envp) {
     readeval(envp);
     return;
 }
+
+
+// find this display for chinese price - http://digole.com/index.php?productID=1208 (17.89 USD)
+//
+// esp8266 st7735 lcd/tft display driver ucglib
+//
+// https://github.com/spapadim/ESPClock
+//
+// https://github.com/bblanchon/ArduinoJson
+//
+// http://www.pjrc.com/teensy/td_libs_Time.html
+//
+// https://github.com/spapadim/ESPClock
+//
+// https://gist.github.com/spapadim/a4bc258df47f00831006

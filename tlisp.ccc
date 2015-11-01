@@ -10,6 +10,11 @@
 #include "lisp.h"
 #include "compat.h"
 
+// dummies
+void gpio_enable(int pin, int state) {}
+void gpio_write(int pin, int value) {}
+int gpio_read(int pin) { return 0; }
+
 unsigned int lastClock = 0;
 int lastMem = 0;
 
