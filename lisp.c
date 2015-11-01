@@ -553,6 +553,21 @@ lisp quote(lisp x);
 // (wget "yesco.org" "http://yesco.org/index.html" (lambda (t a v) (princ t) (cond (a (princ " ") (princ a) (princ "=") (princ v)(terpri)))))
 // ' | ./run
 
+lisp out(lisp pin, lisp value) {
+    gpio_enable(getint(pin), GPIO_OUTPUT);
+    gpio_write(getint(pin), getint(value));
+    return value;
+}
+
+lisp in(lisp pin) {
+    gpio_enable(getint(pin), GPIO_INPUT);
+    return mkint(gpio_read(getint(pin)));
+}
+
+//    gpio_set_interrupt(gpio, int_type);
+
+// wget functions...
+
 static void f_emit_text(lisp callback, char* path[], char c) {
 //    return;
     lisp env = cdrr(callback);
@@ -571,19 +586,6 @@ static void f_emit_attr(lisp callback, char* path[], char* tag, char* attr, char
     evalGC(list(callback, quote(symbol(tag)), quote(symbol(attr)), mkstring(value), END), &env);
 }
 
-lisp out(lisp pin, lisp value) {
-    gpio_enable(getint(pin), GPIO_OUTPUT);
-    gpio_write(getint(pin), getint(value));
-    return value;
-}
-
-lisp in(lisp pin) {
-    gpio_enable(getint(pin), GPIO_INPUT);
-    return mkint(gpio_read(getint(pin)));
-}
-
-//    gpio_set_interrupt(gpio, int_type);
-
 lisp wget_(lisp server, lisp url, lisp callback) {
     wget_data data;
     memset(&data, 0, sizeof(data));
@@ -594,6 +596,55 @@ lisp wget_(lisp server, lisp url, lisp callback) {
 
     wget(&data, getstring(url), getstring(server));
     return nil;
+}
+
+// web functions...
+
+// Generalize, similarly to xml stuff, with userdata etc, in order to handle several servers
+static lisp web_callback = NULL;
+
+static void header(char* buff, char* method, char* path) {
+    lisp env = cdrr(web_callback);
+    // TODO: consider printing the returned value, need header(req, ..., need updatable state?)
+    evalGC(list(web_callback, quote(symbol("HEADER")), mkstring(buff), quote(symbol(method)), mkstring(path), END), &env);
+}
+
+static void body(char* buff, char* method, char* path) {
+    lisp env = cdrr(web_callback);
+    // TODO: consider printing the returned value, need header(req, ..., need updatable state?)
+    evalGC(list(web_callback, quote(symbol("BODY")), mkstring(buff), quote(symbol(method)), mkstring(path), END), &env);
+}
+
+static void response(int req, char* method, char* path) {
+    lisp env = cdrr(web_callback);
+    lisp ret = evalGC(list(web_callback, nil, quote(symbol(method)), mkstring(path), END), &env);
+
+    char* s = getstring(ret);
+    write(req, s, strlen(s));
+}
+
+// echo '
+// (web 8080 (lambda (w s m p) (princ w) (princ " ") (princ s) (princ " ") (princ m) (princ " ") (princ p) (terpri) "FISH-42"))
+// ' | ./run
+
+lisp web(lisp port, lisp callback) {
+    //wget_data data;
+    //memset(&data, 0, sizeof(data));
+    //data.userdata = callback;
+    //data.xml_emit_text = (void*)f_emit_text;
+    //data.xml_emit_tag = (void*)f_emit_tag;
+    //data.xml_emit_attr = (void*)f_emit_attr;
+
+    int s = httpd_init(getint(port));
+    if (s < 0) { printf("ERROR.errno=%d\n", errno); return nil; }
+
+    // TODO: make it non-blocking, put it on list of functions to call between evals?
+    // can't really do background processing as concurrent uncontrolled GC might be SHIT!
+    web_callback = callback;
+
+    while (1) {
+        httpd_next(s, header, body, response);
+    }
 }
 
 // lookup binding of atom variable name (not work for int names)
@@ -828,6 +879,8 @@ lisp minus(lisp a, lisp b) { return mkint(getint(a) - getint(b)); }
 lisp times(lisp a, lisp b) { return mkint(getint(a) * getint(b)); }
 lisp divide(lisp a, lisp b) { return mkint(getint(a) / getint(b)); }
 
+// TODO: http://www.gnu.org/software/emacs/manual/html_node/elisp/Input-Functions.html#Input-Functions
+// http://www.lispworks.com/documentation/HyperSpec/Body/f_rd_rd.htm#read
 lisp read_(lisp s) { return reads(getstring(s)); }
 lisp terpri() { printf("\n"); return nil; }
 
@@ -1048,8 +1101,22 @@ static lisp reads(char *s) {
     return readx();
 }
 
-// TODO: prin1 that quotes so it/strings can be read back again
-// print that prin1 with newline
+// TODO: prin1, princ, print, pprint/pp by calling
+//    (write o output-stream= base= escape= level= circle= lines= pretty= readably=)
+//
+// http://www.gnu.org/software/emacs/manual/html_node/elisp/Output-Functions.html
+// http://www.lispworks.com/documentation/HyperSpec/Body/f_wr_pr.htm
+//
+// (prin1 object output-stream)
+//     ==  (write object :stream output-stream :escape t)
+// (princ object output-stream)
+//     ==  (write object stream output-stream :escape nil :readably nil)
+// (print object output-stream)
+//     ==  (progn (terpri output-stream)
+//                (write object :stream output-stream :escape t)
+//                (write-char #\space output-stream))
+// (pprint object output-stream)
+//     ==  (write object :stream output-stream :escape t :pretty t)
 lisp princ(lisp x) {
     if (x == nil) {
         printf("nil");
@@ -1435,6 +1502,7 @@ lisp lisp_init() {
 
     // network
     PRIM(wget, 3, wget_);
+    PRIM(web, 2, web);
     PRIM(out, 2, out);
     PRIM(in, 1, in);
 

@@ -137,15 +137,15 @@ int httpd_next(int s, httpd_header emit_header, httpd_body emit_body, httpd_resp
 }
 
 // simple for test
-void header(char* buff, char* method, char* path) {
+static void header(char* buff, char* method, char* path) {
     printf("HEADER: %s\n", buff);
 }
 
-void body(char* buff, char* method, char* path) {
+static void body(char* buff, char* method, char* path) {
     printf("BODY: %s\n", buff);
 }
 
-void response(int req, char* method, char* path) {
+static void response(int req, char* method, char* path) {
     static char* hello = "HELLO DUDE!\n";
     write(req, hello, strlen(hello));
     printf("------------------------------ %s %s\n\n", method, path);
