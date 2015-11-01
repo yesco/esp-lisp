@@ -71,10 +71,12 @@ void xml_tag_name(wget_data* data, char c) {
     }
 
     if (c == '/' || data->tag[data->tag_pos-1] == '/') {
-        data->xml_emit_tag(data->userdata, data->path, data->tag);
+        if (data->xml_emit_tag)
+            data->xml_emit_tag(data->userdata, data->path, data->tag);
         data->tag[data->tag_pos--] = 0; // remove '/'
     } else if (data->tag[0] == '/') { // </TAG>
-        data->xml_emit_tag(data->userdata, data->path, data->tag);
+        if (data->xml_emit_tag)
+            data->xml_emit_tag(data->userdata, data->path, data->tag);
         //printf("STRCMP(%s, %s)\n", xml_path[xml_pos-1], &current_tag[1]);
         if (strcmp(data->path[data->path_pos - 1], &(data->tag[1])) == 0) {
             data->path[data->path_pos] = NULL;
@@ -84,7 +86,8 @@ void xml_tag_name(wget_data* data, char c) {
             // TODO:????
         }
     } else { // <TAG>
-        data->xml_emit_tag(data->userdata, data->path, data->tag);
+        if (data->xml_emit_tag)
+            data->xml_emit_tag(data->userdata, data->path, data->tag);
         data->path[data->path_pos++] = strdup(data->tag);
         if (data->path_pos > TAG_SIZE-1) data->path_pos--;
     }
@@ -120,7 +123,8 @@ void xml_char(wget_data* data, int c) {
     switch (data->state) {
     case TAG_NORMAL:
         if (c == '<') data->state = TAG_START;
-        else data->xml_emit_text(data->userdata, data->path, c);
+        else if (data->xml_emit_text)
+            data->xml_emit_text(data->userdata, data->path, c);
 
         break;
     case TAG_START:
@@ -146,7 +150,8 @@ void xml_char(wget_data* data, int c) {
         else xml_attr_value(data, c);
 
         if (data->state == TAG_ATTR) {
-            data->xml_emit_attr(data->userdata, data->path, data->tag, data->attr, data->value);
+            if (data->xml_emit_attr)
+                data->xml_emit_attr(data->userdata, data->path, data->tag, data->attr, data->value);
 
             data->attr_pos = 0;
             data->attr[0] = 0;

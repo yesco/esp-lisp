@@ -51,13 +51,13 @@ int httpd_init(int port) {
 }
 
 // simple implementation of getline for fd instead of FILE*
+// NOTE: this one does NOT include the \n at end
 int fdgetline(char** b, int* len, int fd) {
     int n = 0;
-    do {
+    while (1) {
         if (n + 1 > *len) {
             *len *= 1.3;
             *b = realloc(*b, *len);
-
         }
 
         if (read(fd, *b + n, 1) < 1) { // eof
@@ -68,10 +68,9 @@ int fdgetline(char** b, int* len, int fd) {
         }
 
         char c = *(*b + n);
-        n++;
         if (c == '\n') break; // new line
-        if (c == '\r') n--; // ingore cr
-    } while (1);
+        if (c != '\r') n++; // store if not cr
+    }
     *(*b + n) = 0;
     return n;
 }
@@ -83,22 +82,20 @@ int httpd_next(int s, httpd_header emit_header, httpd_body emit_body, httpd_resp
     //if (req < 0) printf("ACCEPT=%d, errno=%d\n", req, errno);
     if (req < 0) return 0;
 
-    // process headers
-    int len = BUFSIZE + 1;
+    int len = BUFSIZE;
     char *buffer = malloc(len);
 
+    // -- process request line
     if (fdgetline(&buffer, &len, req) <= 0) return 0;
     char method[8];
     strncpy(method, strtok(buffer, " "), 8);
     method[7] = 0;
     char *path = strdup(strtok(NULL, " "));
 
+    // -- process headers
     int expectedsize = -1;
-    while (fdgetline(&buffer, &len, req) > 1) {
-        int l = strlen(buffer);
-        if (buffer[l - 1] == '\n') buffer[--l] = 0; // remove nl if present
-
-        emit_header(buffer, method, path);
+    while (fdgetline(&buffer, &len, req) > 0) {
+        if (emit_header) emit_header(buffer, method, path);
         if (strcmp(buffer, "Content-Length: ") == 0) {
             // http://www.w3.org/Protocols/rfc2616/rfc2616-sec4.html#sec4.4
             // http://stackoverflow.com/questions/2773396/whats-the-content-length-field-in-http-header
@@ -106,30 +103,36 @@ int httpd_next(int s, httpd_header emit_header, httpd_body emit_body, httpd_resp
             expectedsize = atoi(strtok(NULL, " "));
         }
     }
-    emit_header(NULL, method, path);
+    if (emit_header) emit_header(NULL, method, path);
 
     // TODO: handle POST get parameters, also add paramter getter for path
+    // http://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html#sec9.5
+    // may need to handle different encodings...?
+    // http://www.w3.org/Protocols/rfc2616/rfc2616-sec7.html#sec7
 
-    // process body
+    // -- process body
     int bodycount = 0;
 
     // stop reading when got expectedsize bytes,
     // otherwise it'll block as browser keepalive doesn't close, thus no EOF
     int n = 1;
+    len--; // remove capacity for 0 termination
     while (n > 0 && bodycount < expectedsize) {
-        n = read(req, buffer, len);
-        bodycount += n;
+        int remaining = expectedsize - bodycount;
+        int n = (len > remaining) ? remaining : len;
+        n = read(req, buffer, n);
+        if (n < 0) break; // error
         buffer[n] = 0;
-        if (n > 0) emit_body(buffer, method, path);
+        bodycount += n;
+        if (n > 0 && emit_body) emit_body(buffer, method, path);
     }
-    emit_body(NULL, method, path);
-
     free(buffer);
+    if (emit_body) emit_body(NULL, method, path);
+
+    if (emit_response) emit_response(req, method, path);
+
     if (path) free(path);
-
-    emit_response(req, method, path);
     close(req);
-
     return 1;
 }
 
@@ -145,7 +148,7 @@ void body(char* buff, char* method, char* path) {
 void response(int req, char* method, char* path) {
     static char* hello = "HELLO DUDE!\n";
     write(req, hello, strlen(hello));
-    printf("------------------------------\n\n");
+    printf("------------------------------ %s %s\n\n", method, path);
 }
 
 void httpd_loop(int s) {

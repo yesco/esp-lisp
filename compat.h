@@ -55,7 +55,11 @@ typedef void (*httpd_body)(char* buffer, char* method, char* path); // may be ca
 typedef void (*httpd_response)(int req, char* method, char* path); // you can write(req, ... don't close it, it'll be closed for you
 
 int httpd_init(int port);
+
+// all callbacks are optional
 int httpd_next(int s, httpd_header emit_header, httpd_body emit_body, httpd_response emit_response);
+
+// call default printer for testing, never returns
 void httpd_loop(int s);
 
 //////////////////////////////////////////////////////////////////////

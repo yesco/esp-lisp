@@ -1553,7 +1553,8 @@ void readeval(lisp* envp) {
             printf("GET=> %d\n", r);
         } else if (strncmp(ln, "web ", 4) == 0) {
             strtok(ln, " "); // skip web
-            int port = atoi(strtok(NULL, " ")); if (!port) port = 8080;
+            char* ports = strtok(NULL, " ");
+            int port = ports ? atoi(ports) : 8080;
             printf("WEBSERVER on port=%d\n", port);
             int s = httpd_init(port);
             if (s < 0) printf("WEBSERVER.errno=%d: s=%d\n", errno, s);
