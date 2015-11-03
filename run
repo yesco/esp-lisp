@@ -3,12 +3,17 @@ echo "--- Lines of code ---"
 grep -v "^\s*//" lisp.c | grep -v "^/\*" | grep -v "^$" | wc
 echo
 
+# for compiling 32 bit binary on 64 bit systgem
+# - sudo apt-get install libc6-dev-i386
+# - or http://askubuntu.com/questions/470796/fatal-error-sys-cdefs-h-no-such-file-or-directory
+
+
 # -- compile for LINUX
 # we define UNIX for compilations for unix target
 # and we cp tlisp.ccc to tlisp.c, can't keep it as tlisp.c when compiling for esp as it's macro takes all files
 
-cp tlisp.ccc tlisp.c && gcc -O2 -DUNIX=1 tlisp.c common.c httpd.c lisp.c -o opt ; rm tlisp.c
-cp tlisp.ccc tlisp.c && gcc -g -pg -DUNIX=1 tlisp.c common.c httpd.c lisp.c && time ./a.out ; rm tlisp.c
+cp tlisp.ccc tlisp.c && gcc -m32 -O2 -DUNIX=1 tlisp.c common.c httpd.c lisp.c -o opt ; rm tlisp.c
+cp tlisp.ccc tlisp.c && gcc -m32 -g -pg -DUNIX=1 tlisp.c common.c httpd.c lisp.c && time ./a.out ; rm tlisp.c
 
 ###cp tlisp.ccc tlisp.c && gcc --enable-checking -v -da -Q -g -O0 -DTEST=1 tlisp.c lisp.c && ./a.out ; rm tlisp.c
 
