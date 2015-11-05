@@ -122,6 +122,7 @@ lisp END = (lisp) -1;
 lisp nil = NULL;
 lisp t = NULL;
 lisp LAMBDA = NULL;
+lisp _FREE_ = NULL;
 
 lisp evalGC(lisp e, lisp *envp);
 
@@ -139,17 +140,40 @@ typedef struct {
 } string;
 
 // conss name in order to be able to have a function named 'cons()'
+// these are special, not stored in the allocated array
 #define conss_TAG 2
 typedef struct {
-    char tag;
-    char xx;
-    short index;
-
     lisp car;
     lisp cdr;
 } conss;
 
-// TODO: store inline in pointer
+// lisp is a pointer with some semantics according to its lowest bits
+// ==================================================================
+// cons cells are 8 bytes, heap allocated objects are all 8 byte aligned too,
+// thus, the three lowest bits aren't used so we use it for tagging/inline types.
+//
+///00000000 nil
+// xxxxx000 heap allocated objects
+// xxxxx010 pointer to a conses array (mini heap of untagged cons cells)
+// xxxx0100 MAYBE: (IROM) atom/string, n*16 bytes, zero terminated
+// xxxx0110 MAYBE: (IROM) longcons (array consequtive nil terminated list) n*16 bytes (n*8 cars)
+// xxxx1100
+// xxxx1110
+//
+// xxxxx001 int
+// xxxxx011 int
+// xxxxx101 int
+// xxxxx111 int
+
+
+// a lisp "pointer" is a cons cell if it & 3 == 2 (xxx10)
+// all malloc pointers are & 3 == 0 because alignment
+
+#define CONSP(x) ((((unsigned int)x) & 3) == 2)
+#define GETCONS(x) ((conss*)(((unsigned int)x) & ~2))
+#define MKCONS(x) ((lisp)(((unsigned int)x) | 2))
+
+// stored using inline pointer
 #define intint_TAG 3
 typedef struct {
     char tag;
@@ -158,6 +182,10 @@ typedef struct {
 
     int v;
 } intint; // TODO: handle overflow...
+
+#define INTP(x) (((unsigned int)x) & 1)
+#define GETINT(x) (((signed int)x) >> 1)
+#define MKINT(i) ((lisp)((((unsigned int)(i)) << 1) | 1))
 
 #define prim_TAG 4
 typedef struct {
@@ -218,6 +246,16 @@ typedef struct func {
     // This needs be same as thunk
 } func;
 
+#define TAG(x) ({ lisp _x = (x); INTP(_x) ? intint_TAG : CONSP(_x) ? conss_TAG : (_x ? ((lisp)_x)->tag : 0 ); })
+
+#define ALLOC(type) ({type* x = myMalloc(sizeof(type), type ## _TAG); x->tag = type ## _TAG; x;})
+#define ATTR(type, x, field) ((type*)x)->field
+#define IS(x, type) (x && TAG(x) == type ## _TAG)
+
+int gettag(lisp x) {
+    return TAG(x);
+}
+
 #define MAX_TAGS 16
 int tag_count[MAX_TAGS] = {0};
 int tag_bytes[MAX_TAGS] = {0};
@@ -242,21 +280,6 @@ unsigned int used[MAX_ALLOCS/32 + 1] = { 0 };
     
 #define SET_USED(i) ({int _i = (i); used[_i/32] |= 1 << _i%32;})
 #define IS_USED(i) ({int _i = (i); (used[_i/32] >> _i%32) & 1;})
-
-#define INTP(x) (((unsigned int)x) & 1)
-#define GETINT(x) (((signed int)x) >> 1)
-#define MKINT(i) ((lisp)((((unsigned int)(i)) << 1) | 1))
-
-#define TAG(x) (INTP(x) ? intint_TAG : (x ? ((lisp)x)->tag : 0 ))
-
-#define ALLOC(type) ({type* x = myMalloc(sizeof(type), type ## _TAG); x->tag = type ## _TAG; x;})
-#define ATTR(type, x, field) ((type*)x)->field
-#define IS(x, type) (x && TAG(x) == type ## _TAG)
-
-int gettag(lisp x) {
-    return TAG(x);
-    return x->tag;
-}
 
 // any slot with no value/nil can be reused
 int reuse_pos = 0;
@@ -289,6 +312,10 @@ void* salloc(int bytes) {
 }
 
 void sfree(void** p, int bytes, int tag) {
+    if (CONSP((lisp)p)) {
+        printf("sfree.CONS.error\n");
+        exit(1);
+    }
     if (bytes >= SALLOC_MAX_SIZE) {
         used_bytes -= bytes;
         return free(p);
@@ -347,29 +374,31 @@ void mark_clean() {
     memset(used, 0, sizeof(used));
 }
 
-int needGC() {
-    return (used_count < MAX_ALLOCS * 0.8) ? 0 : 1;
-}
-
 atom* symbol_list = NULL;
 
 void mark(lisp x);
-
-lisp mem_usage(int count) {
-    if (traceGC) printf(" [GC freed %d used=%d bytes=%d]\n", count, used_count, used_bytes);
-    return nil;
-}
+void gc_conses();
+lisp mem_usage(int count);
 
 lisp gc(lisp* envp) {
+    // mark
     mark(nil); mark((lisp)symbol_list); // TODO: remove?
 
     if (envp) mark(*envp);
 
+    // sweep
+    gc_conses();
+    
     int count = 0;
     int i ;
     for(i = 0; i < allocs_count; i++) {
         lisp p = allocs[i];
         if (!p) continue;
+        if (INTP(p) || CONSP(p)) {
+            printf("GC.erronious pointer stored: %u, tag=%d\n", (int)p, TAG(p));
+            printf("VAL="); princ(p); terpri();
+            exit(1);
+        }
         
         // USE FOR DEBUGGING SPECIFIC PTR
         //if ((int)p == 0x0804e528) { printf("\nGC----------------------%d ERROR! p=0x%x  ", i, p); princ(p); terpri(); }
@@ -473,23 +502,82 @@ char* getstring(lisp s) {
     return IS(s, string) ? ATTR(string, s, p) : NULL;
 }
 
-#define CARCDRP(x) ({ lisp _x = (x); _x && (IS(_x, conss) || IS(_x, thunk) || IS(_x, immediate) || IS(_x, func)); })
+//#define MAX_CONS 137 // allows allocation of (list 1 2)
+#define MAX_CONS 1024
+conss conses[MAX_CONS];
+unsigned int cons_used[MAX_CONS/32 + 1] = { 0 };
+lisp free_cons = 0;
+int cons_count = 0; // TODO: remove, used for GC indication
 
-lisp carr(lisp x) { return CARCDRP(x) ? ATTR(conss, x, car) : nil; }
-#define car(x) ({ lisp _x = (x); _x && IS(_x, conss) ? ATTR(conss, _x, car) : nil; })
+#define CONS_SET_USED(i) ({int _i = (i); cons_used[_i/32] |= 1 << _i%32;})
+#define CONS_IS_USED(i) ({int _i = (i); (cons_used[_i/32] >> _i%32) & 1;})
 
-lisp cdrr(lisp x) { return CARCDRP(x) ? ATTR(conss, x, cdr) : nil; }
-#define cdr(x) ({ lisp _x = (x); _x && IS(_x, conss) ? ATTR(conss, _x, cdr) : nil; })
-
-lisp cons(lisp a, lisp b) {
-    conss* r = ALLOC(conss);
-    r->car = a;
-    r->cdr = b;
-    return (lisp)r;
+// TODO: as alternative to free list we could just use the bitmap
+// this would allow us to allocate adjacent elements!
+void gc_conses() {
+    // make first pointer point to first position
+    free_cons = nil;
+    cons_count = 0;
+    int i;
+    for(i = MAX_CONS - 1; i >= 0; i--) {
+        if (!CONS_IS_USED(i)) {
+            conss* c = &conses[i];
+            //if (c->car && c->car == _FREE_) continue; // already in free list...
+            c->car = _FREE_;
+            c->cdr = free_cons;
+            free_cons = MKCONS(c);
+            //printf("%u CONS=%u CONSP=%d\n", (int)c, (int)free_cons, CONSP(free_cons));
+            cons_count++;
+        }
+    }
+    memset(cons_used, 0, sizeof(cons_used));
 }
 
-lisp setcar(lisp x, lisp v) { return IS(x, conss) ? ATTR(conss, x, car) = v : nil; return v; }
-lisp setcdr(lisp x, lisp v) { return IS(x, conss) ? ATTR(conss, x, cdr) = v : nil; return v; }
+void gc_cons_init() {
+    memset(cons_used, 0, sizeof(cons_used));
+    memset(conses, 0, sizeof(conses));
+    gc_conses();
+}
+
+lisp cons(lisp a, lisp b) {
+    conss* c = GETCONS(free_cons);
+    cons_count--;
+    if (!c) {
+        printf("Run out of conses\n");
+        exit(1);
+    }
+    if (cons_count < 0) {
+        printf("Really ran out of conses\n");
+        // TODO: shouldn't get here, should have been caught above...
+        exit(1);
+    }
+    if (c->car != _FREE_) {
+        printf("Conses corruption error %u ... %u CONSP=%d\n", (int)c, (int)free_cons, CONSP(free_cons));
+        printf("CONS="); princ((lisp)c); terpri();
+        exit(1);
+    }
+    // TODO: this is updating counter in myMalloc stats, maybe refactor...
+    if (0) {
+    used_count++;
+    tag_count[conss_TAG]++;
+    tag_bytes[conss_TAG] += sizeof(conss);
+    tag_count[0]++;
+    tag_bytes[0] += sizeof(conss);
+    }
+
+    free_cons = c->cdr;
+
+    c->car = a;
+    c->cdr = b;
+    return MKCONS(c);
+}
+
+// TODO: make macros?
+inline lisp car(lisp x) { return CONSP(x) ? GETCONS(x)->car : nil; }
+inline lisp cdr(lisp x) { return CONSP(x) ? GETCONS(x)->cdr : nil; }
+
+lisp setcar(lisp x, lisp v) { return IS(x, conss) ? GETCONS(x)->car = v : nil; }
+lisp setcdr(lisp x, lisp v) { return IS(x, conss) ? GETCONS(x)->cdr = v : nil; }
 
 lisp list(lisp first, ...) {
     va_list ap;
@@ -570,19 +658,19 @@ lisp in(lisp pin) {
 
 static void f_emit_text(lisp callback, char* path[], char c) {
 //    return;
-    lisp env = cdrr(callback);
+    lisp env = cdr(callback);
     char s[2] = {0};
     s[0] = c;
     evalGC(list(callback, mkstring(s), END), &env);
 }
 
 static void f_emit_tag(lisp callback, char* path[], char* tag) {
-    lisp env = cdrr(callback);
+    lisp env = cdr(callback);
     evalGC(list(callback, quote(symbol(tag)), END), &env);
 }
 
 static void f_emit_attr(lisp callback, char* path[], char* tag, char* attr, char* value) {
-    lisp env = cdrr(callback);
+    lisp env = cdr(callback);
     evalGC(list(callback, quote(symbol(tag)), quote(symbol(attr)), mkstring(value), END), &env);
 }
 
@@ -604,19 +692,19 @@ lisp wget_(lisp server, lisp url, lisp callback) {
 static lisp web_callback = NULL;
 
 static void header(char* buff, char* method, char* path) {
-    lisp env = cdrr(web_callback);
+    lisp env = cdr(web_callback);
     // TODO: consider printing the returned value, need header(req, ..., need updatable state?)
     evalGC(list(web_callback, quote(symbol("HEADER")), mkstring(buff), quote(symbol(method)), mkstring(path), END), &env);
 }
 
 static void body(char* buff, char* method, char* path) {
-    lisp env = cdrr(web_callback);
+    lisp env = cdr(web_callback);
     // TODO: consider printing the returned value, need header(req, ..., need updatable state?)
     evalGC(list(web_callback, quote(symbol("BODY")), mkstring(buff), quote(symbol(method)), mkstring(path), END), &env);
 }
 
 static void response(int req, char* method, char* path) {
-    lisp env = cdrr(web_callback);
+    lisp env = cdr(web_callback);
     lisp ret = evalGC(list(web_callback, nil, quote(symbol(method)), mkstring(path), END), &env);
 
     char* s = getstring(ret);
@@ -817,8 +905,22 @@ lisp mkfunc(lisp e, lisp env) {
 
 void mark_deep(lisp next, int deep) {
     while (next) {
+        // -- pointer contains tag
         if (INTP(next)) return;
+	if (CONSP(next)) {
+	    int i = (conss*)next - &conses[0];
+            if (i >= MAX_CONS) {
+                printf("mark.cons.funny i=%d    %u\n", i, (int)next);
+                exit(1);
+            }
+            if (CONS_IS_USED(i)) return; // already checked!
+  	    CONS_SET_USED(i);
+  	    mark_deep(car(next), deep+1);
+	    next = cdr(next);
+	    continue;
+	}
 
+        // -- generic pointer to heap allocated object with type tag
         // optimization, we store index position in element
         int index = next->index;
         if (index < 0) return; // no tracked here
@@ -839,9 +941,6 @@ void mark_deep(lisp next, int deep) {
         // follow pointers, recurse on one end, or set next for continue
         if (IS(p, atom)) {
             next = (lisp)ATTR(atom, (void*)p, next);
-        } else if (IS(p, conss)) {
-            mark_deep(car(p), deep+1);
-            next = cdr(p);
         } else if (IS(p, thunk) || IS(p, immediate) || IS(p, func)) {
             mark_deep(ATTR(thunk, p, e), deep+1);
             next = ATTR(thunk, p, env);
@@ -1239,6 +1338,18 @@ void print_env(lisp env) {
     terpri();
 }
 
+lisp mem_usage(int count) {
+    // TODO: last nubmer conses not correct new usaga
+    if (traceGC) printf(" [GC freed %d used=%d bytes=%d conses=%d]\n", count, used_count, used_bytes, MAX_CONS - cons_count);
+    return nil;
+}
+
+int needGC() {
+    if (cons_count < MAX_CONS * 0.2) return 1;
+    //printf("cons_count = %d and not need GC\n", cons_count);
+    return (used_count < MAX_ALLOCS * 0.8) ? 0 : 1;
+}
+
 lisp evalGC(lisp e, lisp* envp) {
     if (!e) return e;
     char tag = TAG(e);
@@ -1429,10 +1540,16 @@ lisp lisp_init() {
     // TODO: this is a leak!!!
     allocs_count = 0;
 
+    // need to before gc_cons_init()...
+    _FREE_ = symbol("*FREE*");
+
+    // setup gc clean slate
     mark_clean();
+    gc_cons_init();
     gc(NULL);
 
     t = symbol("t");
+
     // nil = symbol("nil"); // LOL? TODO:? that wouldn't make sense? then it would be taken as true!
     LAMBDA = mkprim("lambda", -16, lambda);
 
@@ -1467,8 +1584,8 @@ lisp lisp_init() {
     PRIM(princ, 1, princ);
 
     PRIM(cons, 2, cons);
-    PRIM(car, 1, carr);
-    PRIM(cdr, 1, cdrr);
+    PRIM(car, 1, car);
+    PRIM(cdr, 1, cdr);
     PRIM(setcar, 2, setcar);
     PRIM(setcdr, 2, setcdr);
 
@@ -1524,7 +1641,7 @@ lisp lisp_init() {
 
 char* readline(char* prompt, int maxlen) {
     if (prompt) {
-        printf(prompt);
+        printf("%s", prompt);
         fflush(stdout);
     }
 
