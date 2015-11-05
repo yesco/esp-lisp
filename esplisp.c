@@ -100,6 +100,11 @@ void connect_wifi(char* ssid, char* password) {
 
     sdk_wifi_set_opmode(STATION_MODE);
     sdk_wifi_station_set_config(&config);
+
+    // TODO: wifi_get_ip_info
+    // https://github.com/SuperHouse/esp-open-rtos/blob/master/lib/allsymbols.rename
+    // wifi_get_sleep_type, wifi_station_scan
+    // wifi_softap_stop, wifi_station_disconnect
 }
 
 // want callback for tasks

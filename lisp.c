@@ -152,24 +152,21 @@ typedef struct {
 // cons cells are 8 bytes, heap allocated objects are all 8 byte aligned too,
 // thus, the three lowest bits aren't used so we use it for tagging/inline types.
 //
-///00000000 nil
-// xxxxx000 heap allocated objects
-// xxxxx010 pointer to a conses array (mini heap of untagged cons cells)
-// xxxx0100 MAYBE: (IROM) symbol/string, n*16 bytes, zero terminated
-// xxxx0110 MAYBE: (IROM) longcons (array consequtive nil terminated list) n*16 bytes (n*8 cars)
-// xxxx1100
-// xxxx1110
+// 00000000 nil
+//      000 heap allocated objects
+//       01 int stored inline in the pointer
+//      010 cons pointer into conses array
+//       11 symbol names stored inside the pointer
 //
-// xxxxx001 int
-// xxxxx011 int
-// xxxxx101 int
-// xxxxx111 int
+//      100 special pointer, see below...
+//     0100 UNUSED: (IROM) symbol/string, n*16 bytes, zero terminated
+//     1100 UNUSED: (IROM) longcons (array consequtive nil terminated list) n*16 bytes (n*8 cars)
+//
+//     x1yy cons style things? but with other type
+//     0110 UNUSED: maybe we have func/thunk/immediate
+//     1110 UNUSED: 
 
-
-// a lisp "pointer" is a cons cell if it & 3 == 2 (xxx10)
-// all malloc pointers are & 3 == 0 because alignment
-
-#define CONSP(x) ((((unsigned int)x) & 3) == 2)
+#define CONSP(x) ((((unsigned int)x) & 7) == 2)
 #define GETCONS(x) ((conss*)(((unsigned int)x) & ~2))
 #define MKCONS(x) ((lisp)(((unsigned int)x) | 2))
 
@@ -183,9 +180,9 @@ typedef struct {
     int v;
 } intint; // TODO: handle overflow...
 
-#define INTP(x) (((unsigned int)x) & 1)
-#define GETINT(x) (((signed int)x) >> 1)
-#define MKINT(i) ((lisp)((((unsigned int)(i)) << 1) | 1))
+#define INTP(x) ((((unsigned int)x) & 3) == 1)
+#define GETINT(x) (((signed int)x) >> 2)
+#define MKINT(i) ((lisp)((((unsigned int)(i)) << 2) | 1))
 
 #define prim_TAG 4
 typedef struct {
@@ -210,6 +207,8 @@ typedef struct symboll {
     struct symboll* next;
     char* name; // TODO should be char name[1]; // inline allocation!
 } symboll;
+
+#define SYMP(x) ((((unsigned int)x) & 3) == 3)
 
 // Pseudo closure that is returned by if/progn and other construct that takes code, should handle tail recursion
 #define thunk_TAG 6
@@ -246,7 +245,8 @@ typedef struct func {
     // This needs be same as thunk
 } func;
 
-#define TAG(x) ({ lisp _x = (x); INTP(_x) ? intint_TAG : CONSP(_x) ? conss_TAG : (_x ? ((lisp)_x)->tag : 0 ); })
+#define TAG(x) ({ lisp _x = (x); INTP(_x) ? intint_TAG : CONSP(_x) ? conss_TAG : SYMP(_x) ? symboll_TAG : (_x ? ((lisp)_x)->tag : 0 ); })
+//#define TAG(x) ({ lisp _x = (x); INTP(_x) ? intint_TAG : CONSP(_x) ? conss_TAG : (_x ? ((lisp)_x)->tag : 0 ); })
 
 #define ALLOC(type) ({type* x = myMalloc(sizeof(type), type ## _TAG); x->tag = type ## _TAG; x;})
 #define ATTR(type, x, field) ((type*)x)->field
@@ -387,6 +387,7 @@ lisp gc(lisp* envp) {
     // mark
     mark(nil); mark((lisp)symbol_list); // TODO: remove?
 
+    //if (envp) { printf("ENVP %u=", (unsigned int)*envp); princ(*envp); terpri();}
     if (envp) mark(*envp);
 
     // sweep
@@ -508,8 +509,9 @@ char* getstring(lisp s) {
 //#define MAX_CONS 137 // allows allocation of (list 1 2)
 //#define MAX_CONS 1024
 #define MAX_CONS 512
+#define CONSES_BYTES (MAX_CONS * sizeof(conss))
 
-conss conses[MAX_CONS];
+conss* conses = NULL;
 unsigned int cons_used[MAX_CONS/32 + 1] = { 0 };
 lisp free_cons = 0;
 int cons_count = 0; // TODO: remove, used for GC indication
@@ -539,8 +541,9 @@ void gc_conses() {
 }
 
 void gc_cons_init() {
+    conses = malloc(CONSES_BYTES); // we malloc, so it's pointer starts at xxx000
+    memset(conses, 0, CONSES_BYTES);
     memset(cons_used, 0, sizeof(cons_used));
-    memset(conses, 0, sizeof(conses));
     gc_conses();
 }
 
@@ -862,7 +865,68 @@ lisp secretMkSymbol(char* s) {
     return (lisp)r;
 }
 
+// in many basic lisp program most function names/symbols are 6 charcters or less
+// few special characters are used (- _ ? /), if other fancy character used (< + etc)
+//
+// first try, len <= 6:
+//   pointer = aaaaabbbbbcccccdddddeeeeefffff11 = 32 bits len <= 6 each char mapped to range 32 as per below
+// if len <=3 or any character out of range:
+//   pointer = aaaaaaabbbbbbbcccccccxxxx1111111 = 32 bits len <= 3 ascii characters 0-127
+//
+// encode char -> 0..31
+//    \0 _ a-z  -  ?  /   3ASCII
+//    0  1 2 27 28 29 30  31
+
+static lisp str2sym3ascii(char* s, int len) {
+    if (len > 3) return nil;
+    unsigned int c0 = len >= 1 ? s[0] : 0;
+    unsigned int c1 = (c0 && len >= 2) ? s[1] : 0;
+    unsigned int c2 = (c1 && len >= 3) ? s[2] : 0;
+    if (c0 < 0 || c1 < 0 || c2 < 0 || c0 > 127 || c1 > 127 || c2 > 127) return nil;
+    unsigned int n = (c0 << (32-1*7)) + (c1 << (32-2*7)) + (c2 << (32-3*7)) + 127;
+    //printf("%u %u %u %u\n", c0, c1, c2, n);
+    return (lisp) n;
+}
+
+
+static lisp str2sym(char* s, int len) {
+    if (len > 6) return nil; // too long
+    if (len <= 3) return str2sym3ascii(s, len);
+    unsigned int n = 0;
+    int i;
+    for(i = 0; i < 6; i++) {
+        char c = (i < len) ? *(s+i) : 0;
+        int e = c == '-' ?  28 : c == '?' ? 29 : c == '/' ? 30 : c ? c - '_' + 1 : 0;
+        if (e < 0 || e > 32) return nil;
+        n = n * 32 + e;
+    }
+    return (lisp) ((n << 2) | 3);
+}
+
+static void sym2str(lisp s, char *name) {
+    if (!s) return;
+    // 3ASCII?
+    unsigned int n = (unsigned int) s;
+    if (n % 128 == 127) {
+        name[0] = (n >> (32-1*7)) % 128;
+        name[1] = (n >> (32-2*7)) % 128;
+        name[2] = (n >> (32-3*7)) % 128;
+        //printf("%d %d %d\n", name[0], name[1], name[2]);
+        return;
+    }
+    n /= 4;
+    int i;
+    for(i = 0; i < 6; i++) {
+        int e = n % 32;
+        int c = e == 28 ? '-' : e == 29 ? '?' : e == 30 ? '/' : e ? (e + '_' - 1) : 0;
+        *(name + 6 - 1 - i) = c;
+        n /= 32;
+    }
+}
+
 lisp find_symbol(char *s, int len) {
+    lisp e = str2sym(s, len);
+    if (e) return e;
     symboll* cur = (symboll*)symbol_list;
     while (cur) {
         if (strncmp(s, cur->name, len) == 0 && strlen(cur->name) == len)
@@ -919,9 +983,11 @@ lisp mkfunc(lisp e, lisp env) {
 ////////////////////////////// GC
 
 void mark_deep(lisp next, int deep) {
+    //printf("MARK: "); princ(next); terpri();
     while (next) {
         // -- pointer contains tag
         if (INTP(next)) return;
+        if (SYMP(next)) return;
 	if (CONSP(next)) {
 	    int i = (conss*)next - &conses[0];
             if (i >= MAX_CONS) {
@@ -934,18 +1000,21 @@ void mark_deep(lisp next, int deep) {
 	    next = cdr(next);
 	    continue;
 	}
-
         // -- generic pointer to heap allocated object with type tag
         // optimization, we store index position in element
         int index = next->index;
         if (index < 0) return; // no tracked here
+        if (index >= MAX_ALLOCS) {
+            printf("\n--- ERROR: mark_deep - corrupted data p=%u   index=%d\n", (unsigned int)next, index);
+            printf("VALUE="); princ(next); terpri();
+        }
 
         lisp p = allocs[index];
         if (!p || p != next) {
-            printf("\n-- ERROR: mark_deep - index %d doesn't contain pointer.\n", index);
+            printf("\n-- ERROR: mark_deep - index %d doesn't contain pointer. p=%u\n", index, (unsigned int)next);
             //printf("pppp = 0x%u and next = 0x%u \n", p, next);
-            /* princ(next); */
-            /* return; */
+            //princ(next);
+            //return;
         } 
         
         if (IS_USED(index)) return;
@@ -954,7 +1023,7 @@ void mark_deep(lisp next, int deep) {
         //printf("Marked %i deep %i :: p=%u ", index, deep, p); princ(p); terpri();
             
         // follow pointers, recurse on one end, or set next for continue
-        if (IS(p, symboll)) {
+        if (IS(p, symboll)) { // shouldn't be needed?
             next = (lisp)ATTR(symboll, (void*)p, next);
         } else if (IS(p, thunk) || IS(p, immediate) || IS(p, func)) {
             mark_deep(ATTR(thunk, p, e), deep+1);
@@ -1204,7 +1273,7 @@ static lisp readx() {
         if (isdigit(n))
             return mkint(-readInt(n - '0'));
         else
-	  return readSymbol(n, -1);
+            return readSymbol(n, -1);
     }
     if (c == '"') return readString();
     return readSymbol(c, 0);
@@ -1242,6 +1311,8 @@ lisp princ(lisp x) {
     if (tag == string_TAG) printf("%s", ATTR(string, x, p));
     else if (tag == intint_TAG) printf("%d", getint(x));
     else if (tag == prim_TAG) printf("#%s", ATTR(prim, x, name));
+    // for now we have two "symbolls" one inline in pointer and another heap allocated
+    else if (SYMP(x)) { char s[4] = {0}; sym2str(x, &s[0]); printf("%s #%d", s, strlen(s)); }
     else if (tag == symboll_TAG) printf("%s", ATTR(symboll, x, name));
     else if (tag == thunk_TAG) { printf("#thunk["); princ(ATTR(thunk, x, e)); putchar(']'); }
     else if (tag == immediate_TAG) { printf("#immediate["); princ(ATTR(thunk, x, e)); putchar(']'); }
@@ -1545,8 +1616,16 @@ lisp funcall(lisp f, lisp args, lisp* envp, lisp e) {
 
 static lisp test(lisp*);
 
+char* readline(char* prompt, int maxlen);
+
 // returns an env with functions
 lisp lisp_init() {
+    // enable to observer startup sequence
+    if (0) {
+        char* f = readline("start lisp>", 1);
+        free(f);
+    }
+
     lisp env = nil;
     lisp* envp = &env;
 
@@ -1717,7 +1796,7 @@ void run(char* s, lisp* envp) {
     lisp r = reads(s);
     princ(evalGC(r, envp)); terpri();
     // TODO: report parsing allocs separately?
-    // mark(r);
+    // mark(r); // keep history?
     gc(envp);
 }
 
