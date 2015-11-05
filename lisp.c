@@ -269,10 +269,11 @@ int tag_size[MAX_TAGS] = { 0, sizeof(string), sizeof(conss), sizeof(intint), siz
 // TODO: remove ATOM since they are never GC:ed! (thunk are special too, not tracked)
 //#define MAX_ALLOCS 819200 // (fibo 22)
 //#define MAX_ALLOCS 8192
-#define MAX_ALLOCS 1024 // keesp 15K free
+//#define MAX_ALLOCS 1024 // keesp 15K free
 //#define MAX_ALLOCS 512 // keeps 17K free
 //#define MAX_ALLOCS 256 // keeps 21K free
 //#define MAX_ALLOCS 128 // keeps 21K free
+#define MAX_ALLOCS 128
 
 int allocs_count = 0;
 void* allocs[MAX_ALLOCS] = { 0 };
@@ -505,7 +506,9 @@ char* getstring(lisp s) {
 }
 
 //#define MAX_CONS 137 // allows allocation of (list 1 2)
-#define MAX_CONS 1024
+//#define MAX_CONS 1024
+#define MAX_CONS 512
+
 conss conses[MAX_CONS];
 unsigned int cons_used[MAX_CONS/32 + 1] = { 0 };
 lisp free_cons = 0;
