@@ -989,6 +989,7 @@ lisp plus(lisp a, lisp b) { return mkint(getint(a) + getint(b)); }
 lisp minus(lisp a, lisp b) { return mkint(getint(a) - getint(b)); }
 lisp times(lisp a, lisp b) { return mkint(getint(a) * getint(b)); }
 lisp divide(lisp a, lisp b) { return mkint(getint(a) / getint(b)); }
+lisp mod(lisp a, lisp b) { return mkint(getint(a) % getint(b)); }
 
 // TODO: http://www.gnu.org/software/emacs/manual/html_node/elisp/Input-Functions.html#Input-Functions
 // http://www.lispworks.com/documentation/HyperSpec/Body/f_rd_rd.htm#read
@@ -1583,7 +1584,8 @@ lisp lisp_init() {
     PRIM(+, 2, plus);
     PRIM(-, 2, minus);
     PRIM(*, 2, times);
-    // PRIM("/", 2, divide);
+    PRIM(/, 2, divide);
+    PRIM(%, 2, mod);
     PRIM(eq, 2, eq);
     PRIM(equal, 2, equal);
     PRIM(=, 2, eq);
