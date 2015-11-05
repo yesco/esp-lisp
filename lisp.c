@@ -333,11 +333,13 @@ void sfree(void** p, int bytes, int tag) {
 
 // call this malloc using ALLOC(typename) macro
 void* myMalloc(int bytes, int tag) {
+    if (1) { // 830ms -> 770ms 5% faster if removed
     used_count++;
     tag_count[tag]++;
     tag_bytes[tag] += bytes;
     tag_count[0]++;
     tag_bytes[0] += bytes;
+    }
 
     // use for heap debugging, put in offending addresses
     //if (allocs_count == 269) { printf("\n==============ALLOC: %d bytes of tag %s ========================\n", bytes, tag_name[tag]); }
@@ -557,7 +559,7 @@ lisp cons(lisp a, lisp b) {
         exit(1);
     }
     // TODO: this is updating counter in myMalloc stats, maybe refactor...
-    if (0) {
+    if (0) { // TOOD: enable this and it becomes very slow!!!!??? why compared to myMalloc shouldn't????
     used_count++;
     tag_count[conss_TAG]++;
     tag_bytes[conss_TAG] += sizeof(conss);
@@ -572,10 +574,12 @@ lisp cons(lisp a, lisp b) {
     return MKCONS(c);
 }
 
-// TODO: make macros?
+// inline works on both unix/gcc and c99 for esp8266
 inline lisp car(lisp x) { return CONSP(x) ? GETCONS(x)->car : nil; }
 inline lisp cdr(lisp x) { return CONSP(x) ? GETCONS(x)->cdr : nil; }
 
+// however, on esp8266 it's only inlined and no function exists,
+// so we need to create them for use in lisp
 #ifdef UNIX
   #define car_ car
   #define cdr_ cdr
@@ -1280,7 +1284,7 @@ static lisp getvar(lisp e, lisp env) {
     return nil;
 }
 
-static lisp eval_hlp(lisp e, lisp* envp) {
+inline static lisp eval_hlp(lisp e, lisp* envp) {
     if (!e) return e;
     char tag = TAG(e);
     if (tag == atom_TAG) return getvar(e, *envp);
