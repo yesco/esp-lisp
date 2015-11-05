@@ -98,10 +98,10 @@
 // 001 = integer << 1 - DONE
 // -- byte[8] lispheap[MAX_HEAP], then still need byte[8] lisptag[MAX_HEAP]
 // 010 = lispheap, cons == 8 bytes, 2 cells
-// 100 = lispheap, atom == name + primptr, not same as value
+// 100 = lispheap, symbol == name + primptr, not same as value
 // 110 = 
 
-// inline atoms? 32 bits = 6 * 5 bits = 30 bits = 6 "chars" x10, but then atom cannot have ptr
+// inline symbol? 32 bits = 6 * 5 bits = 30 bits = 6 "chars" x10, but then symbol cannot have ptr
 
 // TODO: move all defs into this:
 #include "lisp.h"
@@ -155,7 +155,7 @@ typedef struct {
 ///00000000 nil
 // xxxxx000 heap allocated objects
 // xxxxx010 pointer to a conses array (mini heap of untagged cons cells)
-// xxxx0100 MAYBE: (IROM) atom/string, n*16 bytes, zero terminated
+// xxxx0100 MAYBE: (IROM) symbol/string, n*16 bytes, zero terminated
 // xxxx0110 MAYBE: (IROM) longcons (array consequtive nil terminated list) n*16 bytes (n*8 cars)
 // xxxx1100
 // xxxx1110
@@ -195,21 +195,21 @@ typedef struct {
 
     signed char n; // TODO: maybe could use xx tag above?
     void* f;
-    char* name; // TODO: should point to an ATOM! integrate ATOM and prims!
+    char* name; // TODO: should point to an SYMBOL! integrate SYMBOL and prims!
 } prim;
 
-// TODO: somehow an atom is very similar to a conss cell.
+// TODO: somehow a symbol is very similar to a conss cell.
 // it has two pointers, next/cdr, diff is first pointer points a naked string/not lisp string. Maybe it should?
-// TODO: if we make this a 2-cell or 1-cell lisp? or maybe atoms should have no property list or value, just use ENV for that
-#define atom_TAG 5
-typedef struct atom {
+// TODO: if we make this a 2-cell or 1-cell lisp? or maybe symbols should have no property list or value, just use ENV for that
+#define symboll_TAG 5
+typedef struct symboll {
     char tag;
     char xx;
     short index;
 
-    struct atom* next;
+    struct symboll* next;
     char* name; // TODO should be char name[1]; // inline allocation!
-} atom;
+} symboll;
 
 // Pseudo closure that is returned by if/progn and other construct that takes code, should handle tail recursion
 #define thunk_TAG 6
@@ -262,11 +262,11 @@ int tag_bytes[MAX_TAGS] = {0};
 int tag_freed_count[MAX_TAGS] = {0};
 int tag_freed_bytes[MAX_TAGS] = {0};
 
-char* tag_name[MAX_TAGS] = { "total", "string", "cons", "int", "prim", "atom", "thunk", "immediate", "func", 0 };
+char* tag_name[MAX_TAGS] = { "total", "string", "cons", "int", "prim", "symbol", "thunk", "immediate", "func", 0 };
 int tag_size[MAX_TAGS] = { 0, sizeof(string), sizeof(conss), sizeof(intint), sizeof(prim), sizeof(thunk), sizeof(immediate), sizeof(func) };
 
-// essentially total number of cons+atom+prim
-// TODO: remove ATOM since they are never GC:ed! (thunk are special too, not tracked)
+// essentially total number of cons+symbol+prim
+// TODO: remove SYMBOL since they are never GC:ed! (thunk are special too, not tracked)
 //#define MAX_ALLOCS 819200 // (fibo 22)
 //#define MAX_ALLOCS 8192
 //#define MAX_ALLOCS 1024 // keesp 15K free
@@ -377,7 +377,7 @@ void mark_clean() {
     memset(used, 0, sizeof(used));
 }
 
-atom* symbol_list = NULL;
+symboll* symbol_list = NULL;
 
 void mark(lisp x);
 void gc_conses();
@@ -750,11 +750,11 @@ lisp web(lisp port, lisp callback) {
     }
 }
 
-// lookup binding of atom variable name (not work for int names)
+// lookup binding of symbol variable name (not work for int names)
 lisp assoc(lisp name, lisp env) {
     while (env) {
         lisp bind = car(env);
-        // only works for atom
+        // only works for symbol
         if (car(bind)==name) return bind; 
         // TODO: this is required for for example integer if BIGINT
         // if (eq(car(bind), name)) return bind;
@@ -853,17 +853,17 @@ lisp primapply(lisp ff, lisp args, lisp* envp, lisp all) {
 }
 
 // don't call this directly, call symbol
-lisp secretMkAtom(char* s) {
-    atom* r = ALLOC(atom);
+lisp secretMkSymbol(char* s) {
+    symboll* r = ALLOC(symboll);
     r->name = s;
     // link it in first
-    r->next = (atom*)symbol_list;
+    r->next = (symboll*)symbol_list;
     symbol_list = r;
     return (lisp)r;
 }
 
 lisp find_symbol(char *s, int len) {
-    atom* cur = (atom*)symbol_list;
+    symboll* cur = (symboll*)symbol_list;
     while (cur) {
         if (strncmp(s, cur->name, len) == 0 && strlen(cur->name) == len)
 	  return (lisp)cur;
@@ -873,19 +873,19 @@ lisp find_symbol(char *s, int len) {
 }
 
 // linear search to intern the string
-// will always return same atom
+// will always return same symbol
 lisp symbol(char* s) {
     if (!s) return nil;
     lisp sym = find_symbol(s, strlen(s));
     if (sym) return sym;
-    return secretMkAtom(s);
+    return secretMkSymbol(s);
 }
 
 // create a copy of partial string if not found
 lisp symbolCopy(char* start, int len) {
     lisp sym = find_symbol(start, len);
     if (sym) return sym;
-    return secretMkAtom(strndup(start, len));
+    return secretMkSymbol(strndup(start, len));
 }
 
 // TODO: not used??? this can be used to implement generators
@@ -954,8 +954,8 @@ void mark_deep(lisp next, int deep) {
         //printf("Marked %i deep %i :: p=%u ", index, deep, p); princ(p); terpri();
             
         // follow pointers, recurse on one end, or set next for continue
-        if (IS(p, atom)) {
-            next = (lisp)ATTR(atom, (void*)p, next);
+        if (IS(p, symboll)) {
+            next = (lisp)ATTR(symboll, (void*)p, next);
         } else if (IS(p, thunk) || IS(p, immediate) || IS(p, func)) {
             mark_deep(ATTR(thunk, p, e), deep+1);
             next = ATTR(thunk, p, env);
@@ -981,7 +981,7 @@ lisp nullp(lisp a) { return a ? nil : t; }
 lisp consp(lisp a) { return IS(a, conss) ? t : nil; }
 lisp atomp(lisp a) { return IS(a, conss) ? nil : t; }
 lisp stringp(lisp a) { return IS(a, string) ? nil : t; }
-lisp symbolp(lisp a) { return IS(a, atom) ? t : nil; } // rename struct atom to symbol?
+lisp symbolp(lisp a) { return IS(a, symboll) ? t : nil; } // rename struct symbol to symbol?
 lisp numberp(lisp a) { return IS(a, intint) ? t : nil; } // TODO: extend with float/real
 lisp integerp(lisp a) { return IS(a, intint) ? t : nil; }
 lisp funcp(lisp a) { return IS(a, func) || IS(a, thunk) || IS(a, prim) ? t : nil; }
@@ -1154,7 +1154,7 @@ static lisp readString() {
     return mklenstring(start, len);
 }
 
-static lisp readAtom(char c, int o) {
+static lisp readSymbol(char c, int o) {
     // TODO: cleanup, ugly
    if (!input) {
        char s[2] = {'-', 0};
@@ -1204,10 +1204,10 @@ static lisp readx() {
         if (isdigit(n))
             return mkint(-readInt(n - '0'));
         else
-	  return readAtom(n, -1);
+	  return readSymbol(n, -1);
     }
     if (c == '"') return readString();
-    return readAtom(c, 0);
+    return readSymbol(c, 0);
 }
 
 static lisp reads(char *s) {
@@ -1242,7 +1242,7 @@ lisp princ(lisp x) {
     if (tag == string_TAG) printf("%s", ATTR(string, x, p));
     else if (tag == intint_TAG) printf("%d", getint(x));
     else if (tag == prim_TAG) printf("#%s", ATTR(prim, x, name));
-    else if (tag == atom_TAG) printf("%s", ATTR(atom, x, name));
+    else if (tag == symboll_TAG) printf("%s", ATTR(symboll, x, name));
     else if (tag == thunk_TAG) { printf("#thunk["); princ(ATTR(thunk, x, e)); putchar(']'); }
     else if (tag == immediate_TAG) { printf("#immediate["); princ(ATTR(thunk, x, e)); putchar(']'); }
     else if (tag == func_TAG) { printf("#func["); /* princ(ATTR(thunk, x, e)); */ putchar(']'); } // circular...
@@ -1291,7 +1291,7 @@ static lisp getvar(lisp e, lisp env) {
 inline static lisp eval_hlp(lisp e, lisp* envp) {
     if (!e) return e;
     char tag = TAG(e);
-    if (tag == atom_TAG) return getvar(e, *envp);
+    if (tag == symboll_TAG) return getvar(e, *envp);
     if (tag != conss_TAG) return e;
 
     // find function
@@ -1305,11 +1305,11 @@ inline static lisp eval_hlp(lisp e, lisp* envp) {
     if (f != orig) {
         // "macro expansion" lol (replace with implementation)
         // TODO: not safe if found through variable (like all!)
-        // TODO: keep on atom ptr to primitive function/global, also not good?
+        // TODO: keep on symbol ptr to primitive function/global, also not good?
         // DEF(F,...) will then break many local passed variables
         // maybe must search all list till find null, then can look on symbol :-(
         // but that's everytime? actually, not it's a lexical scope!
-        // TODO: only replace if not found in ENV and is on an ATOM!
+        // TODO: only replace if not found in ENV and is on an SYMBOL!
         setcar(e, f);
     }
 
@@ -1370,8 +1370,8 @@ lisp evalGC(lisp e, lisp* envp) {
     if (!e) return e;
     char tag = TAG(e);
     // look up variable
-    if (tag == atom_TAG) return getvar(e, *envp); 
-    if (tag != atom_TAG && tag != conss_TAG && tag != thunk_TAG) return e;
+    if (tag == symboll_TAG) return getvar(e, *envp); 
+    if (tag != symboll_TAG && tag != conss_TAG && tag != thunk_TAG) return e;
 
     if (level >= MAX_STACK) {
         printf("%%Stack blowup! You're royally screwed! why does it still work?\n");
@@ -1703,7 +1703,7 @@ void hello() {
 void help() {
     printf("\n\nDocs - https://github.com/yesco/esp-lisp/\n");
     printf("Symbols: ");
-    atom* s = symbol_list;
+    symboll* s = symbol_list;
     while (s) {
         princ((lisp)s); putchar(' ');
         s = s->next;
