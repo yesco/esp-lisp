@@ -576,6 +576,14 @@ lisp cons(lisp a, lisp b) {
 inline lisp car(lisp x) { return CONSP(x) ? GETCONS(x)->car : nil; }
 inline lisp cdr(lisp x) { return CONSP(x) ? GETCONS(x)->cdr : nil; }
 
+#ifdef UNIX
+  #define car_ car
+  #define cdr_ cdr
+#else
+  lisp car_(lisp x) { return car(x); }
+  lisp cdr_(lisp x) { return cdr(x); }
+#endif
+
 lisp setcar(lisp x, lisp v) { return IS(x, conss) ? GETCONS(x)->car = v : nil; }
 lisp setcdr(lisp x, lisp v) { return IS(x, conss) ? GETCONS(x)->cdr = v : nil; }
 
@@ -1584,8 +1592,8 @@ lisp lisp_init() {
     PRIM(princ, 1, princ);
 
     PRIM(cons, 2, cons);
-    PRIM(car, 1, car);
-    PRIM(cdr, 1, cdr);
+    PRIM(car, 1, car_);
+    PRIM(cdr, 1, cdr_);
     PRIM(setcar, 2, setcar);
     PRIM(setcdr, 2, setcdr);
 

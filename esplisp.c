@@ -120,3 +120,8 @@ void user_init(void) {
     xTaskCreate(lispTask, (signed char *)"lispTask", 2048, &mainqueue, 2, NULL);
     // xTaskCreate(recvTask, (signed char *)"recvTask", 256, &mainqueue, 2, NULL);
 }
+
+void exit(int e) {
+    printf("\n\n=============== EXIT=%d ===============\n", e);
+    while(1);
+}
