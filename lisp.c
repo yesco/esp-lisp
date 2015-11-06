@@ -1525,7 +1525,9 @@ lisp cond(lisp* envp, lisp all) {
     while (all) {
         lisp nxt = car(all);
         lisp e = car(nxt);
-        if (evalGC(e, envp)) return progn(envp, cdr(nxt));
+        e = evalGC(e, envp);
+        lisp thn = cdr(nxt);
+        if (e) return thn ? progn(envp, thn) : e;
         all = cdr(all);
     }
     return nil;
@@ -2025,9 +2027,9 @@ static lisp test(lisp* e) {
 //    TEST(tailprogn, 3);
 //    TEST((tailprogn 10000), ok);
 
-
     // cond
     TEST((cond), nil);
+    TEST((cond (7)), 7);
     TEST((cond (1 2 3)), 3);
     TEST((cond (nil 7)), nil);
     TEST((cond (nil 7)(2 3 4)(7 99)), 4);
