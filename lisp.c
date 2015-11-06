@@ -632,11 +632,22 @@ int getint(lisp x) {
     return IS(x, intint) ? ATTR(intint, x, v) : 0;
 }
 
+unsigned int allprims = 0;
+const char* const foobar = "FOOBAR";
+
 lisp mkprim(char* name, int n, void *f) {
+    // TODO: can't make it save in a cons cell? actually no need GC, same as SYM
+    // can we use the range of program memory to recognize a function pointer???
     prim* r = ALLOC(prim);
-    r->name = name;
+    r->name = name; // symbol(name); // possible the strings already exists in ROM/RAM... so no saving?
     r->n = n;
     r->f = f;
+    allprims |= (unsigned int)f;
+// TEST to investigate function pointers...
+//    printf("PRIM %x   %s prims=%x conses=%x allocs=%x stack=%x vars=%x consstr=%x\n",
+//           (unsigned int)f, name, allprims, (unsigned int)conses, (unsigned int)allocs, (unsigned int)&r, (unsigned int)&allprims,
+//           (unsigned int)foobar
+//        );
     return (lisp)r;
 }
 
@@ -942,6 +953,7 @@ lisp symbol(char* s) {
     if (!s) return nil;
     lisp sym = find_symbol(s, strlen(s));
     if (sym) return sym;
+    //printf("MAKE SYMBOL FROM HEAP: %s\n", s);
     return secretMkSymbol(s);
 }
 
@@ -1621,10 +1633,11 @@ char* readline(char* prompt, int maxlen);
 // returns an env with functions
 lisp lisp_init() {
     // enable to observer startup sequence
-    if (0) {
+    if (1) {
         char* f = readline("start lisp>", 1);
         free(f);
     }
+    print_memory_info(2); // init by first call
 
     lisp env = nil;
     lisp* envp = &env;
@@ -1732,6 +1745,8 @@ lisp lisp_init() {
     env = cons( cons(nil, nil), env );
 
     dogc = 1;
+
+    print_memory_info(2); // summary of init usage
     return env;
 }
 
@@ -1843,16 +1858,18 @@ void readeval(lisp* envp) {
                 httpd_loop(s);
             }
         } else if (strncmp(ln, "mem ", 4) == 0) {
-            char* e = ln + 3;
-            print_memory_info(0);
+            char* e = ln + 4;
             if (*e) {
-                run(e+1, envp);
-                print_memory_info(2);
+                print_memory_info(0);
+                run(e, envp);
             }
+            print_memory_info(2);
+        } else if (strcmp(ln, "mem") == 0) {
+            print_memory_info(1);
         } else if (strlen(ln) > 0) { // lisp
             print_memory_info(0);
             run(ln, envp);
-            print_memory_info(1);
+            //print_memory_info(1);
         }
 
         free(ln);
@@ -2040,7 +2057,6 @@ void lisp_run(lisp* envp) {
     return;
 }
 
-
 // find this display for chinese price - http://digole.com/index.php?productID=1208 (17.89 USD)
 //
 // esp8266 st7735 lcd/tft display driver ucglib
@@ -2054,3 +2070,7 @@ void lisp_run(lisp* envp) {
 // https://github.com/spapadim/ESPClock
 //
 // https://gist.github.com/spapadim/a4bc258df47f00831006
+
+// http://stackoverflow.com/questions/8751264/memory-mapped-using-linker
+// https://github.com/esp8266/esp8266-wiki/wiki/Memory-Map
+// http://esp8266-re.foogod.com/wiki/Memory_Map#Data_RAM_.280x3FFE8000_-_0x3FFFFFFF.29

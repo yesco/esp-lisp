@@ -8,6 +8,11 @@ echo
 # - or http://askubuntu.com/questions/470796/fatal-error-sys-cdefs-h-no-such-file-or-directory
 
 
+# -- linker option for checking memory
+#   http://www.embeddedrelated.com/showthread/comp.arch.embedded/45390-1.php
+#     assembly: -Wa,-ahlms=myfile.lst
+#     big picture: -Wl,-Map=myfile.map,--cref 
+
 # -- compile for LINUX
 # we define UNIX for compilations for unix target
 # and we cp tlisp.ccc to tlisp.c, can't keep it as tlisp.c when compiling for esp as it's macro takes all files

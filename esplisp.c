@@ -71,12 +71,13 @@ void print_memory_info(int verbose) {
     int tick = xTaskGetTickCount();
     int ms = (tick - lastTick) / portTICK_RATE_MS;
     int mem = xPortGetFreeHeapSize();
-    if (verbose)
+    if (verbose == 2)
         printf("=== free=%u USED=%u bytes TIME=%d ms ===\n", mem, lastMem-mem, ms);
-    else {
+    else if (verbose == 1) {
         if (mem) printf("free=%u ", mem);
         if (lastMem-mem) printf("USED=%u bytes ", lastMem-mem);
         if (ms) printf("TIME=%d ms ", ms);
+        printf("\n");
     }
     lastTick = tick;
     lastMem = mem;
