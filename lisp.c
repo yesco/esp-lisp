@@ -364,11 +364,9 @@ void* myMalloc(int bytes, int tag) {
     ((lisp)p)->index = pos;
 
     if (allocs_count >= MAX_ALLOCS) {
-        printf("Exhaused myMalloc array!\n");
+        printf("Exhausted myMalloc array!\n");
         report_allocs(2);
-        #ifdef UNIX
-          exit(1);
-        #endif
+        exit(1);
     }
     return p;
 }
@@ -633,7 +631,7 @@ int getint(lisp x) {
 }
 
 unsigned int allprims = 0;
-const char* const foobar = "FOOBAR";
+//const char* const foobar = "FOOBAR";
 
 lisp mkprim(char* name, int n, void *f) {
     // TODO: can't make it save in a cons cell? actually no need GC, same as SYM
@@ -723,13 +721,13 @@ static lisp web_callback = NULL;
 static void header(char* buff, char* method, char* path) {
     lisp env = cdr(web_callback);
     // TODO: consider printing the returned value, need header(req, ..., need updatable state?)
-    evalGC(list(web_callback, quote(symbol("HEADER")), mkstring(buff), quote(symbol(method)), mkstring(path), END), &env);
+    evalGC(list(web_callback, quote(symbol("header")), mkstring(buff), quote(symbol(method)), mkstring(path), END), &env);
 }
 
 static void body(char* buff, char* method, char* path) {
     lisp env = cdr(web_callback);
     // TODO: consider printing the returned value, need header(req, ..., need updatable state?)
-    evalGC(list(web_callback, quote(symbol("BODY")), mkstring(buff), quote(symbol(method)), mkstring(path), END), &env);
+    evalGC(list(web_callback, quote(symbol("body")), mkstring(buff), quote(symbol(method)), mkstring(path), END), &env);
 }
 
 static void response(int req, char* method, char* path) {
@@ -898,7 +896,6 @@ static lisp str2sym3ascii(char* s, int len) {
     unsigned int c2 = (c1 && len >= 3) ? s[2] : 0;
     if (c0 < 0 || c1 < 0 || c2 < 0 || c0 > 127 || c1 > 127 || c2 > 127) return nil;
     unsigned int n = (c0 << (32-1*7)) + (c1 << (32-2*7)) + (c2 << (32-3*7)) + 127;
-    //printf("%u %u %u %u\n", c0, c1, c2, n);
     return (lisp) n;
 }
 
@@ -925,7 +922,6 @@ static void sym2str(lisp s, char *name) {
         name[0] = (n >> (32-1*7)) % 128;
         name[1] = (n >> (32-2*7)) % 128;
         name[2] = (n >> (32-3*7)) % 128;
-        //printf("%d %d %d\n", name[0], name[1], name[2]);
         return;
     }
     n /= 4;
@@ -956,7 +952,6 @@ lisp symbol(char* s) {
     if (!s) return nil;
     lisp sym = find_symbol(s, strlen(s));
     if (sym) return sym;
-    //printf("MAKE SYMBOL FROM HEAP: %s\n", s);
     return secretMkSymbol(s);
 }
 
@@ -998,7 +993,6 @@ lisp mkfunc(lisp e, lisp env) {
 ////////////////////////////// GC
 
 void mark_deep(lisp next, int deep) {
-    //printf("MARK: "); princ(next); terpri();
     while (next) {
         // -- pointer contains tag
         if (INTP(next)) return;
@@ -1583,7 +1577,6 @@ lisp progn(lisp* envp, lisp all) {
 // use bindEvalList unless NLAMBDA
 lisp bindList(lisp fargs, lisp args, lisp env) {
     // TODO: not recurse!
-    printf("BINDLIST: "); terpri(); princ(fargs); terpri();
     if (!fargs) return env;
     lisp b = cons(car(fargs), car(args));
     return bindList(cdr(fargs), cdr(args), cons(b, env));
@@ -1613,17 +1606,12 @@ lisp funcapply(lisp f, lisp args, lisp* envp, int noeval) {
 // TODO: evals it's arguments, shouldn't... 
 // TODO: prim apply/funcapply may return immediate, it should be handled and not returned from here?
 lisp funcall(lisp f, lisp args, lisp* envp, lisp e, int noeval) {
-    //printf("FUNCALL: "); princ(f); princ(args); terpri();
     int tag = TAG(f);
-    //printf("1111\n");
     if (tag == prim_TAG) return primapply(f, args, envp, e, noeval);
-    //printf("2222\n");
     if (tag == func_TAG) return funcapply(f, args, envp, noeval);
-    //printf("3333\n");
     if (tag == thunk_TAG) return f; // ignore args
 
     printf("\n-- ERROR: "); princ(f); printf(" is not a function: "); printf(" in "); princ(e ? e : args); terpri();
-    //printf(" ENV="); princ(env); terpri();
     return nil;
 }
 
@@ -1933,6 +1921,17 @@ void testss(lisp* envp , char* what, char* expect) {
 //   http://picolisp.com/wiki/?ErsatzWebApp
 
 static lisp test(lisp* e) {
+
+// removing the body of this function gives: (- 42688 41152) 1536
+// gives 25148 bytes, 19672k
+#ifdef REMOVED
+// enabling this take 1K from RAM :-(
+//   also: -rw-r--r-- 1 knoppix knoppix  43712 Nov  6 20:12 0x00000.bin 
+//   becomes 43712 instead of 42688
+//static IROM 
+//const char const xxx[] = "===============================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================\n";
+//    printf(&xxx[0]);
+
     lisp env = *e;
     lisp* envp = &env; // make local, don't leak out!
 
@@ -2063,6 +2062,7 @@ static lisp test(lisp* e) {
     TEST((mapcar car (list (cons 1 2) (cons 3 4) (cons 5 6))), (1 3 5));
     TEST((mapcar cdr (list (cons 1 2) (cons 3 4) (cons 5 6))), (2 4 6));
 
+#endif
     return nil;
 }
 
