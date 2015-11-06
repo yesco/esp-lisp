@@ -41,7 +41,7 @@
 //   now takes 5300ms more or less exactly every time
 //   2.5x slower than lua, didn't actually measure actual lua time
 //   evalGC now lookup vars too => 4780
-//   bindEvalList (combined evallist + bindlist) => 4040ms!
+//   bindEvalList (combined evallist + bindList) => 4040ms!
 //   ... => 4010ms
 //
 //   slight increase if change the MAX_ALLOC to 512 but it keeps 17K free! => 4180ms
@@ -663,7 +663,7 @@ lisp member(lisp e, lisp r) {
 }
 
 lisp symbol(char* s);
-lisp funcall(lisp f, lisp args, lisp* envp, lisp e);
+lisp funcall(lisp f, lisp args, lisp* envp, lisp e, int noeval);
 lisp quote(lisp x);
 
 // echo '
@@ -783,16 +783,19 @@ lisp evallist(lisp e, lisp* envp) {
     return cons(eval(car(e), envp), evallist(cdr(e), envp));
 }
 
-lisp primapply(lisp ff, lisp args, lisp* envp, lisp all) {
+lisp noEval(lisp x, lisp* envp) { return x; }
+
+lisp primapply(lisp ff, lisp args, lisp* envp, lisp all, int noeval) {
     //printf("PRIMAPPLY "); princ(ff); princ(args); terpri();
     int n = ATTR(prim, ff, n);
+    lisp (*e)(lisp x, lisp* envp) = (noeval && n > 0) ? noEval : evalGC;
     int an = abs(n);
 
     // these special cases are redundant, can be done at general solution
     // but for optimization we extracted them, it improves speed quite a lot
     if (n == 2) { // eq/plus etc
         lisp (*fp)(lisp,lisp) = ATTR(prim, ff, f);
-        return (*fp)(evalGC(car(args), envp), evalGC(car(cdr(args)), envp)); // safe!
+        return (*fp)(e(car(args), envp), e(car(cdr(args)), envp)); // safe!
     }
     if (n == -3) { // if...
         lisp (*fp)(lisp*,lisp,lisp,lisp) = ATTR(prim, ff, f);
@@ -804,11 +807,11 @@ lisp primapply(lisp ff, lisp args, lisp* envp, lisp all) {
     }
     if (n == 1) {
         lisp (*fp)(lisp) = ATTR(prim, ff, f);
-        return (*fp)(eval(car(args), envp));
+        return (*fp)(e(car(args), envp));
     }
     if (n == 3) {
         lisp (*fp)(lisp,lisp,lisp) = ATTR(prim, ff, f);
-        return (*fp)(eval(car(args), envp), eval(car(cdr(args)), envp), eval(car(cdr(cdr(args))),envp));
+        return (*fp)(e(car(args), envp), e(car(cdr(args)), envp), e(car(cdr(cdr(args))),envp));
     }
     if (n == -16) { // lambda, quite uncommon
         lisp (*fp)(lisp*,lisp,lisp) = ATTR(prim, ff, f);
@@ -827,7 +830,7 @@ lisp primapply(lisp ff, lisp args, lisp* envp, lisp all) {
                 continue;
             }
             lisp a = car(args);
-            if (a && n > 0) a = eval(a, envp);
+            if (a && n > 0) a = e(a, envp);
             argv[i] = a;
             args = cdr(args);
         }
@@ -846,7 +849,7 @@ lisp primapply(lisp ff, lisp args, lisp* envp, lisp all) {
     // this is the old fallback solution, simple and works but expensive
     // prepare arguments
     if (n >= 0) {
-        args = evallist(args, envp);
+        args = noeval ? args : evallist(args, envp);
     } else if (n > -16) { // -1 .. -15 no-eval lambda, put env first
         // TODO: for NLAMBDA this may not work...  may need a new lisp type
         args = cons(*envp, args);
@@ -1151,16 +1154,20 @@ lisp _set(lisp* envp, lisp name, lisp v) {
 lisp eval(lisp e, lisp* envp);
 
 lisp apply(lisp f, lisp args) {
-    // TODO: make more efficient? combine with eval_hlp
     lisp e = nil;
-    return eval(cons(f, args), &e);
+    lisp x = funcall(f, args, &e, nil, 1);
+    // TODO: hmmm, combine/use in eval_hlp
+    while (x && TAG(x) == immediate_TAG) {
+        x = evalGC(ATTR(thunk, x, e), &ATTR(thunk, x, env));
+    }
+    return x;
 }
 
 lisp mapcar(lisp f, lisp r) {
     if (!r || !consp(r) || !funcp(f)) return nil;
-    return cons(apply(f, cons(car(r), nil)), mapcar(f, cdr(r)));
+    lisp v = apply(f, cons(car(r), nil));
+    return cons(v, mapcar(f, cdr(r)));
 }
-
 
 lisp map(lisp f, lisp r) {
     while (r && consp(r) && funcp(f)) {
@@ -1324,7 +1331,7 @@ lisp princ(lisp x) {
     else if (tag == intint_TAG) printf("%d", getint(x));
     else if (tag == prim_TAG) printf("#%s", ATTR(prim, x, name));
     // for now we have two "symbolls" one inline in pointer and another heap allocated
-    else if (SYMP(x)) { char s[4] = {0}; sym2str(x, &s[0]); printf("%s #%d", s, strlen(s)); }
+    else if (SYMP(x)) { char s[4] = {0}; sym2str(x, &s[0]); printf("%s", s); }
     else if (tag == symboll_TAG) printf("%s", ATTR(symboll, x, name));
     else if (tag == thunk_TAG) { printf("#thunk["); princ(ATTR(thunk, x, e)); putchar(']'); }
     else if (tag == immediate_TAG) { printf("#immediate["); princ(ATTR(thunk, x, e)); putchar(']'); }
@@ -1360,7 +1367,7 @@ static void indent(int n) {
 
 static int level = 0;
 
-static lisp funcapply(lisp f, lisp args, lisp* envp);
+static lisp funcapply(lisp f, lisp args, lisp* envp, int noeval);
 
 static lisp getvar(lisp e, lisp env) {
     lisp v = assoc(e, env); 
@@ -1396,7 +1403,7 @@ inline static lisp eval_hlp(lisp e, lisp* envp) {
         setcar(e, f);
     }
 
-    return funcall(f, cdr(e), envp, e);
+    return funcall(f, cdr(e), envp, e, 0);
 }
 
 static void mymark(lisp x) {
@@ -1574,11 +1581,12 @@ lisp progn(lisp* envp, lisp all) {
 }
 
 // use bindEvalList unless NLAMBDA
-lisp bindlist(lisp fargs, lisp args, lisp env) {
+lisp bindList(lisp fargs, lisp args, lisp env) {
     // TODO: not recurse!
+    printf("BINDLIST: "); terpri(); princ(fargs); terpri();
     if (!fargs) return env;
     lisp b = cons(car(fargs), car(args));
-    return bindlist(cdr(fargs), cdr(args), cons(b, env));
+    return bindList(cdr(fargs), cdr(args), cons(b, env));
 }
 
 lisp bindEvalList(lisp fargs, lisp args, lisp* envp, lisp extend) {
@@ -1591,24 +1599,27 @@ lisp bindEvalList(lisp fargs, lisp args, lisp* envp, lisp extend) {
     return extend;
 }
 
-lisp funcapply(lisp f, lisp args, lisp* envp) {
+lisp funcapply(lisp f, lisp args, lisp* envp, int noeval) {
     lisp lenv = ATTR(thunk, f, env);
     lisp l = ATTR(thunk, f, e);
     //printf("FUNCAPPLY:"); princ(f); printf(" body="); princ(l); printf(" args="); princ(args); printf(" env="); princ(lenv); terpri();
     lisp fargs = car(l);
     // TODO: check if NLAMBDA!
-    lenv = bindEvalList(fargs, args, envp, lenv);
+    lenv = noeval ? bindList(fargs, args, lenv) : bindEvalList(fargs, args, envp, lenv);
     //printf("NEWENV: "); princ(lenv); terpri();
     return progn(&lenv, cdr(l)); // tail recurse on rest
 }
 
 // TODO: evals it's arguments, shouldn't... 
 // TODO: prim apply/funcapply may return immediate, it should be handled and not returned from here?
-lisp funcall(lisp f, lisp args, lisp* envp, lisp e) {
+lisp funcall(lisp f, lisp args, lisp* envp, lisp e, int noeval) {
     //printf("FUNCALL: "); princ(f); princ(args); terpri();
     int tag = TAG(f);
-    if (tag == prim_TAG) return primapply(f, args, envp, e);
-    if (tag == func_TAG) return funcapply(f, args, envp);
+    //printf("1111\n");
+    if (tag == prim_TAG) return primapply(f, args, envp, e, noeval);
+    //printf("2222\n");
+    if (tag == func_TAG) return funcapply(f, args, envp, noeval);
+    //printf("3333\n");
     if (tag == thunk_TAG) return f; // ignore args
 
     printf("\n-- ERROR: "); princ(f); printf(" is not a function: "); printf(" in "); princ(e ? e : args); terpri();
@@ -2049,6 +2060,8 @@ static lisp test(lisp* e) {
 
     // mapcar
     TEST((mapcar (lambda (x) (+ 5 x)) (list 1 2 3)), (6 7 8));
+    TEST((mapcar car (list (cons 1 2) (cons 3 4) (cons 5 6))), (1 3 5));
+    TEST((mapcar cdr (list (cons 1 2) (cons 3 4) (cons 5 6))), (2 4 6));
 
     return nil;
 }
