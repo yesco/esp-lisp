@@ -1384,9 +1384,12 @@ inline static lisp eval_hlp(lisp e, lisp* envp) {
     lisp orig = car(e);
     lisp f = orig;
     tag = TAG(f);
-    while (f && tag!=prim_TAG && tag!=thunk_TAG && tag!=func_TAG && tag!=immediate_TAG) {
+    lisp last = nil;
+    while (f && f != last && tag!=prim_TAG && tag!=thunk_TAG && tag!=func_TAG && tag!=immediate_TAG) {
+        last = f;
         f = evalGC(f, envp);
         tag = TAG(f);
+        princ(f); printf("   ");
     }
     if (f != orig) {
         // "macro expansion" lol (replace with implementation)
