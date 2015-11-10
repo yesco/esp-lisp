@@ -1922,7 +1922,7 @@ static lisp test(lisp* e) {
 
 // removing the body of this function gives: (- 42688 41152) 1536
 // gives 25148 bytes, 19672k
-#ifdef REMOVED
+#ifdef TEST_REMOVED
 // enabling this take 1K from RAM :-(
 //   also: -rw-r--r-- 1 knoppix knoppix  43712 Nov  6 20:12 0x00000.bin 
 //   becomes 43712 instead of 42688
@@ -2060,6 +2060,8 @@ static lisp test(lisp* e) {
     TEST((mapcar car (list (cons 1 2) (cons 3 4) (cons 5 6))), (1 3 5));
     TEST((mapcar cdr (list (cons 1 2) (cons 3 4) (cons 5 6))), (2 4 6));
 
+#else
+    printf("%%Tests have been commented out.\n");
 #endif
     return nil;
 }
