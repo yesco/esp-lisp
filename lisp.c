@@ -914,7 +914,7 @@ static lisp str2sym(char* s, int len) {
     return (lisp) ((n << 2) | 3);
 }
 
-static void sym2str(lisp s, char *name) {
+static void sym2str(lisp s, char name[7]) {
     if (!s) return;
     // 3ASCII?
     unsigned int n = (unsigned int) s;
@@ -922,6 +922,7 @@ static void sym2str(lisp s, char *name) {
         name[0] = (n >> (32-1*7)) % 128;
         name[1] = (n >> (32-2*7)) % 128;
         name[2] = (n >> (32-3*7)) % 128;
+        name[3] = 0;
         return;
     }
     n /= 4;
@@ -929,9 +930,10 @@ static void sym2str(lisp s, char *name) {
     for(i = 0; i < 6; i++) {
         int e = n % 32;
         int c = e == 28 ? '-' : e == 29 ? '?' : e == 30 ? '/' : e ? (e + '_' - 1) : 0;
-        *(name + 6 - 1 - i) = c;
+        name[6 - 1 - i] = c;
         n /= 32;
     }
+    name[6] = 0;
 }
 
 lisp find_symbol(char *s, int len) {
@@ -1325,7 +1327,7 @@ lisp princ(lisp x) {
     else if (tag == intint_TAG) printf("%d", getint(x));
     else if (tag == prim_TAG) printf("#%s", ATTR(prim, x, name));
     // for now we have two "symbolls" one inline in pointer and another heap allocated
-    else if (SYMP(x)) { char s[4] = {0}; sym2str(x, &s[0]); printf("%s", s); }
+    else if (SYMP(x)) { char s[7] = {0}; sym2str(x, s); printf("%s", s); }
     else if (tag == symboll_TAG) printf("%s", ATTR(symboll, x, name));
     else if (tag == thunk_TAG) { printf("#thunk["); princ(ATTR(thunk, x, e)); putchar(']'); }
     else if (tag == immediate_TAG) { printf("#immediate["); princ(ATTR(thunk, x, e)); putchar(']'); }
@@ -1795,14 +1797,10 @@ void hello() {
     printf("\n");
 }
 
-void help() {
+void help(lisp* envp) {
     printf("\n\nDocs - https://github.com/yesco/esp-lisp/\n");
-    printf("Symbols: ");
-    symboll* s = symbol_list;
-    while (s) {
-        princ((lisp)s); putchar(' ');
-        s = s->next;
-    }
+    printf("ENV: ");
+    PRINT((mapcar car (env)));
     terpri();
     printf("Commands: hello/help/trace on/trace off/gc on/gc off/wifi SSID PSWD/wget SERVER URL/mem EXPR\n");
     terpri();
@@ -1827,7 +1825,7 @@ void readeval(lisp* envp) {
         } else if (strcmp(ln, "hello") == 0) {
             hello();
         } else if (strcmp(ln, "help") == 0 || ln[0] == '?') {
-            help();
+            help(envp);
         } else if (strcmp(ln, "gc on") == 0) {
             traceGC = 1;
         } else if (strcmp(ln, "gc off") == 0) {
