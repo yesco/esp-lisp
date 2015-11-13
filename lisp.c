@@ -245,6 +245,15 @@ typedef struct func {
     // This needs be same as thunk
 } func;
 
+#define MAX_TAGS 16
+int tag_count[MAX_TAGS] = {0};
+int tag_bytes[MAX_TAGS] = {0};
+int tag_freed_count[MAX_TAGS] = {0};
+int tag_freed_bytes[MAX_TAGS] = {0};
+
+char* tag_name[MAX_TAGS] = { "total", "string", "cons", "int", "prim", "symbol", "thunk", "immediate", "func", 0 };
+int tag_size[MAX_TAGS] = { 0, sizeof(string), sizeof(conss), sizeof(intint), sizeof(prim), sizeof(thunk), sizeof(immediate), sizeof(func) };
+
 #define TAG(x) ({ lisp _x = (x); INTP(_x) ? intint_TAG : CONSP(_x) ? conss_TAG : SYMP(_x) ? symboll_TAG : (_x ? ((lisp)_x)->tag : 0 ); })
 //#define TAG(x) ({ lisp _x = (x); INTP(_x) ? intint_TAG : CONSP(_x) ? conss_TAG : (_x ? ((lisp)_x)->tag : 0 ); })
 
@@ -255,15 +264,6 @@ typedef struct func {
 int gettag(lisp x) {
     return TAG(x);
 }
-
-#define MAX_TAGS 16
-int tag_count[MAX_TAGS] = {0};
-int tag_bytes[MAX_TAGS] = {0};
-int tag_freed_count[MAX_TAGS] = {0};
-int tag_freed_bytes[MAX_TAGS] = {0};
-
-char* tag_name[MAX_TAGS] = { "total", "string", "cons", "int", "prim", "symbol", "thunk", "immediate", "func", 0 };
-int tag_size[MAX_TAGS] = { 0, sizeof(string), sizeof(conss), sizeof(intint), sizeof(prim), sizeof(thunk), sizeof(immediate), sizeof(func) };
 
 // essentially total number of cons+symbol+prim
 // TODO: remove SYMBOL since they are never GC:ed! (thunk are special too, not tracked)
@@ -661,8 +661,19 @@ lisp member(lisp e, lisp r) {
 }
 
 lisp symbol(char* s);
-lisp funcall(lisp f, lisp args, lisp* envp, lisp e, int noeval);
 lisp quote(lisp x);
+
+// User, macros, assume a "globaL" env variable implicitly, and updates it
+#define SET(sname, val) _setq(envp, sname, val)
+#define SETQc(sname, val) _setq(envp, symbol(#sname), val)
+#define SETQ(sname, val) _setq(envp, symbol(#sname), reads(#val))
+#define SETQQ(sname, val) _setq(envp, symbol(#sname), quote(reads(#val)))
+#define DEF(fname, sbody) _setq(envp, symbol(#fname), reads(#sbody))
+#define EVAL(what) eval(reads(#what), envp)
+#define PRINT(what) ({ princ(EVAL(what)); terpri(); })
+#define SHOW(what) ({ printf(#what " => "); princ(EVAL(what)); terpri(); })
+#define TEST(what, expect) testss(envp, #what, #expect)
+#define PRIM(fname, argn, fun) _setq(envp, symbol(#fname), mkprim(#fname, argn, fun))
 
 // echo '
 // (wget "yesco.org" "http://yesco.org/index.html" (lambda (t a v) (princ t) (cond (a (princ " ") (princ a) (princ "=") (princ v)(terpri)))))
@@ -718,21 +729,19 @@ lisp wget_(lisp server, lisp url, lisp callback) {
 // Generalize, similarly to xml stuff, with userdata etc, in order to handle several servers
 static lisp web_callback = NULL;
 
+lisp apply(lisp f, lisp args);
+
 static void header(char* buff, char* method, char* path) {
-    lisp env = cdr(web_callback);
-    // TODO: consider printing the returned value, need header(req, ..., need updatable state?)
-    evalGC(list(web_callback, quote(symbol("header")), mkstring(buff), quote(symbol(method)), mkstring(path), END), &env);
+    apply(web_callback, list(symbol("header"), mkstring(buff), symbol(method), mkstring(path), END));
 }
 
 static void body(char* buff, char* method, char* path) {
-    lisp env = cdr(web_callback);
-    // TODO: consider printing the returned value, need header(req, ..., need updatable state?)
-    evalGC(list(web_callback, quote(symbol("body")), mkstring(buff), quote(symbol(method)), mkstring(path), END), &env);
+    apply(web_callback, list(symbol("body"), mkstring(buff), symbol(method), mkstring(path), END));
 }
 
 static void response(int req, char* method, char* path) {
-    lisp env = cdr(web_callback);
-    lisp ret = evalGC(list(web_callback, nil, quote(symbol(method)), mkstring(path), END), &env);
+    lisp ret = apply(web_callback, list(nil, symbol(method), mkstring(path), END));
+    printf("RET="); princ(ret); terpri();
 
     char* s = getstring(ret);
     write(req, s, strlen(s));
@@ -742,7 +751,9 @@ static void response(int req, char* method, char* path) {
 // (web 8080 (lambda (w s m p) (princ w) (princ " ") (princ s) (princ " ") (princ m) (princ " ") (princ p) (terpri) "FISH-42"))
 // ' | ./run
 
-lisp web(lisp port, lisp callback) {
+lisp _setq(lisp* envp, lisp name, lisp v);
+
+lisp web(lisp* envp, lisp port, lisp callback) {
     //wget_data data;
     //memset(&data, 0, sizeof(data));
     //data.userdata = callback;
@@ -750,12 +761,15 @@ lisp web(lisp port, lisp callback) {
     //data.xml_emit_tag = (void*)f_emit_tag;
     //data.xml_emit_attr = (void*)f_emit_attr;
 
+    // store a pointer in global env to the function so it doesn't get gc:ed
+    web_callback = evalGC(callback, envp);
+    SETQc(webcb, web_callback);
+
     int s = httpd_init(getint(port));
     if (s < 0) { printf("ERROR.errno=%d\n", errno); return nil; }
 
     // TODO: make it non-blocking, put it on list of functions to call between evals?
     // can't really do background processing as concurrent uncontrolled GC might be SHIT!
-    web_callback = callback;
 
     while (1) {
         httpd_next(s, header, body, response);
@@ -1148,6 +1162,7 @@ lisp _set(lisp* envp, lisp name, lisp v) {
 }
 
 lisp eval(lisp e, lisp* envp);
+lisp funcall(lisp f, lisp args, lisp* envp, lisp e, int noeval);
 
 lisp apply(lisp f, lisp args) {
     lisp e = nil;
@@ -1608,28 +1623,17 @@ lisp funcapply(lisp f, lisp args, lisp* envp, int noeval) {
 }
 
 // TODO: evals it's arguments, shouldn't... 
-// TODO: prim apply/funcapply may return immediate, it should be handled and not returned from here?
+// TODO: prim apply/funcapply may return immediate... (so users should call apply instead)
 lisp funcall(lisp f, lisp args, lisp* envp, lisp e, int noeval) {
     int tag = TAG(f);
     if (tag == prim_TAG) return primapply(f, args, envp, e, noeval);
     if (tag == func_TAG) return funcapply(f, args, envp, noeval);
     if (tag == thunk_TAG) return f; // ignore args
 
-    printf("\n-- ERROR: "); princ(f); printf(" is not a function: "); printf(" in "); princ(e ? e : args); terpri();
+    printf("\n-- ERROR: tag=%d %s .... ", tag, tag_name[tag]);
+    princ(f); printf(" is not a function: "); printf("\n in "); princ(e ? e : cons(f, args)); terpri();
     return nil;
 }
-
-// User, macros, assume a "globaL" env variable implicitly, and updates it
-#define SET(sname, val) _setq(envp, symbol(#sname), val)
-#define SETQc(sname, val) _setq(envp, symbol(#sname), val)
-#define SETQ(sname, val) _setq(envp, symbol(#sname), reads(#val))
-#define SETQQ(sname, val) _setq(envp, symbol(#sname), quote(reads(#val)))
-#define DEF(fname, sbody) _setq(envp, symbol(#fname), reads(#sbody))
-#define EVAL(what) eval(reads(#what), envp)
-#define PRINT(what) ({ princ(EVAL(what)); terpri(); })
-#define SHOW(what) ({ printf(#what " => "); princ(EVAL(what)); terpri(); })
-#define TEST(what, expect) testss(envp, #what, #expect)
-#define PRIM(fname, argn, fun) _setq(envp, symbol(#fname), mkprim(#fname, argn, fun))
 
 static lisp test(lisp*);
 
@@ -1733,7 +1737,7 @@ lisp lisp_init() {
 
     // network
     PRIM(wget, 3, wget_);
-    PRIM(web, 2, web);
+    PRIM(web, -2, web);
     PRIM(out, 2, out);
     PRIM(in, 1, in);
 
