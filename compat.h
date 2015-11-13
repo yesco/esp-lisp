@@ -2,7 +2,15 @@
 #define COMPAT_H
 
 //////////////////////////////////////////////////////////////////////
-// gpio/esp8266 hardware stuff
+// IO
+
+int nonblock_getch();
+
+char* readline(char* prompt, int maxlen);
+char* readline_int(char* prompt, int maxlen, int (*myreadchar)(char*));
+
+//////////////////////////////////////////////////////////////////////
+// xml
 
 // limits
 #define MAX_BUFF 128 // efficency

@@ -22,6 +22,8 @@
 #include "lwip/netdb.h"
 #include "lwip/dns.h"
 
+#include <esp/uart.h>
+
 #include "lisp.h"
 
 void lispTask(void *pvParameters)
@@ -113,6 +115,12 @@ void connect_wifi(char* ssid, char* password) {
 // TODO: keep as task as maybe it's blocking? 
 //void http_get_task(void *pvParameters) {
 //  vTaskDelay(1000 / portTICK_RATE_MS);
+
+// fcntl doesn't seem to work correctly on EPS8266 files only sockets...
+
+int nonblock_getch() {
+    return uart_getc_nowait(0);
+}
 
 void user_init(void) {
     lastTick = xTaskGetTickCount();

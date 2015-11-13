@@ -29,6 +29,55 @@
 
 #include "compat.h"
 
+char* readline_int(char* prompt, int maxlen, int (*myreadchar)(char*)) {
+    if (prompt) {
+        printf("%s", prompt);
+        fflush(stdout);
+    }
+
+    char buffer[maxlen+1];
+    int i = 0;
+    char ch;
+    while (myreadchar(&ch) == 1) {
+        if (ch == '\b' || ch == 0x7f) {
+            if (i > 0) {
+                i--;
+                printf("\b \b"); fflush(stdout);
+            }
+            continue;
+        }
+        //printf("[%d]", ch); fflush(stdout);
+        if (ch == 12) { // ctrl-l, redraw
+            buffer[i] = 0;
+            printf("\n%s%s", prompt, &buffer[0]);
+            fflush(stdout);
+            continue;
+        }
+
+        int eol = (ch == '\n' || ch == '\r');
+        if (!eol) {
+            putchar(ch); fflush(stdout);
+            buffer[i++] = ch;
+        }
+        if (i == maxlen) printf("\nWarning, result truncated at maxlen=%d!\n", maxlen);
+        if (i == maxlen || eol) {
+            buffer[i] = 0;
+            printf("\n");
+            return strdup(buffer);
+        }
+    }
+    return NULL;
+}
+
+// default blocking getchar
+int readline_getchar(char * chp) {
+    return read(0, (void*) chp, 1); // 0 is stdin
+}
+
+char* readline(char* prompt, int maxlen) {
+    return readline_int(prompt, maxlen, &readline_getchar);
+}
+
 // simplistic XML parser:
 //   xml_out -> xml_char -> xml_tag/xml_tag_name/xml_attr_value
 //

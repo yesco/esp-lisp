@@ -381,7 +381,14 @@ void mark(lisp x);
 void gc_conses();
 lisp mem_usage(int count);
 
+static int blockGC = 0;
+
 lisp gc(lisp* envp) {
+    if (blockGC) {
+        printf("\n%% [warning: GC called with blockGC=%d]\n", blockGC);
+        return;
+    }
+
     // mark
     mark(nil); mark((lisp)symbol_list); // TODO: remove?
 
@@ -730,21 +737,30 @@ lisp wget_(lisp server, lisp url, lisp callback) {
 static lisp web_callback = NULL;
 
 lisp apply(lisp f, lisp args);
+void maybeGC();
 
 static void header(char* buff, char* method, char* path) {
+    maybeGC();
+
     apply(web_callback, list(symbol("header"), mkstring(buff), symbol(method), mkstring(path), END));
 }
 
 static void body(char* buff, char* method, char* path) {
+    maybeGC();
+
     apply(web_callback, list(symbol("body"), mkstring(buff), symbol(method), mkstring(path), END));
 }
 
 static void response(int req, char* method, char* path) {
+    maybeGC();
+
     lisp ret = apply(web_callback, list(nil, symbol(method), mkstring(path), END));
     printf("RET="); princ(ret); terpri();
 
     char* s = getstring(ret);
     write(req, s, strlen(s));
+
+    maybeGC();
 }
 
 // echo '
@@ -752,6 +768,14 @@ static void response(int req, char* method, char* path) {
 // ' | ./run
 
 lisp _setq(lisp* envp, lisp name, lisp v);
+
+
+int web_socket = 0;
+
+int web_one() {
+    if (!web_socket) return 0;
+    return httpd_next(web_socket, header, body, response);
+}
 
 lisp web(lisp* envp, lisp port, lisp callback) {
     //wget_data data;
@@ -768,13 +792,12 @@ lisp web(lisp* envp, lisp port, lisp callback) {
     int s = httpd_init(getint(port));
     if (s < 0) { printf("ERROR.errno=%d\n", errno); return nil; }
 
-    // TODO: make it non-blocking, put it on list of functions to call between evals?
-    // can't really do background processing as concurrent uncontrolled GC might be SHIT!
+    web_socket = s;
 
-    while (1) {
-        httpd_next(s, header, body, response);
-    }
+    web_one();
+    return mkint(s);
 }
+
 
 // lookup binding of symbol variable name (not work for int names)
 lisp assoc(lisp name, lisp env) {
@@ -1165,12 +1188,17 @@ lisp eval(lisp e, lisp* envp);
 lisp funcall(lisp f, lisp args, lisp* envp, lisp e, int noeval);
 
 lisp apply(lisp f, lisp args) {
+    // TODO: for now, block GC as args could have been built out of thin air!
+    blockGC++; 
+
     lisp e = nil;
     lisp x = funcall(f, args, &e, nil, 1);
     // TODO: hmmm, combine/use in eval_hlp
     while (x && TAG(x) == immediate_TAG) {
         x = evalGC(ATTR(thunk, x, e), &ATTR(thunk, x, env));
     }
+
+    blockGC--;
     return x;
 }
 
@@ -1427,8 +1455,6 @@ static void mygc() {
     if (dogc) gc(NULL);
 }
 
-static int blockGC = 0;
-
 // this is a safe eval to call from anywhere, it will not GC
 // but it may blow up the stack, or the heap!!!
 lisp eval(lisp e, lisp* envp) {
@@ -1637,7 +1663,9 @@ lisp funcall(lisp f, lisp args, lisp* envp, lisp e, int noeval) {
 
 static lisp test(lisp*);
 
-char* readline(char* prompt, int maxlen);
+// ticks are counted up in idle() function, as well as this one, they are semi-unique per run
+static long lisp_ticks = 0;
+lisp ticks() { return mkint(lisp_ticks++ & 0xffffffff); } // TODO: mklong?
 
 // returns an env with functions
 lisp lisp_init() {
@@ -1744,6 +1772,7 @@ lisp lisp_init() {
     // system stuff
     PRIM(gc, -1, gc);
     PRIM(test, -16, test);
+    PRIM(ticks, 1, ticks);
 
     // another small lisp in 1K lines
     // - https://github.com/rui314/minilisp/blob/master/minilisp.c
@@ -1757,43 +1786,6 @@ lisp lisp_init() {
 
     print_memory_info(2); // summary of init usage
     return env;
-}
-
-char* readline(char* prompt, int maxlen) {
-    if (prompt) {
-        printf("%s", prompt);
-        fflush(stdout);
-    }
-
-    char buffer[maxlen+1];
-    char ch;
-    int i = 0;
-    // The thread will block here until there is data available
-    // NB. read(...) may be called from user_init or from a thread
-    // We can check how many characters are available in the RX buffer
-    // with uint32_t uart0_num_char(void);
-    while (read(0, (void*)&ch, 1)) { // 0 is stdin
-        if (ch == '\b' || ch == 0x7f) {
-            if (i > 0) {
-                i--;
-                printf("\b \b"); fflush(stdout);
-            }
-            continue;
-        }
-
-        int eol = (ch == '\n' || ch == '\r');
-        if (!eol) {
-            putchar(ch); fflush(stdout);
-            buffer[i++] = ch;
-        }
-        if (i == maxlen) printf("\nWarning, result truncated at maxlen=%d!\n", maxlen);
-        if (i == maxlen || eol) {
-            buffer[i] = 0;
-            printf("\n");
-            return strdup(buffer);
-        }
-    }
-    return NULL;
 }
 
 void hello() {
@@ -1820,11 +1812,74 @@ void run(char* s, lisp* envp) {
     gc(envp);
 }
 
+// it would not be completely safe to run multiple threads of lisp at the
+// same time, problems are GC and allocations. Therefore we provide a tasker
+// that handles "actors". To drive this, we only do it while idle, i.e,
+// when waiting for keyboard input. This is similar to NodeMCU.
+//
+// The system actors that are checked are:
+// - TODO: web server
+// - TODO: wget 
+
+lisp* global_envp = NULL;
+
+void maybeGC() {
+    if (blockGC || !global_envp) return;
+    if (needGC()) gc(global_envp);
+}
+
+void idle(int lticks) {
+    // 1 000 000 == 1s for x61 laptop
+    //if (lticks % 1000000 == 0) { putchar('^'); fflush(stdout); }
+
+    // polling tasks, invoking callbacks
+    web_one();
+
+    // gc
+    maybeGC();
+}
+
+void print_status(long lticks) {
+    printf(" [lticks: %ld] ", lticks); fflush(stdout);
+}
+
+// make an blocking mygetchar() that waits for kbhit() to be true 
+// and meanwhile calls idle() continously.
+static int thechar = 0;
+
+int kbhit() {
+    if (thechar) return thechar;
+
+    idle(lisp_ticks++);
+
+    thechar = nonblock_getch();
+    if (thechar < 0) thechar = 0;
+    if (thechar == 'T'-64) {
+        print_status(lisp_ticks);
+    }
+    return thechar;
+}
+
+int mygetchar() {
+    while(!kbhit()) {}
+    int c = thechar;
+    thechar = 0;
+    return c;
+}
+
+int lispreadchar(char *chp) {
+    int c = mygetchar();
+    if (c >= 0) *chp = c;
+    return c < 0 ? -1 : 1;
+}
+
 void readeval(lisp* envp) {
     hello();
 
     while(1) {
-        char* ln = readline("lisp> ", READLINE_MAXLEN);
+        global_envp = envp; // allow idle to gc
+        char* ln = readline_int("lisp> ", READLINE_MAXLEN, lispreadchar);
+        global_envp = NULL;
 
         if (!ln) {
             break;

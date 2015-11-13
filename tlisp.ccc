@@ -10,6 +10,9 @@
 #include "lisp.h"
 #include "compat.h"
 
+#include <unistd.h>
+#include <fcntl.h>
+
 // dummies
 void gpio_enable(int pin, int state) {}
 void gpio_write(int pin, int value) {}
@@ -44,6 +47,15 @@ void print_memory_info(int verbose) {
 
 void connect_wifi(char* ssid, char* password) { /* dummy */ }
 
+// on linux, this is "non-blocking" as in it doesn't detect characters as typed
+// but they are buffered, however, none are available until you press RETURN.
+int nonblock_getch() {
+    char c = 0;
+    fcntl(0, F_SETFL, O_NONBLOCK);
+    int n = read(0, (void*)&c, 1);
+    fcntl(0, F_SETFL, 0);
+    return n < 0 ? -1 : c;
+}
 int main() {
     lastClock = clock();
     lastMem = 0;
