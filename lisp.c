@@ -386,7 +386,7 @@ static int blockGC = 0;
 lisp gc(lisp* envp) {
     if (blockGC) {
         printf("\n%% [warning: GC called with blockGC=%d]\n", blockGC);
-        return;
+        return nil;
     }
 
     // mark
