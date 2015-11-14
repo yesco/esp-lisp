@@ -1698,8 +1698,22 @@ lisp at(lisp* envp, lisp spec, lisp f) {
     return r;
 }
 
-lisp stop(lisp at) {
-    return symbol("*todo*");
+lisp stop(lisp* envp, lisp at) {
+    lisp att = evalGC(at, envp);
+    lisp nm = symbol("*at*");
+    lisp bind = assoc(nm, *envp);
+    lisp lst = cdr(bind);
+    lisp prev = bind;
+    while (lst) {
+        lisp entry = car(lst);
+        if (entry == att || cdr(entry) == cdr(att)) {
+            setcdr(prev, cdr(lst)); // remove
+            return symbol("*stop*");
+        }
+        prev = lst;
+        lst = cdr(lst);
+    }
+    return nil;
 }
 
 lisp atrun(lisp* envp) {
@@ -1841,7 +1855,7 @@ lisp lisp_init() {
     PRIM(time, -1, time_);
 
     PRIM(at, -2, at);
-    PRIM(stop, 1, stop);
+    PRIM(stop, -1, stop);
     PRIM(atrun, -1, atrun);
 
     // another small lisp in 1K lines
