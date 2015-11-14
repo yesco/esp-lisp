@@ -7,14 +7,14 @@ Who doesn't need a lisp? I always wanted my own "lispmachine" anyway ;) It's ide
 
 ## design goals
 
-- embedded small lisp
-- memory efficient
-- full closures ala scheme
-- tail recursion to allow for actors/coroutines
+- embedded small lisp - OK
+- memory efficient - SOSO
+- full closures ala scheme - DONE
+- tail recursion to allow for actors/coroutines - "OK"
 - interactive development instead of compile/upload/run
-- readline or better terminal interface
-- easy to add functions by registering, good FFI
-- no macros use NLAMBDA concept instead
+- readline or better terminal interface - DONE
+- easy to add functions by registering, good FFI - DONE
+- no macros use NLAMBDA concept instead - "OK"
 
 ## status
 
@@ -40,7 +40,7 @@ Lot's of stuff is missing...
 
 ## performace
 
-The esp-lisp is interpreted, to keep the code small and simple. Compared to lua from the NodeMcu it's about 2x slower, but lua is compiled and uses lots of memory for functions. Lua uses about 600 bytes for a simple function, whereas esp-lisp about 100 bytes for a function printing hello.
+The esp-lisp is interpreted, to keep the code small and simple. Compared to lua from the NodeMCU it's about 2x slower, but lua is compiled and uses lots of memory for functions. Lua uses about 600 bytes for a simple function, whereas esp-lisp about 100 bytes for a function printing hello.
 
 ## how to build
 
