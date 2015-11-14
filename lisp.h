@@ -7,6 +7,9 @@ typedef struct {
 void report_allocs(int verbose);
 lisp lisp_init();
 void lisp_run(lisp* envp);
+lisp apply(lisp f, lisp args);
+
+void maybeGC();
 
 lisp princ(lisp x);
 lisp terpri();

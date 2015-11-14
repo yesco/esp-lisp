@@ -702,21 +702,24 @@ lisp in(lisp pin) {
 // wget functions...
 
 static void f_emit_text(lisp callback, char* path[], char c) {
-//    return;
-    lisp env = cdr(callback);
+    maybeGC();
+
     char s[2] = {0};
     s[0] = c;
-    evalGC(list(callback, mkstring(s), END), &env);
+
+    apply(callback, list(mkstring(s),END)); // more effcient with "integer"/char
 }
 
 static void f_emit_tag(lisp callback, char* path[], char* tag) {
-    lisp env = cdr(callback);
-    evalGC(list(callback, quote(symbol(tag)), END), &env);
+    maybeGC();
+    
+    apply(callback, list(symbol(tag), END));
 }
 
 static void f_emit_attr(lisp callback, char* path[], char* tag, char* attr, char* value) {
-    lisp env = cdr(callback);
-    evalGC(list(callback, quote(symbol(tag)), quote(symbol(attr)), mkstring(value), END), &env);
+    maybeGC();
+    
+    apply(callback, list(symbol(tag), symbol(attr), mkstring(value), END));
 }
 
 lisp wget_(lisp server, lisp url, lisp callback) {
@@ -735,9 +738,6 @@ lisp wget_(lisp server, lisp url, lisp callback) {
 
 // Generalize, similarly to xml stuff, with userdata etc, in order to handle several servers
 static lisp web_callback = NULL;
-
-lisp apply(lisp f, lisp args);
-void maybeGC();
 
 static void header(char* buff, char* method, char* path) {
     maybeGC();
