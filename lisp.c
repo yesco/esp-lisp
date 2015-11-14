@@ -334,6 +334,8 @@ void sfree(void** p, int bytes, int tag) {
 
 // call this malloc using ALLOC(typename) macro
 void* myMalloc(int bytes, int tag) {
+    ///printf("MALLOC: %d %s\n", tag, tag_name[tag]);
+
     if (1) { // 830ms -> 770ms 5% faster if removed
     used_count++;
     tag_count[tag]++;
@@ -439,7 +441,7 @@ lisp gc(lisp* envp) {
 void report_allocs(int verbose) {
     int i;
 
-    terpri();
+    if (verbose) terpri();
     if (verbose == 2)
         printf("--- Allocation stats ---\n");
 
@@ -818,7 +820,8 @@ lisp evallist(lisp e, lisp* envp) {
     return cons(eval(car(e), envp), evallist(cdr(e), envp));
 }
 
-lisp noEval(lisp x, lisp* envp) { return x; }
+// dummy function that doesn't eval, used instead of eval
+static lisp noEval(lisp x, lisp* envp) { return x; }
 
 lisp primapply(lisp ff, lisp args, lisp* envp, lisp all, int noeval) {
     //printf("PRIMAPPLY "); princ(ff); princ(args); terpri();
@@ -1106,7 +1109,7 @@ lisp funcp(lisp a) { return IS(a, func) || IS(a, thunk) || IS(a, prim) ? t : nil
 lisp lessthan(lisp a, lisp b) { return getint(a) < getint(b) ?  t : nil; }
 
 lisp plus(lisp a, lisp b) { return mkint(getint(a) + getint(b)); }
-lisp minus(lisp a, lisp b) { return mkint(getint(a) - getint(b)); }
+lisp minus(lisp a, lisp b) { return b ? mkint(getint(a) - getint(b)) : mkint(-getint(a)); }
 lisp times(lisp a, lisp b) { return mkint(getint(a) * getint(b)); }
 lisp divide(lisp a, lisp b) { return mkint(getint(a) / getint(b)); }
 lisp mod(lisp a, lisp b) { return mkint(getint(a) % getint(b)); }
@@ -1196,7 +1199,13 @@ lisp apply(lisp f, lisp args) {
     lisp x = funcall(f, args, &e, nil, 1);
     // TODO: hmmm, combine/use in eval_hlp
     while (x && TAG(x) == immediate_TAG) {
+        lisp tofree = x;
         x = evalGC(ATTR(thunk, x, e), &ATTR(thunk, x, env));
+        // immediates are immediately consumed after evaluation, so they can be free:d directly
+        // TODO: make this go away?
+        tofree->tag = 0;
+        sfree((void*)tofree, sizeof(thunk), immediate_TAG);
+        used_count--; // TODO: move to sfree?
     }
 
     blockGC--;
@@ -1546,6 +1555,7 @@ lisp evalGC(lisp e, lisp* envp) {
         else
             r = eval_hlp(ATTR(thunk, r, e), &ATTR(thunk, r, env));
         // immediates are immediately consumed after evaluation, so they can be free:d directly
+        // TODO: make this go away?
         tofree->tag = 0;
         sfree((void*)tofree, sizeof(thunk), immediate_TAG);
         used_count--; // TODO: move to sfree?
@@ -1677,6 +1687,49 @@ lisp time_(lisp* envp, lisp exp) {
     return cons(mkint(ms), ret);
 }
 
+lisp at(lisp* envp, lisp spec, lisp f) {
+    int c = clock_ms();
+    int w = getint(spec);
+    lisp r = cons(mkint(c + abs(w)), cons(spec, evalGC(f, envp)));
+    lisp nm = symbol("*at*");
+    lisp bind = assoc(nm, *envp);
+    lisp rest = bind ? cdr(bind) : nil;
+    _setqq(envp, nm, cons(r, rest));
+    return r;
+}
+
+lisp stop(lisp at) {
+    return symbol("*todo*");
+}
+
+lisp atrun(lisp* envp) {
+    lisp nm = symbol("*at*");
+    lisp bind = assoc(nm, *envp);
+    lisp lst = cdr(bind);
+    lisp prev = bind;
+    while (lst) {
+        int c = clock_ms();
+        lisp entry = car(lst);
+        int when = getint(car(entry));
+        if (when && when < c) {
+            int spec = getint(car(cdr(entry)));
+            lisp exp = cdr(cdr(entry));
+            //printf("[ @%d :: ", when, c); princ(exp); printf(" ");
+            //lisp ret =
+            apply(exp, nil);
+            //printf(" => "); princ(ret); printf(" ]\n");
+            if (spec > 0)
+                setcdr(prev, cdr(lst)); // remove
+            else
+                setcar(entry, mkint(c + abs(spec)));
+        }
+        prev = lst;
+        lst = cdr(lst);
+        //if (!lst) terpri();
+    }
+    return bind;
+}
+
 // returns an env with functions
 lisp lisp_init() {
     // enable to observer startup sequence
@@ -1782,9 +1835,14 @@ lisp lisp_init() {
     // system stuff
     PRIM(gc, -1, gc);
     PRIM(test, -16, test);
+
     PRIM(ticks, 1, ticks);
     PRIM(clock, 1, clock_);
     PRIM(time, -1, time_);
+
+    PRIM(at, -2, at);
+    PRIM(stop, 1, stop);
+    PRIM(atrun, -1, atrun);
 
     // another small lisp in 1K lines
     // - https://github.com/rui314/minilisp/blob/master/minilisp.c
@@ -1840,15 +1898,21 @@ void maybeGC() {
     if (needGC()) gc(global_envp);
 }
 
+lisp atrun(lisp* envp);
+
 void idle(int lticks) {
     // 1 000 000 == 1s for x61 laptop
     //if (lticks % 1000000 == 0) { putchar('^'); fflush(stdout); }
 
     // polling tasks, invoking callbacks
     web_one();
+    atrun(global_envp);
 
     // gc
-    maybeGC();
+    maybeGC(); // TODO: backoff, can't do all the time???
+
+    // clean stats
+    print_memory_info(0);
 }
 
 void print_status(long lticks) {
