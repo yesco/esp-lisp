@@ -31,7 +31,7 @@ void print_memory_info(int verbose) {
     report_allocs(verbose);
 
     int clk = clock();
-    int ms = (int)((clk- lastClock) * 1000 / CLOCKS_PER_SEC);
+    int ms = (int)((clk - lastClock) * 1000 / CLOCKS_PER_SEC);
     int mem = 0;
     if (verbose == 2) 
         printf("=== free=%u USED=%u bytes TIME=%d ms ===\n", mem, lastMem-mem, ms);
@@ -45,6 +45,11 @@ void print_memory_info(int verbose) {
     lastMem = mem;
 }
 
+int clock_ms() {
+    static const int clocks_per_ms = CLOCKS_PER_SEC / 1000;
+    return (int)(clock()) / clocks_per_ms;
+}
+
 void connect_wifi(char* ssid, char* password) { /* dummy */ }
 
 // on linux, this is "non-blocking" as in it doesn't detect characters as typed
@@ -56,6 +61,7 @@ int nonblock_getch() {
     fcntl(0, F_SETFL, 0);
     return n < 0 ? -1 : c;
 }
+
 int main() {
     lastClock = clock();
     lastMem = 0;

@@ -1192,6 +1192,7 @@ lisp apply(lisp f, lisp args) {
     blockGC++; 
 
     lisp e = nil;
+    // TODO: like eval push on stack so can GC safely?
     lisp x = funcall(f, args, &e, nil, 1);
     // TODO: hmmm, combine/use in eval_hlp
     while (x && TAG(x) == immediate_TAG) {
@@ -1667,6 +1668,15 @@ static lisp test(lisp*);
 static long lisp_ticks = 0;
 lisp ticks() { return mkint(lisp_ticks++ & 0xffffffff); } // TODO: mklong?
 
+lisp clock_() { return mkint(clock_ms()); }
+
+lisp time_(lisp* envp, lisp exp) {
+    int start = clock_ms();
+    lisp ret = evalGC(exp, envp);
+    int ms = clock_ms() - start;
+    return cons(mkint(ms), ret);
+}
+
 // returns an env with functions
 lisp lisp_init() {
     // enable to observer startup sequence
@@ -1773,6 +1783,8 @@ lisp lisp_init() {
     PRIM(gc, -1, gc);
     PRIM(test, -16, test);
     PRIM(ticks, 1, ticks);
+    PRIM(clock, 1, clock_);
+    PRIM(time, -1, time_);
 
     // another small lisp in 1K lines
     // - https://github.com/rui314/minilisp/blob/master/minilisp.c
@@ -1856,6 +1868,7 @@ int kbhit() {
     if (thechar < 0) thechar = 0;
     if (thechar == 'T'-64) {
         print_status(lisp_ticks);
+        thechar = 0;
     }
     return thechar;
 }

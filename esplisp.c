@@ -122,6 +122,12 @@ int nonblock_getch() {
     return uart_getc_nowait(0);
 }
 
+int clock_ms() {
+    // return xTaskGetTickCount() / portTICK_RATE_MS;
+    return xTaskGetTickCount() * 10;
+}
+
+
 void user_init(void) {
     lastTick = xTaskGetTickCount();
     lastMem = xPortGetFreeHeapSize();
