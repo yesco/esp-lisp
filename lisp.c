@@ -1635,6 +1635,19 @@ lisp progn(lisp* envp, lisp all) {
     return mkimmediate(car(all), *envp);
 }
 
+lisp letevallist(lisp args, lisp* envp, lisp extend);
+
+lisp let(lisp* envp, lisp all) {
+    lisp vars = car(all);
+    lisp lenv = letevallist(vars, envp, *envp);
+    lisp ret = nil;
+    while (all) {
+        ret = evalGC(car(all), &lenv);
+        all = cdr(all);
+    }
+    return ret;
+}
+
 // use bindEvalList unless NLAMBDA
 lisp bindList(lisp fargs, lisp args, lisp env) {
     // TODO: not recurse!
@@ -1645,9 +1658,21 @@ lisp bindList(lisp fargs, lisp args, lisp env) {
 
 lisp bindEvalList(lisp fargs, lisp args, lisp* envp, lisp extend) {
     while (fargs) {
+        // This eval cannot be allowed to GC! (since it's part of building a cons structure
         lisp b = cons(car(fargs), eval(car(args), envp));
         extend = cons(b, extend);
         fargs = cdr(fargs);
+        args = cdr(args);
+    }
+    return extend;
+}
+
+lisp letevallist(lisp args, lisp* envp, lisp extend) {
+    while (args) {
+        lisp one = car(args);
+        // This eval cannot be allowed to GC! (since it's part of building a cons structure
+        lisp b = cons(car(one), eval(car(cdr(one)), envp));
+        extend = cons(b, extend);
         args = cdr(args);
     }
     return extend;
@@ -1901,6 +1926,7 @@ lisp lisp_init() {
     // PRIM(quote, -16, quote);
     // PRIM(list, 16, listlist);
 
+    PRIM(let, -16, let);
     PRIM(progn, -16, progn);
     PRIM(eval, 2, _eval);
     PRIM(evallist, 2, evallist);
@@ -2293,6 +2319,10 @@ static lisp test(lisp* e) {
     TEST((mapcar (lambda (x) (+ 5 x)) (list 1 2 3)), (6 7 8));
     TEST((mapcar car (list (cons 1 2) (cons 3 4) (cons 5 6))), (1 3 5));
     TEST((mapcar cdr (list (cons 1 2) (cons 3 4) (cons 5 6))), (2 4 6));
+
+    TEST((setq a 2));
+    TEST((list 1 2 (let ((a (+ 1 a)) (b a)) (list a (+ b b))) 5 (+(+ a (+ a a))), (1 2 (3 4) 5 6)));
+    TEST(a, 2);
 
 #else
     printf("%%Tests have been commented out.\n");
