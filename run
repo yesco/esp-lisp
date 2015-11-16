@@ -1,5 +1,5 @@
 # from norvig http://norvig.com/lispy.html
-echo "--- Lines of code ---"
+echo "--- Lines of code (according to norvig) ---"
 grep -v "^\s*//" lisp.c | grep -v "^/\*" | grep -v "^$" | wc
 echo
 

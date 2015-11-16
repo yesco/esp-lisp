@@ -1474,6 +1474,11 @@ lisp eval(lisp e, lisp* envp) {
     return r;
 }
 
+lisp _eval(lisp e, lisp env) {
+    // taking pointer creates a new "scrope"
+    return evalGC(e, &env);
+}
+
 #define MAX_STACK 256
 static struct stack {
     lisp e;
@@ -1694,10 +1699,13 @@ lisp at(lisp* envp, lisp spec, lisp f) {
     lisp nm = symbol("*at*");
     lisp bind = assoc(nm, *envp);
     lisp rest = bind ? cdr(bind) : nil;
+    // TOOD: insert sort should be easy, only problem is the first
+    // so, we could prefix by atom QUEUE.
     _setqq(envp, nm, cons(r, rest));
     return r;
 }
 
+// we allow stopping original scheduled event, or any repeated
 lisp stop(lisp* envp, lisp at) {
     lisp att = evalGC(at, envp);
     lisp nm = symbol("*at*");
@@ -1721,6 +1729,8 @@ lisp atrun(lisp* envp) {
     lisp bind = assoc(nm, *envp);
     lisp lst = cdr(bind);
     lisp prev = bind;
+    // TODO: sort? now we're checking all tasks all the time.
+    // for now don't care as we do it as idle.
     while (lst) {
         int c = clock_ms();
         lisp entry = car(lst);
@@ -1731,6 +1741,7 @@ lisp atrun(lisp* envp) {
             //printf("[ @%d :: ", when, c); princ(exp); printf(" ");
             //lisp ret =
             apply(exp, nil);
+            // TODO: add a way by special return value to unschedule itself if its a repeating task
             //printf(" => "); princ(ret); printf(" ]\n");
             if (spec > 0)
                 setcdr(prev, cdr(lst)); // remove
@@ -1743,6 +1754,75 @@ lisp atrun(lisp* envp) {
     }
     return bind;
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// flash fielesystem
+// 
+// - https://blog.cesanta.com/esp8266_using_flash
+// ~/GIT/Espruino-on-ESP8266/user/user_main.c 
+
+#ifndef UNIX
+
+void writeToFlash(char* code) {
+
+}
+
+void readFromFlash() {
+}
+
+#elseif
+
+#define FS_ADDRESS 0x60000
+
+typedef unsigned int uint32;
+
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <espressif/spi_flash.h>
+#include <espressif/esp_system.h>
+
+#include <FreeRTOS.h>
+#include <task.h>
+
+// TODO: connect to lisp writer
+void writeToFlash(char* code) {
+    int error;
+    int addr = FS_ADDRESS;
+    int sector = addr/SPI_FLASH_SEC_SIZE;
+    int to = addr + strlen(code)+1;
+    while (addr < to) {
+        sdk_spi_flash_erase_sector(sector);
+        // TODO: writes characters read from beyond end of code data!
+        if (SPI_FLASH_RESULT_OK != (error = sdk_spi_flash_write(addr, (uint32 *)code, SPI_FLASH_SEC_SIZE))) {
+            printf("\nwriteToFlash error %d\n", error);
+        }
+        addr += SPI_FLASH_SEC_SIZE;
+        code += SPI_FLASH_SEC_SIZE;
+        sector++;
+    }
+}
+
+// TODO: connect to lisp reader!
+void readFromFlash() {
+    char c;
+    int error;
+    int addr;
+    for (addr = FS_ADDRESS;; addr++) {
+        // TODO: can it really read one char at a time?
+        if (SPI_FLASH_RESULT_OK != (error = spi_flash_read(addr, (uint32 *)&c, 1))) {
+            printf("\nerror %d\n", error);
+            break;
+        }
+        // "output"
+        putchar(c); fflush(stdout);
+    }
+}
+
+#endif
 
 // returns an env with functions
 lisp lisp_init() {
@@ -1822,7 +1902,7 @@ lisp lisp_init() {
     // PRIM(list, 16, listlist);
 
     PRIM(progn, -16, progn);
-    PRIM(eval, 1, eval);
+    PRIM(eval, 2, _eval);
     PRIM(evallist, 2, evallist);
     PRIM(apply, 2, apply);
     PRIM(env, -16, _env);
@@ -1974,6 +2054,8 @@ void readeval(lisp* envp) {
 
         if (!ln) {
             break;
+        } else if (strncmp(ln, ";", 1) == 0) {
+            ; // comment - ignore
         } else if (strcmp(ln, "hello") == 0) {
             hello();
         } else if (strcmp(ln, "help") == 0 || ln[0] == '?') {
