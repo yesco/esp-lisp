@@ -499,6 +499,9 @@ void report_allocs(int verbose) {
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// string
+
 // make a string from POINTER (inside other string) by copying LEN bytes
 lisp mklenstring(char* s, int len) {
     string* r = ALLOC(string);
@@ -515,6 +518,35 @@ lisp mkstring(char* s) {
 char* getstring(lisp s) {
     return IS(s, string) ? ATTR(string, s, p) : NULL;
 }
+    
+// TODO:
+// (string-ref s 0index)
+// (string-set! s 0index char) -- maybe not modify
+// string=? (substring=? s1 start s2 start end)
+// cmp instead of string-compare
+// string-hash, string-upcase/string-downcase
+// (substring s start end)
+// (string-search-forward pattern string)
+// (substring-search-forward pattern string start end)
+// (string-search-all pattern start end) => (pos1 pos2...) / nil
+
+// srfi.schemers.org/srfi-13/srfi-13.html -- TOO BOORING!!!
+//   predicate: string? string-null? string-every string-any
+//   construct: make-string string string-tabulate
+//   convertn: string->list list->string reverse-list->string string-join
+//   select: string-length string-ref string-copy substring/shared string-copy!
+//     string-take string-take-right string-drop- string-drop-right
+//     string-pad string-pad-right string-trim string-trim-both
+//   modify: string-set! string-fill!
+//   compare: string-compare string<> string= string< string> string<= string>=
+//     string-hash
+//   prefix: string-prefix-length string-suffix-length string-prefix? string-suffix?
+//   searching: string-index string-index-right string-skip string-skip-right string-count string-contains
+//   reverse & append: string-reverse string-append string-concatenate
+//   modify: string-replace string-delete
+
+////////////////////////////////////////////////////////////////////////////////
+// CONS
 
 //#define MAX_CONS 137 // allows allocation of (list 1 2)
 //#define MAX_CONS 1024
@@ -1227,6 +1259,8 @@ lisp map(lisp f, lisp r) {
 }
 
 lisp length(lisp r) {
+    if (IS(r, string)) return mkint(strlen(getstring(r)));
+    if (!IS(r, conss)) return mkint(0);
     int c = 0;
     while (r) {
         c++;
