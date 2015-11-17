@@ -321,6 +321,9 @@ void sfree(void** p, int bytes, int tag) {
         used_bytes -= bytes;
         return free(p);
     }
+    if (IS((lisp)p, string)) {
+        free(((string*)p)->p);
+    }
     // store for reuse
     void* n = alloc_slot[bytes];
     *p = n;
@@ -497,15 +500,15 @@ void report_allocs(int verbose) {
 }
 
 // make a string from POINTER (inside other string) by copying LEN bytes
-lisp mklenstring(char *s, int len) {
+lisp mklenstring(char* s, int len) {
     string* r = ALLOC(string);
-    r->p = strndup(s, len);
+    r->p = strndup(s, len); // TODO: how to deallocate?
     return (lisp)r;
 }
 
-lisp mkstring(char *s) {
+lisp mkstring(char* s) {
     string* r = ALLOC(string);
-    r->p = s;
+    r->p = strdup(s); // what is s is in flash or program memory no need copy or deallocate...
     return (lisp)r;
 }
 
@@ -706,10 +709,7 @@ lisp in(lisp pin) {
 static void f_emit_text(lisp callback, char* path[], char c) {
     maybeGC();
 
-    char s[2] = {0};
-    s[0] = c;
-
-    apply(callback, list(mkstring(s),END)); // more effcient with "integer"/char
+    apply(callback, list(mkint(c), END)); // more effcient with "integer"/char
 }
 
 static void f_emit_tag(lisp callback, char* path[], char* tag) {
@@ -1786,16 +1786,18 @@ lisp atrun(lisp* envp) {
 // - https://blog.cesanta.com/esp8266_using_flash
 // ~/GIT/Espruino-on-ESP8266/user/user_main.c 
 
-#ifndef UNIX
+#ifdef UNIX
 
-void writeToFlash(char* code) {
-
+// TODO: simulate flash with a simple file
+int writeToFlash(char* code) {
+    return 0;
 }
 
-void readFromFlash() {
+int readFromFlash(char* buff, int maxlen) {
+    return 0;
 }
 
-#elseif
+#else
 
 #define FS_ADDRESS 0x60000
 
@@ -1814,7 +1816,7 @@ typedef unsigned int uint32;
 #include <task.h>
 
 // TODO: connect to lisp writer
-void writeToFlash(char* code) {
+int writeToFlash(char* code) {
     int error;
     int addr = FS_ADDRESS;
     int sector = addr/SPI_FLASH_SEC_SIZE;
@@ -1829,25 +1831,47 @@ void writeToFlash(char* code) {
         code += SPI_FLASH_SEC_SIZE;
         sector++;
     }
+    return strlen(code) + 1;
 }
 
 // TODO: connect to lisp reader!
-void readFromFlash() {
+// if called with NULL just count otherwise write
+int readFromFlash(char* buff, int maxlen) {
     char c;
     int error;
-    int addr;
-    for (addr = FS_ADDRESS;; addr++) {
+    int i;
+    for (i = 0; (i < maxlen) || !buff; i++) {
         // TODO: can it really read one char at a time?
-        if (SPI_FLASH_RESULT_OK != (error = spi_flash_read(addr, (uint32 *)&c, 1))) {
+        // suspect to cast to uint32 pointer for &(char c)
+        if (SPI_FLASH_RESULT_OK != (error = sdk_spi_flash_read(FS_ADDRESS + i, (uint32 *)&c, 1))) {
             printf("\nerror %d\n", error);
             break;
         }
+        //printf("%c [%d] ", c, c); fflush(stdout);
         // "output"
-        putchar(c); fflush(stdout);
+        if (buff) buff[i] = c;
+        if (!c) break;
     }
+    // make sure zero terminated
+    if (buff) buff[maxlen-1] = 0;
+    return i + 1;
 }
 
 #endif
+
+lisp flash(lisp s) {
+    if (!s) {
+        int len = readFromFlash(NULL, -1);
+        char buff[len];
+        readFromFlash(buff, len);
+        return mklenstring(buff, len);
+    } else {
+        return mkint(writeToFlash(getstring(s)));
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// stuff
 
 // returns an env with functions
 lisp lisp_init() {
@@ -1959,6 +1983,7 @@ lisp lisp_init() {
     PRIM(ticks, 1, ticks);
     PRIM(clock, 1, clock_);
     PRIM(time, -1, time_);
+    PRIM(flash, 1, flash);
 
     PRIM(at, -2, at);
     PRIM(stop, -1, stop);
