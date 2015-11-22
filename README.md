@@ -116,3 +116,9 @@ Optimize more for storage/simplify and avoid using malloc here are some ideas fr
 - https://github.com/denilsonsa/atmega8-magnetometer-usb-mouse
 - http://blog.tynemouthsoftware.co.uk/2012/02/arduino-based-zx81-usb-keyboard.html
 
+## Flash based filesystems or flash database log systems
+
+- http://research.microsoft.com/en-us/um/people/moscitho/Publications/USENIX_ATC_2015.pdf
+  (normal filesystem that concentrate on checkpointing/logging, for staleness and power usage)
+- http://www.yaffs.net/documents/how-yaffs-works
+- https://en.wikipedia.org/wiki/Write_amplification
