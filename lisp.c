@@ -168,6 +168,10 @@ typedef struct {
 //     0110 UNUSED: maybe we have func/thunk/immediate
 //     1110 UNUSED: 
 
+// Espruino Javascript for esp8266 memory usage
+// - http://www.esp8266.com/viewtopic.php?f=44&t=6574
+// - uses 20KB, so 12 KB available for JS code + vars...
+
 #define CONSP(x) ((((unsigned int)x) & 7) == 2)
 #define GETCONS(x) ((conss*)(((unsigned int)x) & ~2))
 #define MKCONS(x) ((lisp)(((unsigned int)x) | 2))
@@ -1837,7 +1841,12 @@ int readFromFlash(char* buff, int maxlen) {
 
 #else
 
+// http://www.esp8266.com/wiki/doku.php?id=esp8266_memory_map
+// http://esp8266-re.foogod.com/wiki/Memory_Map
+// essentially this is after 512K ROM flash, probably safe to use from here for storage!
 #define FS_ADDRESS 0x60000
+
+// http://richard.burtons.org/2015/05/24/memory-map-limitation-for-rboot/
 
 typedef unsigned int uint32;
 
@@ -1973,6 +1982,55 @@ int findLastFlash() {
 
 
 #endif
+
+lisp scan(lisp s) {
+    int maxlen =  4*1024*1024;
+    int i;
+
+    if (1) {
+        uint32* a = (uint32*)0x40200000;
+        a += FS_ADDRESS/4;
+        int s = 0;
+        int c0 = 0;
+        int cffffffff = 0;
+        //int stop = 0;
+        for(i = 0; i < maxlen/4; i++) {
+            uint32 v = *a;
+            a++;
+            if ((i % (16*1024/4) == 0)) { putchar('.'); fflush(stdout); }
+            s += v;
+            if (v == 0xffffffff) cffffffff++;
+            if (v == 0) c0++;
+            //while (v && !stop) {
+            while (v) {
+                char c = v & 0xff;
+                if (c >= 32 && c <= 125) {putchar(v & 0xff); fflush(stdout); }
+                else if (0) { printf("[%d]", c); fflush(stdout); }
+//                if (v && 0xff == 0xff) stop = 1;
+                v >>= 8;
+            }
+        }
+        return cons(mkint(c0), mkint(cffffffff));
+    }
+
+    int error;
+    char c;
+    int c0 = 0;
+    int cff = 0;
+    for (i = 0; i < maxlen; i++) {
+        // TODO: can it really read one char at a time?
+        // suspect to cast to uint32 pointer for &(char c)
+        if (SPI_FLASH_RESULT_OK != (error = sdk_spi_flash_read(FS_ADDRESS + i, (uint32 *)&c, 1))) {
+            printf("\nerror %d\n", error);
+            break;
+        }
+        if ((i % (16*1024) == 0)) { putchar('.'); fflush(stdout); }
+
+        if (c == 0) c0++;
+        if (c == 0xff) cff++;
+    }
+    return cons(mkint(c0), mkint(cff));
+}
 
 // (flash) -> read
 // (flash "foo") -> append
@@ -2130,6 +2188,7 @@ lisp lisp_init() {
     PRIM(clock, 1, clock_);
     PRIM(time, -1, time_);
     PRIM(flash, 2, flash);
+    PRIM(scan, 2, scan);
 
     PRIM(at, -2, at);
     PRIM(stop, -1, stop);
