@@ -1831,12 +1831,20 @@ lisp atrun(lisp* envp) {
 #ifdef UNIX
 
 // TODO: simulate flash with a simple file
-int writeToFlash(char* code) {
+int writeToFlash(char* code, int offset) {
     return 0;
 }
 
-int readFromFlash(char* buff, int maxlen) {
+int findLastFlash() {
     return 0;
+}
+
+int readFromFlash(char* buff, int maxlen, int offset) {
+    return 0;
+}
+
+lisp scan(lisp s) {
+    return nil;
 }
 
 #else
@@ -1944,45 +1952,6 @@ int findLastFlash() {
     return offset;
 }
 
-// Wrote 41984 bytes at 0x00000000 in 4.1 seconds (81.6 kbit/s)...
-// Wrote 211968 bytes at 0x00020000 in 20.9 seconds (81.0 kbit/s)...
-// 
-// spi (0-...) address:
-// 0x00000000 42 KB
-// 0x00020000 (128 KB) 211 KB start ---
-// 0x0003C000 ESP private area? (16KB)
-// 0x00054C00 end --- 211 KB
-// 0x00100000 MINE?
-// 0x00400000 end 4MB
-
-// memory mapped range:
-// 0x40200000
-// 0x40600000 4MByte
-
-/* (swrite "myfile" (list 1 2 3)) */
-/* (swrite "abc" "foobar") */
-/* (swrite "myfile" 1235) */
-
-/* (sreset "myfile") -> */
-/* (sread "myfile") -> (1 2 3) */
-/* (sread "myfile") -> 12345 */
-
-/* FLASH: */
-/* ("myfile" . (1 2 3))\0 */
-/* ("abc" . "foobar")\0 */
-/* ("myfile" . 1235)\0 */
-
-/* (point x y c) */
-/* (line x y x y c) */
-/* (circle ....) */
-/* (text ...) */
-
-/* (zap) */
-/* (ping) */
-
-
-#endif
-
 lisp scan(lisp s) {
     int maxlen =  4*1024*1024;
     int i;
@@ -2031,6 +2000,45 @@ lisp scan(lisp s) {
     }
     return cons(mkint(c0), mkint(cff));
 }
+
+// Wrote 41984 bytes at 0x00000000 in 4.1 seconds (81.6 kbit/s)...
+// Wrote 211968 bytes at 0x00020000 in 20.9 seconds (81.0 kbit/s)...
+// 
+// spi (0-...) address:
+// 0x00000000 42 KB
+// 0x00020000 (128 KB) 211 KB start ---
+// 0x0003C000 ESP private area? (16KB)
+// 0x00054C00 end --- 211 KB
+// 0x00100000 MINE?
+// 0x00400000 end 4MB
+
+// memory mapped range:
+// 0x40200000
+// 0x40600000 4MByte
+
+/* (swrite "myfile" (list 1 2 3)) */
+/* (swrite "abc" "foobar") */
+/* (swrite "myfile" 1235) */
+
+/* (sreset "myfile") -> */
+/* (sread "myfile") -> (1 2 3) */
+/* (sread "myfile") -> 12345 */
+
+/* FLASH: */
+/* ("myfile" . (1 2 3))\0 */
+/* ("abc" . "foobar")\0 */
+/* ("myfile" . 1235)\0 */
+
+/* (point x y c) */
+/* (line x y x y c) */
+/* (circle ....) */
+/* (text ...) */
+
+/* (zap) */
+/* (ping) */
+
+
+#endif
 
 lisp flashlisp(lisp x, lisp* buffer, int *n) {
     if (*n <= 2) return symbol("*FULL*");
