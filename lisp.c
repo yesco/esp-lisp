@@ -2503,6 +2503,9 @@ void load_library(lisp* envp) {
 //   20 instructions: 40 bytes
 // 
 // HOWEVER: If put in flash, maybe we don't need to care?
+// 
+//   picolisp: Only 20 of the 196 bytes stay in RAM (for the fibo symbol), the rest is moved off to ROM.
+//   esp-lisp: all conses can move "moved" to FLASH! (192 bytes!) + 4 bytes for the "function", must be RAM, plus symbol (none)
 }
 
 void testc(lisp* envp , char* whats, lisp val, lisp expect) {
