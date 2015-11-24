@@ -2040,57 +2040,90 @@ lisp scan(lisp s) {
 
 #endif
 
-lisp flashlisp(lisp x, lisp* buffer, int *n) {
+lisp serializeLisp(lisp x, lisp* buffer, int *n) {
     if (*n <= 2) return symbol("*FULL*");
-    // TODO: move string to flash?
-    // TODO: move (long) symbols to flash
-    if (!x || atomp(x)) return x;
+    if (!x || INTP(x) || SYMP(x)) return x;
+    if (IS(x, string)) {
+        // string is simple, just serialize a "heap" object with, pointer (to next cells)
+        int sz = sizeof(string);
+        memcpy(buffer, x, sz);
+        // point to next cell
+        lisp s = (lisp) &buffer[2];
+        buffer[1] = s;
+        int len = strlen(getstring(x));
+
+        int ilen = (len + 3) & ~3;
+        int iz = ilen / sizeof(lisp);
+        if (*n <= 2 + iz) return symbol("*FULL*");
+        memset(s, 0, ilen);
+        memcpy(s, getstring(x), len);
+        *n -= 2 + iz;
+        return (lisp)buffer;
+    }
+    //if (IS(x, symboll)) {
+        // - symboll (heap allocated symbols) are more difficult
+        //   as their pointer may be different each run
+        //   1. either lazy lookup every time, but that'll be slow
+        //   2. flash all (long) symbols as they are found! only RAM overhead for "value binding"
+        //   3. merge symbols with global "env" hashtable to fast lookup "global" function as we can't modify code
+    //}
     if (CONSP(x)) {
         *n -= 2;
         lisp* cr = buffer+2; int beforecar = *n;
-        buffer[0] = flashlisp(car(x), cr, n);
+        buffer[0] = serializeLisp(car(x), cr, n);
         int sz = beforecar - *n;
-        buffer[1] = flashlisp(cdr(x), cr + sz, n);
-        return (lisp)buffer;
+        buffer[1] = serializeLisp(cdr(x), cr + sz, n);
+        printf("CONSP! %x\n", (unsigned int) buffer);
+        return MKCONS(buffer);
     }
 
-    printf("*UnknownTag:%d*", TAG(x));
+    printf("flashit.ERROR: unsupported type: %d %s\n", TAG(x), tag_name[TAG(x)]);
     return symbol("*ERROR*");
 }
 
 #define MAXFLASHLISP 256
 
+lisp flashArray(lisp *serialized, int len) {
+    if (!CONSP(serialized) && !IS((lisp)serialized, string)) {
+        printf("flashArray.ERROR: wrong type %d\n", TAG((lisp)serialized));
+        return nil;
+    }
+    // patch up internal references
+    lisp* where = malloc(len * sizeof(lisp));
+    int i;
+
+    lisp* from = (lisp*)GETCONS(serialized);
+    for(i = 0; i < len; i++) {
+        lisp p = from[i];
+        int o = (lisp)(((unsigned int)p) & ~3) - (lisp)from; // does this work for all serialized types?
+        //printf("%2d : %d [%x] : ", i, o, (unsigned int)p); princ(p); terpri();
+
+        where[i] = p;
+        if (INTP(p) || SYMP(p))
+            ;
+        else if (o >= 0 && o < MAXFLASHLISP)
+            where[i] = (lisp)(where + o);
+    }
+
+    // TODO: pointer stupidity, works fine for CONS, string/heap, but not symboll?
+    unsigned int us = (unsigned int)serialized;
+    if (CONSP(*serialized)) return MKCONS(where);
+    return (lisp)((unsigned int)where | (us & 2));
+}
+
 lisp flashit(lisp x) {
-    lisp buffer[MAXFLASHLISP] = {0};
+    lisp* buffer = malloc(MAXFLASHLISP * sizeof(lisp)); // align as conss
+    memset(buffer, 0, MAXFLASHLISP * sizeof(lisp));
     int n = MAXFLASHLISP;
-    flashlisp(x, &buffer[0], &n);
+    lisp ret = serializeLisp(x, (lisp*)buffer, &n);
     int len = MAXFLASHLISP - n;
     if (!len) return x;
 
-    // patch up internal references
-    lisp where = 0; //nextFlashAddr();
-    int i;
-    printf("   : (\n");
-    for(i = 0; i < len; i++) {
-        lisp p = buffer[i];
-        int o = p - (lisp)&buffer[0];
-        if (o >= 0 && o < MAXFLASHLISP) { // flashcons reference
-            buffer[i] = where + o;
-            if (o == i+1) {
-                ; // nothing, just point to next cell
-            } else if (i % 2 == 1) { // cdr ptr
-                printf("%2d :  ...@%d\n", i, o);
-            } else { // car and new list
-                printf("%2d : (   @%d\n", i, o);
-            }
-        } else if (i % 2 == 0 || p) { // car position, or non-nil
-            printf("%2d :    ", i); princ(p); terpri();
-        } else { // nil at cdr
-            printf("%2d :        )\n", i);
-        }
-    }
-    // return flashArray(buffer, n);
-    return mkint(len);
+    printf("flashit.serialized [len=%d]: ", len); princ(ret); terpri();
+    lisp f = flashArray((lisp*)ret, len);
+    printf("flashit.flash [len=%d]: ", len); princ(f); terpri();
+    free(buffer);
+    return f;
 }
 
 // (flash) -> read
