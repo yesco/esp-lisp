@@ -2032,6 +2032,59 @@ lisp scan(lisp s) {
     return cons(mkint(c0), mkint(cff));
 }
 
+lisp flashlisp(lisp x, lisp* buffer, int *n) {
+    if (*n <= 2) return symbol("*FULL*");
+    // TODO: move string to flash?
+    // TODO: move (long) symbols to flash
+    if (!x || atomp(x)) return x;
+    if (CONSP(x)) {
+        *n -= 2;
+        lisp* cr = buffer+2; int beforecar = *n;
+        buffer[0] = flashlisp(car(x), cr, n);
+        int sz = beforecar - *n;
+        buffer[1] = flashlisp(cdr(x), cr + sz, n);
+        return (lisp)buffer;
+    }
+
+    printf("*UnknownTag:%d*", TAG(x));
+    return symbol("*ERROR*");
+}
+
+#define MAXFLASHLISP 256
+
+lisp flashit(lisp x) {
+    lisp buffer[MAXFLASHLISP] = {0};
+    int n = MAXFLASHLISP;
+    flashlisp(x, &buffer[0], &n);
+    int len = MAXFLASHLISP - n;
+    if (!len) return x;
+
+    // patch up internal references
+    lisp where = 0; //nextFlashAddr();
+    int i;
+    printf("   : (\n");
+    for(i = 0; i < len; i++) {
+        lisp p = buffer[i];
+        int o = p - (lisp)&buffer[0];
+        if (o >= 0 && o < MAXFLASHLISP) { // flashcons reference
+            buffer[i] = where + o;
+            if (o == i+1) {
+                ; // nothing, just point to next cell
+            } else if (i % 2 == 1) { // cdr ptr
+                printf("%2d :  ...@%d\n", i, o);
+            } else { // car and new list
+                printf("%2d : (   @%d\n", i, o);
+            }
+        } else if (i % 2 == 0 || p) { // car position, or non-nil
+            printf("%2d :    ", i); princ(p); terpri();
+        } else { // nil at cdr
+            printf("%2d :        )\n", i);
+        }
+    }
+    // return flashArray(buffer, n);
+    return mkint(len);
+}
+
 // (flash) -> read
 // (flash "foo") -> append
 // (flash "foo" 0) -> reset + write
@@ -2188,6 +2241,7 @@ lisp lisp_init() {
     PRIM(clock, 1, clock_);
     PRIM(time, -1, time_);
     PRIM(flash, 2, flash);
+    PRIM(flashit, 1, flashit);
     PRIM(scan, 2, scan);
 
     PRIM(at, -2, at);
@@ -2385,6 +2439,62 @@ lisp fibb(lisp n) { return mkint(fib(getint(n))); }
 // lisp implemented library functions hardcoded
 void load_library(lisp* envp) {
     DEF(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
+// POSSIBLE encodings to save memory:
+    // symbol: fibo
+    // "fibo" 
+// 0: (lambda
+// 1:  (n)
+// 2: (if
+// 3:  (<
+// 4:   n
+// 5:   2)
+// 6:  1
+// 7:  (+
+// 8:   (fibo
+//10:    (-
+//11:     n
+//12:      1))
+//14:    (fibo
+//15:     (-
+//16:      n
+//17:      2))))));
+// 18 lines + 9 paranthesises, a cons 8 bytes
+// (* (+ 18 9) 8) = 216 bytes
+//
+// possible storage strategies:
+// - 64 bytes: (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2)))))
+// - 52 bytes: (lambda(n)(if(< n 2)1(+(fibo(- n 1))(fibo(- n 2)))))
+//
+// - 24 conses! (* 24 8) = 192 bytes
+// - 25: L3 lambda L1 n L4 if L3 < n 2 1 L2 + L2 fibo L3 - n 1 L2 fibo L3 - n 2
+//   25 slots 25*4 = 100 bytes, can't detect end of list by "cdr"
+// - 34: L3 lambda L1 n \0 L4 if L3 < n 2 1 \0 L2 + L2 fibo L3 - n 1 \0 \0 L2 fibo L3 - n 2 \0 \0 \0 \0 \0
+//   34 slots (* 34 4) = 136 bytes, 
+// - L:fibo  lambda L:P L:IF \0  4
+//   L:P     n \0                2
+//   L:IF    if L:X 1 L:E \0     4
+//   L:X     < n 2 \0            4
+//   L:E     + L:F1 L:F2 \0      4
+//   L:F1    fibo L:M1 \0        3
+//   L:M1    - n 1 \0            4
+//   L:F2    fibo L:M2 \0        3
+//   L:M2    - n 2 \0            4
+//                            =====
+//                              32 = 128 bytes
+//
+// - skip list with end and compact
+//  #34 lambda #3 n \0 #26 if #5 < n 2 \0 1 #18 + #8 fibo #5 - n 1 \0 \0 #8 fibo #5 - n 2 \0 \0 \0 \0 \0
+//  skip marker 1-2 bytes, end marker \0 1 bytes
+//  9 skips, 9 ends = 18 bytes
+//  8 functions, 6 are basic (2b), 2 user (fibo) (4b) =  (+ (* 6 2) (* 2 4)) = 20 bytes
+//  4 numbers: 2, 1, 1, 2 - 2 byte x 4 = 8 bytes
+//  TOTAL: (+ 18 20 8) = 46 bytes compact!
+//  but: can execute? need a new "VM", or decode on the fly to "cons"
+//
+// - forth stack style: : fibo 1 ref 2 < 0skip? jmp:+3 1 ret 1 ref 2 - fibo 1 ref 2 - fibo + ret ;
+//   20 instructions: 40 bytes
+// 
+// HOWEVER: If put in flash, maybe we don't need to care?
 }
 
 void testc(lisp* envp , char* whats, lisp val, lisp expect) {
