@@ -96,14 +96,45 @@
 // TODO: use pointer to store some tag data, use this for exteded types
 // last bits (3 as it allocates in at least 8 bytes boundaries):
 // ----------
-// 000 = normal pointer, generic extended lisp data/struct - DONE
-// 001 = integer << 1 - DONE
-// -- byte[8] lispheap[MAX_HEAP], then still need byte[8] lisptag[MAX_HEAP]
-// 010 = lispheap, cons == 8 bytes, 2 cells
+// 000 = heap pointer, generic extended lisp data/struct with tag field - DONE
+//  01 = integer << 2 - DONE
+//  11 = inline symbol stored inside pointer! - DONE
+//       32 bits = 6 chars * 5 bits = 30 bits + 11   OR   4*ASCII, if shifted
+//
+// -- byte[8] lispheap[MAX_HEAP]
+// 010 = lispheap, cons == 8 bytes, 2 cells - DONE
 // 100 = lispheap, symbol == name + primptr, not same as value
-// 110 = 
+// 110 = ??
 
-// inline symbol? 32 bits = 6 * 5 bits = 30 bits = 6 "chars" x10, but then symbol cannot have ptr
+// 000 heap (string, symbol, prim...) - DONE
+// 001 int 1 - DONE
+// 010 lisp heap - DONE
+// 011 inline symbol 1 - DONE
+// 100 ??? hash symbol ???
+// 101 int 2 - DONE
+// 110 ??? array cons?
+// 111 inline symbol 2 - DONE
+//
+// ROM storage, issue of serializing atom and be able to execute from ROM symbols cannot change name
+// so need "unique" pointer, but since symbols can be determined dynamically we cannot change
+// in ROM. Let's say we use 24 bits hash (1M /usr/share/dict/words cause 290 clashes),
+// 32-24 = 8 - 3 bits id => 5 (length) of following string/symbol name. len=0 means it's "unique":
+// 1. a symbol can be SYMP (ROM/ROM compatible)
+// 2. a symbol can be HEAP ALLOC
+// 3. a symbol can be hash in ROM string (len < 2^5 = 32)
+// 4. a symbol can be hash in RAM
+//
+// 3 & 4 needs to verify when used???? Hmmmm, harmonize number 2 with 3 & 4
+
+// symbol hashes
+// -------------
+// (hash, pointer to value, pointer to string)
+// (0, 0, 0) end, or use linked list
+
+// linear list: (value, hash, inline string<32), ..., (0000, nil)
+// extended cons list: (cons (symbol, value), ...)
+// extended env list: next, value, symbol ("cons3")
+// extended env list: next, value, hashp/string/value (var sized, "cons3+")
 
 // TODO: move all defs into this:
 #include "lisp.h"
@@ -319,6 +350,10 @@ void* salloc(int bytes) {
 }
 
 void sfree(void** p, int bytes, int tag) {
+    if (IS((lisp)p, symboll)) {
+        printf("ERROR! free symbol!???\n");
+        exit(3);
+    }
     if (CONSP((lisp)p)) {
         printf("sfree.CONS.error\n");
         exit(1);
@@ -345,7 +380,7 @@ void sfree(void** p, int bytes, int tag) {
 void* myMalloc(int bytes, int tag) {
     ///printf("MALLOC: %d %s\n", tag, tag_name[tag]);
 
-    if (1) { // 830ms -> 770ms 5% faster if removed
+    if (1) { // 830ms -> 770ms 5% faster if removed, depends on the week!?
     used_count++;
     tag_count[tag]++;
     tag_bytes[tag] += bytes;
@@ -359,8 +394,9 @@ void* myMalloc(int bytes, int tag) {
 
     void* p = salloc(bytes);
 
-    // thunk optimization, they are given back shortly after created so need to be kept track of
-    if (tag == immediate_TAG) {
+    // thunk optimization, they are given back shortly after created so no need to be kept track of
+    // symbols are never freed, no need keep track of or GC
+    if (tag == immediate_TAG || tag == symboll_TAG) {
         ((lisp)p)->index = -1;
         return p;
     }
@@ -401,7 +437,7 @@ lisp gc(lisp* envp) {
     }
 
     // mark
-    mark(nil); mark((lisp)symbol_list); // TODO: remove?
+    syms_mark();
 
     //if (envp) { printf("ENVP %u=", (unsigned int)*envp); princ(*envp); terpri();}
     if (envp) mark(*envp);
@@ -1028,20 +1064,188 @@ lisp find_symbol(char *s, int len) {
     return NULL;
 }
 
+lisp hashsym(lisp sym);
+
+inline lisp HASH(lisp s) { 
+    hashsym(s); // make sure have global binding in "symtable"
+    return s;
+}
+
 // linear search to intern the string
 // will always return same symbol
 lisp symbol(char* s) {
     if (!s) return nil;
     lisp sym = find_symbol(s, strlen(s));
-    if (sym) return sym;
-    return secretMkSymbol(s);
+    if (sym) return HASH(sym);
+    return HASH(secretMkSymbol(s));
 }
 
 // create a copy of partial string if not found
 lisp symbolCopy(char* start, int len) {
     lisp sym = find_symbol(start, len);
-    if (sym) return sym;
-    return secretMkSymbol(strndup(start, len));
+    if (sym) return HASH(sym);
+    return HASH(secretMkSymbol(strndup(start, len)));
+}
+
+// hash symbols
+// purpose is two fold:
+// 1. find symbol (to unique-ify the pointer for a name)
+// 2. lookup value of "global" symbol
+
+// unmodified=setcar opt
+// =====================
+// lisp> (time (fibo 22))
+//   (142 . 28657)
+// lisp> (time (fibo 30))
+//   (6933 . 1346269)
+
+// no setcar opt
+// =============
+// lisp> (time (fibo 22))
+//   (1390 . 28657)
+// lisp> (time (fibo 30))
+//   (65705 . 1346269)
+
+// unmodified ./opt
+// ================
+// lisp> (time (fibo 22))
+//   (23 . 28657)
+// lisp> (time (fibo 30))
+//   (1250 . 1346269)
+
+// hashsym
+// =======
+// lisp> (time (fibo 22))
+//   (490 . 28657)
+// lisp> (time (fibo 30))
+//   (25277 . 1346269)
+
+// SYM_SLOTS 1033
+// ==============
+// lisp> (time (fibo 22))
+//   (1473 . 28657)
+// lisp> (time (fibo 30))
+//   (84999 . 1346269)
+// !!! slower because GC has to walk so much cells! even if lookup is only 1 deep
+// lisp> (time (fibo 30))
+// (time (fibo 30))
+//   (34474 . 1346269)
+// !!! ok, no call mark on empty slots => faster
+
+// SYM_SLOTS 101
+// =============
+// lisp> (time (fibo 22))
+//   (521 . 28657)
+// lisp> (time (fibo 30))
+// (26405 . 1346269)
+
+// remove all functionality even gc
+// ================================
+// lisp> (time (fibo 22)
+//   (172 . 28657)
+// lisp> (time (fibo 30))
+//   (8694 . 1346269)
+// !!! new setq overhead???
+
+// remove all ./opt
+// ================
+// lisp> (time (fibo 22))
+//   (22 . 28657)
+// lisp> (time (fibo 30))
+//   (1240 . 1346269)
+// !! setcar overhead disspears with inline + -O2
+
+#define LARSONS_SALT 0
+
+unsigned long larsons_hash(const char* s) {
+    unsigned long h = LARSONS_SALT;
+    while (*s)
+        h = h * 101 + *(unsigned char*)s++;
+    return h;
+}
+
+typedef struct {
+    lisp symbol;
+    lisp value;
+    lisp next;
+    // padding as this struct is returned as a fake conss pointer (!) from getBind(), need align correctly
+    lisp extra; // TODO: what more to store for symbols??? get rid of PRIM type maybe!!!
+} symbol_val;
+
+// http://stackoverflow.com/questions/664014/what-integer-hash-function-are-good-that-accepts-an-integer-hash-key
+unsigned int int_hash(unsigned int x) {
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x);
+    return x;
+}
+
+// cannot be 2^N (because we're dealing with ascii and it's regularity in bits)
+#define SYM_SLOTS 63
+
+symbol_val symbol_hash[SYM_SLOTS] = {0};
+
+// TODO: generlize for lisp type ARRAY and HASH!!!
+
+// returns "binding" "conss"
+lisp hashsym(lisp sym) {
+    unsigned long h = 0;
+    if (SYMP(sym)) h = (unsigned long)sym;
+    //else if (IS(sym, symboll)) h = larsons_hash(ATTR(symboll, sym, name));
+    else if (IS(sym, symboll)) h = sym; // TODO: incorrect for now, but when have hashatoms?
+
+    //printf("hashsym.h=%u ", h); princ(sym); terpri();
+    //h = h ^ (h >> 15) ^ (h >> 7) ^ (h >> 23);
+    h = h % SYM_SLOTS;
+    symbol_val* s = &symbol_hash[h];
+    while (s && s->symbol != sym) s = (symbol_val*)s->next;
+    if (s) {
+        //printf("hashsym.found it="); princ(MKCONS(s)); terpri();
+        return MKCONS(s);
+    } else {
+        //printf("hashsym.making it="); princ(sym); terpri();
+        // not there, insert first
+        symbol_val* prev = NULL;
+        if (symbol_hash[h].symbol) {
+            prev = malloc(sizeof(symbol_val));
+            memcpy(prev, &symbol_hash[h], sizeof(symbol_val));
+        }
+        symbol_val* nw = &symbol_hash[h];
+        nw->symbol = sym;
+        nw->value = nil;
+        nw->next = (lisp)prev;
+        return MKCONS(nw); // pretend it's a cons!
+    }
+}
+
+void syms_mark() {
+    int i;
+    for(i = 0; i < SYM_SLOTS; i++) {
+        symbol_val* s = &symbol_hash[i];
+        int n = 0;
+        while (s && s->symbol) {
+            if (s->value) mark_deep(s->value);
+            s = (symbol_val*)s->next;
+        }
+    }
+}
+
+// print the slots
+lisp syms() {
+    int i;
+    for(i = 0; i < SYM_SLOTS; i++) {
+        symbol_val* s = &symbol_hash[i];
+        printf("%3d : ", i);
+        int n = 0;
+        while (s && s->symbol) {
+            princ(s->symbol); putchar('='); princ(s->value); putchar(' ');
+            n++;
+            s = (symbol_val*)s->next;
+        }
+        printf(" --- #%d\n", n);
+    }
+    
+    return mkint(4711);
 }
 
 // TODO: not used??? this can be used to implement generators
@@ -1123,7 +1327,7 @@ void mark_deep(lisp next, int deep) {
     }
 }
 
-void mark(lisp x) {
+inline void mark(lisp x) {
     mark_deep(x, 1);
 }
 
@@ -1192,39 +1396,40 @@ lisp equal(lisp a, lisp b) {
     return t;
 }
 
-lisp _setqq(lisp* envp, lisp name, lisp v) {
+inline lisp getBind(lisp* envp, lisp name) {
     lisp bind = assoc(name, *envp);
-    if (bind) {
-      setcdr(bind, v);
-    } else {
-      *envp = cons( cons(name, v), *envp);
-    }
-    return v;
+    //return bind; // enable to disable hashsym
+    if (bind) return bind;
+    // check "global"
+    return hashsym(name);
 }
 
-lisp _setq(lisp* envp, lisp name, lisp v) {
-    lisp bind = assoc(name, *envp);
+// like setqq but returns binding
+inline lisp _setqqbind(lisp* envp, lisp name, lisp v) {
+    lisp bind = getBind(envp, name);
     if (!bind) {
-        // need to create binding first for self recursive functions
         bind = cons(name, nil);
         *envp = cons(bind, *envp);
     }
+    setcdr(bind, v);
+    return bind;
+}
+
+inline lisp _setqq(lisp* envp, lisp name, lisp v) {
+    _setqqbind(envp, name, nil);
+    return v;
+}
+
+inline lisp _setq(lisp* envp, lisp name, lisp v) {
+    lisp bind = _setqqbind(envp, name, nil);
+    // eval using our own named binding to enable recursion
     v = eval(v, envp);
     setcdr(bind, v);
     return v;
 }
 
-lisp _set(lisp* envp, lisp name, lisp v) {
-    name = eval(name, envp);
-    lisp bind = assoc(name, *envp);
-    if (!bind) {
-        // need to create binding first for self recursive functions
-        bind = cons(name, nil);
-        *envp = cons(bind, *envp);
-    }
-    v = eval(v, envp);
-    setcdr(bind, v);
-    return v;
+inline lisp _set(lisp* envp, lisp name, lisp v) {
+    return _setq(envp, eval(name, envp), v);
 }
 
 lisp eval(lisp e, lisp* envp);
@@ -1460,8 +1665,8 @@ static int level = 0;
 
 static lisp funcapply(lisp f, lisp args, lisp* envp, int noeval);
 
-static lisp getvar(lisp e, lisp env) {
-    lisp v = assoc(e, env); 
+static inline lisp getvar(lisp e, lisp env) {
+    lisp v = getBind(&env, e);
     if (v) return cdr(v);
     printf("\n-- ERROR: Undefined symbol: "); princ(e); terpri();
     //printf("ENV= "); princ(env); terpri();
@@ -1493,7 +1698,7 @@ inline static lisp eval_hlp(lisp e, lisp* envp) {
         // maybe must search all list till find null, then can look on symbol :-(
         // but that's everytime? actually, not it's a lexical scope!
         // TODO: only replace if not found in ENV and is on an SYMBOL!
-        setcar(e, f);
+setcar(e, f);
     }
 
     return funcall(f, cdr(e), envp, e, 0);
@@ -1822,6 +2027,10 @@ lisp atrun(lisp* envp) {
     return bind;
 }
 
+//lisp imacs_(lisp name) {
+//    return mkint(imacs_main(0, NULL));
+//}
+
 ////////////////////////////////////////////////////////////////////////////////
 // flash fielesystem
 // 
@@ -2119,9 +2328,9 @@ lisp flashit(lisp x) {
     int len = MAXFLASHLISP - n;
     if (!len) return x;
 
-    printf("flashit.serialized [len=%d]: ", len); princ(ret); terpri();
+  printf("flashit.serialized [len=%d]: ", len); princ(ret); terpri();
     lisp f = flashArray((lisp*)ret, len);
-    printf("flashit.flash [len=%d]: ", len); princ(f); terpri();
+  printf("flashit.flash [len=%d]: ", len); princ(f); terpri();
     free(buffer);
     return f;
 }
@@ -2289,6 +2498,8 @@ lisp lisp_init() {
     PRIM(stop, -1, stop);
     PRIM(atrun, -1, atrun);
 
+//    PRIM(imacs, -1, imacs_);
+    PRIM(syms, 0, syms);
     PRIM(fib, 1, fibb);
 
     // another small lisp in 1K lines
