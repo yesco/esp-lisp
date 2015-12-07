@@ -351,21 +351,19 @@ void* salloc(int bytes) {
 }
 
 void sfree(void** p, int bytes, int tag) {
-    if (IS((lisp)p, symboll)) {
-        printf("ERROR! free symbol!???\n");
+    if (IS((lisp)p, symboll) || CONSP((lisp)p)) {
+        printf("sfree.ERROR: symbol or cons!\n");
         exit(3);
-    }
-    if (CONSP((lisp)p)) {
-        printf("sfree.CONS.error\n");
-        exit(1);
     }
     if (bytes >= SALLOC_MAX_SIZE) {
         used_bytes -= bytes;
         return free(p);
     }
+    /// TODO: use sfree?
     if (IS((lisp)p, string)) {
         free(((string*)p)->p);
     }
+
     // store for reuse
     void* n = alloc_slot[bytes];
     *p = n;
@@ -395,7 +393,7 @@ void* myMalloc(int bytes, int tag) {
 
     void* p = salloc(bytes);
 
-    // thunk optimization, they are given back shortly after created so no need to be kept track of
+    // immediate optimization, they are given back shortly after created so no need to be kept track of
     // symbols are never freed, no need keep track of or GC
     if (tag == immediate_TAG || tag == symboll_TAG) {
         ((lisp)p)->index = -1;
@@ -428,6 +426,7 @@ symboll* symbol_list = NULL;
 void mark(lisp x);
 void gc_conses();
 lisp mem_usage(int count);
+void syms_mark();
 
 static int blockGC = 0;
 
@@ -1110,6 +1109,33 @@ lisp symbolCopy(char* start, int len) {
 //   20
 // !!!! 20% faster!!!
 
+// memory usage:
+// === unmodified
+// used_count=72 cons_count=354 free=19580 USED=16 bytes
+// === hashsym
+// used_count=72 cons_count=486 free=17320 USED=12 bytes  // SLOTS = 63
+// used_count=72 cons_count=486 free=17592 USED=12 bytes  // SLOTS = 31
+// used_count= 8 cons_count=510 free=17360 USED=12 bytes  // SLOTS = 2
+// 
+// (- 19580 17592) = 1988 bytes!!! WTF?
+// (* 31 16) = 496 bytes for hashsym array // 31 slots
+// (* (- 70 31) (+ 16 4)) = 780 bytes for hashsym allocs of linked list items
+// TOTAL: (+ 496 780) = 1276
+// however, we free (- 486 354) = 132 conses for the bindings (* 132 8) = 1056 bytes "saved" (or moved)
+//
+// (- 1988 1276) = 712 bytes unaccounted for...
+
+// TODO: remove more error strings
+// TODO: no need create binding for symbol that has no value (HASH function not to be called)
+// TODO: since never free some types (prim symbol (and symbol name) symbol value allocate from separate heap with no overhead)
+//                                   that is *8 bytes per allocation no other overhead (to get correct pointers)
+//                                   symbol name can be from another heap space, no alignment needed, allocate block?
+// 
+//    prim:  63 allocations of  1008 bytes, and still use  63 total  1008 bytes
+//    symbol:   7 allocations of    84 bytes, and still use   7 total    84 bytes
+
+// so if can merge prim with symbol_value could save 1008 bytes with the saved 1056 bytes concells that's even...
+
 #define LARSONS_SALT 0
 
 unsigned long larsons_hash(const char* s) {
@@ -1136,9 +1162,11 @@ unsigned int int_hash(unsigned int x) {
 }
 
 // cannot be 2^N (because we're dealing with ascii and it's regularity in bits)
-#define SYM_SLOTS 63
+//#define SYM_SLOTS 63
+#define SYM_SLOTS 31
+//#define SYM_SLOTS 2
 
-symbol_val symbol_hash[SYM_SLOTS] = {0};
+symbol_val symbol_hash[SYM_SLOTS] = {{0}};
 
 // TODO: generlize for lisp type ARRAY and HASH!!!
 
@@ -1146,19 +1174,15 @@ symbol_val symbol_hash[SYM_SLOTS] = {0};
 lisp hashsym(lisp sym) {
     unsigned long h = 0;
     if (SYMP(sym)) h = (unsigned long)sym;
-    //else if (IS(sym, symboll)) h = larsons_hash(ATTR(symboll, sym, name));
-    else if (IS(sym, symboll)) h = sym; // TODO: incorrect for now, but when have hashatoms?
+    //else if (IS(sym, symboll)) h = larsons_hash(ATTR(symboll, sym, name)); // TODO: this is close to hashatoms effect
+    else if (IS(sym, symboll)) h = (unsigned int)sym; // TODO: ok for now, but should use  hashatoms?
 
-    //printf("hashsym.h=%u ", h); princ(sym); terpri();
-    //h = h ^ (h >> 15) ^ (h >> 7) ^ (h >> 23);
     h = h % SYM_SLOTS;
     symbol_val* s = &symbol_hash[h];
     while (s && s->symbol != sym) s = (symbol_val*)s->next;
     if (s) {
-        //printf("hashsym.found it="); princ(MKCONS(s)); terpri();
         return MKCONS(s);
     } else {
-        //printf("hashsym.making it="); princ(sym); terpri();
         // not there, insert first
         symbol_val* prev = NULL;
         if (symbol_hash[h].symbol) {
@@ -1177,9 +1201,8 @@ void syms_mark() {
     int i;
     for(i = 0; i < SYM_SLOTS; i++) {
         symbol_val* s = &symbol_hash[i];
-        int n = 0;
         while (s && s->symbol) {
-            if (s->value) mark_deep(s->value);
+            if (s->value) mark(s->value);
             s = (symbol_val*)s->next;
         }
     }
@@ -1187,20 +1210,22 @@ void syms_mark() {
 
 // print the slots
 lisp syms() {
+    int n = 0;
     int i;
     for(i = 0; i < SYM_SLOTS; i++) {
         symbol_val* s = &symbol_hash[i];
         printf("%3d : ", i);
-        int n = 0;
+        int nn = 0;
         while (s && s->symbol) {
+            nn++;
             princ(s->symbol); putchar('='); princ(s->value); putchar(' ');
-            n++;
             s = (symbol_val*)s->next;
         }
-        printf(" --- #%d\n", n);
+        n += nn;
+        printf(" --- #%d\n", nn);
     }
     
-    return mkint(4711);
+    return mkint(n);
 }
 
 // TODO: not used??? this can be used to implement generators
@@ -1353,7 +1378,6 @@ lisp equal(lisp a, lisp b) {
 
 inline lisp getBind(lisp* envp, lisp name) {
     lisp bind = assoc(name, *envp);
-    //return bind; // enable to disable hashsym
     if (bind) return bind;
     // check "global"
     return hashsym(name);
@@ -1374,6 +1398,8 @@ inline lisp _setqq(lisp* envp, lisp name, lisp v) {
     _setqqbind(envp, name, nil);
     return v;
 }
+// next line only needed because C99 can't get pointer to inlined function?
+lisp _setqq_(lisp* envp, lisp name, lisp v) { return _setqq(envp, name, v); }
 
 inline lisp _setq(lisp* envp, lisp name, lisp v) {
     lisp bind = _setqqbind(envp, name, nil);
@@ -1386,6 +1412,8 @@ inline lisp _setq(lisp* envp, lisp name, lisp v) {
 inline lisp _set(lisp* envp, lisp name, lisp v) {
     return _setq(envp, eval(name, envp), v);
 }
+// next line only needed because C99 can't get pointer to inlined function?
+lisp _set_(lisp* envp, lisp name, lisp v) { return _set(envp, name, v); }
 
 lisp eval(lisp e, lisp* envp);
 lisp funcall(lisp f, lisp args, lisp* envp, lisp e, int noeval);
@@ -2421,9 +2449,9 @@ lisp lisp_init() {
 
     PRIM(read, 1, read_);
 
-    PRIM(set, -2, _set);
+    PRIM(set, -2, _set_);
     PRIM(setq, -2, _setq);
-    PRIM(setqq, -2, _setqq);
+    PRIM(setqq, -2, _setqq_);
     PRIM(quote, -1, _quote);
 
     // define
