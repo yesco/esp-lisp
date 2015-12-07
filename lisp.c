@@ -108,11 +108,11 @@
 
 // 000 heap (string, symbol, prim...) - DONE
 // 001 int 1 - DONE
-// 010 lisp heap - DONE
+// 010 cons heap - DONE
 // 011 inline symbol 1 - DONE
-// 100 ??? hash symbol ???
+// 100                    ??? hash symbol ???
 // 101 int 2 - DONE
-// 110 ??? array cons?
+// 110                    ??? array cons?
 // 111 inline symbol 2 - DONE
 //
 // ROM storage, issue of serializing atom and be able to execute from ROM symbols cannot change name
@@ -221,15 +221,15 @@ typedef struct {
 #define GETINT(x) (((signed int)x) >> 2)
 #define MKINT(i) ((lisp)((((unsigned int)(i)) << 2) | 1))
 
+// TODO: can we merge this and symbol, as all prim:s have name
 #define prim_TAG 4
 typedef struct {
     char tag;
-    char xx;
+    signed char n; // TODO: maybe could use xx tag above?
     short index;
 
-    signed char n; // TODO: maybe could use xx tag above?
     void* f;
-    char* name; // TODO: should point to an SYMBOL! integrate SYMBOL and prims!
+    char* name; // TODO: could point to symbol, however "foo" in program will always be there as string
 } prim;
 
 // TODO: somehow a symbol is very similar to a conss cell.
@@ -243,6 +243,7 @@ typedef struct symboll {
 
     struct symboll* next;
     char* name; // TODO should be char name[1]; // inline allocation!
+    // TODO: lisp value; // globla value (prims)
 } symboll;
 
 #define SYMP(x) ((((unsigned int)x) & 3) == 3)
@@ -1092,68 +1093,22 @@ lisp symbolCopy(char* start, int len) {
 // 1. find symbol (to unique-ify the pointer for a name)
 // 2. lookup value of "global" symbol
 
-// unmodified=setcar opt
-// =====================
-// lisp> (time (fibo 22))
-//   (142 . 28657)
-// lisp> (time (fibo 30))
-//   (6933 . 1346269)
-
-// no setcar opt
-// =============
-// lisp> (time (fibo 22))
-//   (1390 . 28657)
-// lisp> (time (fibo 30))
-//   (65705 . 1346269)
-
-// unmodified ./opt
-// ================
+// ==== unmodified
 // lisp> (time (fibo 22))
 //   (23 . 28657)
 // lisp> (time (fibo 30))
-//   (1250 . 1346269)
-
-// hashsym
-// =======
+//   (1099 . 1346269)
+// === with hashsyms
 // lisp> (time (fibo 22))
-//   (490 . 28657)
+//   (19 . 28657)
 // lisp> (time (fibo 30))
-//   (25277 . 1346269)
-
-// SYM_SLOTS 1033
-// ==============
-// lisp> (time (fibo 22))
-//   (1473 . 28657)
-// lisp> (time (fibo 30))
-//   (84999 . 1346269)
-// !!! slower because GC has to walk so much cells! even if lookup is only 1 deep
-// lisp> (time (fibo 30))
-// (time (fibo 30))
-//   (34474 . 1346269)
-// !!! ok, no call mark on empty slots => faster
-
-// SYM_SLOTS 101
-// =============
-// lisp> (time (fibo 22))
-//   (521 . 28657)
-// lisp> (time (fibo 30))
-// (26405 . 1346269)
-
-// remove all functionality even gc
-// ================================
-// lisp> (time (fibo 22)
-//   (172 . 28657)
-// lisp> (time (fibo 30))
-//   (8694 . 1346269)
-// !!! new setq overhead???
-
-// remove all ./opt
-// ================
-// lisp> (time (fibo 22))
-//   (22 . 28657)
-// lisp> (time (fibo 30))
-//   (1240 . 1346269)
-// !! setcar overhead disspears with inline + -O2
+//   (914 . 1346269)
+// === summary
+// lisp> (- 1099 914)
+//   185
+// lisp> (/ 18500 914)
+//   20
+// !!!! 20% faster!!!
 
 #define LARSONS_SALT 0
 
@@ -1167,7 +1122,7 @@ unsigned long larsons_hash(const char* s) {
 typedef struct {
     lisp symbol;
     lisp value;
-    lisp next;
+    lisp next; // linked list of ones in same bucket
     // padding as this struct is returned as a fake conss pointer (!) from getBind(), need align correctly
     lisp extra; // TODO: what more to store for symbols??? get rid of PRIM type maybe!!!
 } symbol_val;
