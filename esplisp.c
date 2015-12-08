@@ -66,6 +66,7 @@ static xQueueHandle mainqueue;
 
 unsigned int lastTick = 0;
 int lastMem = 0;
+int startMem = 0;
 
 void print_memory_info(int verbose) {
     report_allocs(verbose);
@@ -74,11 +75,12 @@ void print_memory_info(int verbose) {
     int ms = (tick - lastTick) / portTICK_RATE_MS;
     int mem = xPortGetFreeHeapSize();
     if (verbose == 2)
-        printf("=== free=%u USED=%u bytes TIME=%d ms ===\n", mem, lastMem-mem, ms);
+        printf("=== free=%u USED=%u bytes TIME=%d ms, startMem=%u ===\n", mem, lastMem-mem, ms, startMem);
     else if (verbose == 1) {
         if (mem) printf("free=%u ", mem);
         if (lastMem-mem) printf("USED=%u bytes ", lastMem-mem);
         if (ms) printf("TIME=%d ms ", ms);
+        if (startMem) printf("startMem=%u ", startMem);
         printf("\n");
     }
     lastTick = tick;
@@ -130,7 +132,7 @@ int clock_ms() {
 
 void user_init(void) {
     lastTick = xTaskGetTickCount();
-    lastMem = xPortGetFreeHeapSize();
+    startMem = lastMem = xPortGetFreeHeapSize();
 
     sdk_uart_div_modify(0, UART_CLK_FREQ / 115200);
 
