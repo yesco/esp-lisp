@@ -304,19 +304,45 @@ int reuse() {
 int used_count = 0;
 int used_bytes = 0;
 
+// TODO: maybe not good idea, just pre allocate 12 and 16 bytes stuff 4 at a time and put on free list?
+// permanent malloc, no way to give back
+#define PERMALLOC_CHUNK 64
+
+// used_count=72 cons_count=354 free=19280 USED=12 bytes
+// used_count=72 cons_count=354 free=19580 USED=16 bytes
+// saved: (- 19368 19580) = -122
+// 84 mallocs = (* 84 4) 336 bytes "saved"?
+
+// used_count=72 cons_count=354 free=19288 USED=12 bytes
+// used_count=72 cons_count=354 free=19580 USED=16 bytes
+// used_count=72 cons_count=354 free=18892 USED=12 bytes
+
+// unmodified: used_count=72 cons_count=354 free=18900 USED=12 bytes startMem=34796 
+// this:       used_count=72 cons_count=354 free=19540 USED=16 bytes startMem=34796
+// (- 34796 19540) = 15256
+
+void* perMalloc(int bytes) {
+    if (bytes > PERMALLOC_CHUNK) return malloc(bytes);
+
+    static char* heap = NULL;
+    static int used = 0;
+    if (used + bytes > PERMALLOC_CHUNK) {
+//        printf("[perMalloc.more waste=%d]\n", PERMALLOC_CHUNK - used);
+        // TODO: how to handle waste? if too much, then not worth it...
+        heap = NULL;
+        used = 0;
+    }
+    if (!heap) heap = malloc(PERMALLOC_CHUNK);
+    void* r = heap;
+//    printf("[perMalloc %d]", bytes); fflush(stdout);
+    heap += bytes;
+    used += bytes;
+    return r;
+}
+
 // SLOT salloc/sfree, reuse mallocs of same size instead of free, saved 20% speed
 #define SALLOC_MAX_SIZE 32
 void* alloc_slot[SALLOC_MAX_SIZE] = {0}; // TODO: probably too many sizes...
-
-void* salloc(int bytes) {
-    void** p = alloc_slot[bytes];
-    if (!p || bytes >= SALLOC_MAX_SIZE) {
-        used_bytes += bytes;
-        return malloc(bytes);
-    }
-    alloc_slot[bytes] = *p;
-    return p;
-}
 
 void sfree(void** p, int bytes, int tag) {
     if (CONSP((lisp)p)) {
@@ -335,10 +361,32 @@ void sfree(void** p, int bytes, int tag) {
     *p = n;
     alloc_slot[bytes] = p;
     // stats
-    tag_freed_count[tag]++;
-    tag_freed_bytes[tag] += bytes;
+    if (tag > 0) {
+        tag_freed_count[tag]++;
+        tag_freed_bytes[tag] += bytes;
+    }
     tag_freed_count[0]++;
     tag_freed_bytes[0] += bytes;
+}
+
+void* salloc(int bytes) {
+    void** p = alloc_slot[bytes];
+    if (bytes >= SALLOC_MAX_SIZE) {
+        used_bytes += bytes;
+        return malloc(bytes);
+    } else if (!p) {
+        used_bytes += bytes;
+        return malloc(bytes);
+        int i = 8;
+        char* n = malloc(bytes * i);
+        while (i--) {
+            sfree((void*)n, bytes, -1);
+            n += bytes;
+        }
+        p = alloc_slot[bytes];
+    }
+    alloc_slot[bytes] = *p;
+    return p;
 }
 
 // call this malloc using ALLOC(typename) macro
@@ -447,65 +495,6 @@ lisp gc(lisp* envp) {
     return mem_usage(count);
 }
 
-int cons_count; // forward
-
-void report_allocs(int verbose) {
-    int i;
-
-    if (verbose) terpri();
-    if (verbose == 2)
-        printf("--- Allocation stats ---\n");
-
-
-    if (verbose == 1) {
-        printf("\nAllocated: ");
-        for(i = 0; i<16; i++)
-            if (tag_count[i] > 0) printf("%d %s=%d bytes, ", tag_count[i], tag_name[i], tag_bytes[i]);
-        
-        printf("\n    Freed: ");
-        for(i = 0; i<16; i++)
-            if (tag_freed_count[i] > 0) printf("%d %s=%d bytes, ", tag_count[i], tag_name[i], tag_bytes[i]);
-
-        printf("\n     Used: ");
-    }
-
-    for(i = 0; i<16; i++) {
-        if (tag_count[i] > 0 || tag_freed_count[i] > 0) {
-            int count = tag_count[i] - tag_freed_count[i];
-            int bytes = tag_bytes[i] - tag_freed_bytes[i];
-            if (verbose == 2) 
-                printf("%12s: %3d allocations of %5d bytes, and still use %3d total %5d bytes\n",
-                       tag_name[i], tag_count[i], tag_bytes[i], count, bytes);
-            else if (verbose == 1 && (count > 0 || bytes > 0))
-                printf("%d %s=%d bytes, ", count, tag_name[i], bytes);
-        }
-    }
-
-    if (verbose == 2) {
-        for(i = 0; i<16; i++) {
-            if (tag_count[i] > 0 || tag_freed_count[i] > 0) {
-                int count = tag_count[i] - tag_freed_count[i];
-                int bytes = tag_bytes[i] - tag_freed_bytes[i];
-
-                if (verbose == 1 && (tag_count[i] != count || tag_bytes[i] != bytes) && (tag_count[i] || tag_bytes[i]))
-                    printf("churn %d %s=%d bytes, ", tag_count[i], tag_name[i], tag_bytes[i]);
-            }
-        }
-    }
-    
-    for(i = 0; i<16; i++) {
-        tag_count[i] = 0;
-        tag_bytes[i] = 0;
-        tag_freed_count[i] = 0;
-        tag_freed_bytes[i] = 0;
-    }
-
-    // TODO: this one doesn't make sense?
-    if (verbose) {
-        printf("\nused_count=%d cons_count=%d ", used_count, cons_count);
-        fflush(stdout);
-    }
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 // string
@@ -519,6 +508,7 @@ lisp mklenstring(char* s, int len) {
 
 lisp mkstring(char* s) {
     string* r = ALLOC(string);
+    // TODO: use salloc()
     r->p = strdup(s); // what is s is in flash or program memory no need copy or deallocate...
     return (lisp)r;
 }
@@ -634,6 +624,8 @@ lisp cons(lisp a, lisp b) {
 inline lisp car(lisp x) { return CONSP(x) ? GETCONS(x)->car : nil; }
 inline lisp cdr(lisp x) { return CONSP(x) ? GETCONS(x)->cdr : nil; }
 
+int cons_count; // forward
+
 // however, on esp8266 it's only inlined and no function exists,
 // so we need to create them for use in lisp
 #ifdef UNIX
@@ -664,6 +656,79 @@ lisp list(lisp first, ...) {
     va_end(ap);
 
     return r;
+}
+
+void report_allocs(int verbose) {
+    int i;
+
+    if (verbose) terpri();
+    if (verbose == 2)
+        printf("--- Allocation stats ---\n");
+
+    if (verbose == 1) {
+        printf("\nAllocated: ");
+        for(i = 0; i<16; i++)
+            if (tag_count[i] > 0) printf("%d %s=%d bytes, ", tag_count[i], tag_name[i], tag_bytes[i]);
+        
+        printf("\n    Freed: ");
+        for(i = 0; i<16; i++)
+            if (tag_freed_count[i] > 0) printf("%d %s=%d bytes, ", tag_count[i], tag_name[i], tag_bytes[i]);
+
+        printf("\n     Used: ");
+    }
+
+    for(i = 0; i<16; i++) {
+        if (tag_count[i] > 0 || tag_freed_count[i] > 0) {
+            int count = tag_count[i] - tag_freed_count[i];
+            int bytes = tag_bytes[i] - tag_freed_bytes[i];
+            if (verbose == 2) 
+                printf("%12s: %3d allocations of %5d bytes, and still use %3d total %5d bytes\n",
+                       tag_name[i], tag_count[i], tag_bytes[i], count, bytes);
+            else if (verbose == 1 && (count > 0 || bytes > 0))
+                printf("%d %s=%d bytes, ", count, tag_name[i], bytes);
+        }
+    }
+
+    if (verbose == 2) {
+        for(i = 0; i<16; i++) {
+            if (tag_count[i] > 0 || tag_freed_count[i] > 0) {
+                int count = tag_count[i] - tag_freed_count[i];
+                int bytes = tag_bytes[i] - tag_freed_bytes[i];
+
+                if (verbose == 1 && (tag_count[i] != count || tag_bytes[i] != bytes) && (tag_count[i] || tag_bytes[i]))
+                    printf("churn %d %s=%d bytes, ", tag_count[i], tag_name[i], tag_bytes[i]);
+            }
+        }
+    }
+    
+    for(i = 0; i<16; i++) {
+        tag_count[i] = 0;
+        tag_bytes[i] = 0;
+        tag_freed_count[i] = 0;
+        tag_freed_bytes[i] = 0;
+    }
+
+    // print static sizes...
+    if (verbose) {
+        int tot = 0, b;
+        b = sizeof(tag_name); printf("tag_name: %d\n", b); tot += b;
+        b = sizeof(tag_size); printf("tag_size: %d\n", b); tot += b;
+        b = sizeof(tag_count); printf("tag_count: %d\n", b); tot += b;
+        b = sizeof(tag_bytes); printf("tag_bytes: %d\n", b); tot += b;
+        b = sizeof(tag_freed_count); printf("tag_freed_count: %d\n", b); tot += b;
+        b = sizeof(tag_freed_bytes); printf("tag_freed_bytes: %d\n", b); tot += b;
+        b = sizeof(allocs); printf("allocs: %d\n", b); tot += b;
+        b = sizeof(alloc_slot); printf("alloc_slot: %d\n", b); tot += b;
+        b = sizeof(symbol_list); printf("symbol_list: %d\n", b); tot += b; // TODO: it's wrong!
+        b = CONSES_BYTES; printf("conses: %d\n", b); tot += b;
+        b = sizeof(cons_used); printf("cons_used: %d\n", b); tot += b;
+    }
+
+    // TODO: this one doesn't make sense?
+    if (verbose) {
+        printf("\nused_count=%d cons_count=%d ", used_count, cons_count);
+        fflush(stdout);
+    }
 }
 
 lisp mkint(int v) {
