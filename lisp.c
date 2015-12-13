@@ -722,6 +722,7 @@ void report_allocs(int verbose) {
         b = sizeof(symbol_list); printf("symbol_list: %d\n", b); tot += b; // TODO: it's wrong!
         b = CONSES_BYTES; printf("conses: %d\n", b); tot += b;
         b = sizeof(cons_used); printf("cons_used: %d\n", b); tot += b;
+        printf("=== TOTAL: %d\n", tot);
     }
 
     // TODO: this one doesn't make sense?
@@ -1887,6 +1888,43 @@ lisp atrun(lisp* envp) {
     return bind;
 }
 
+#ifdef UNIX
+int xPortGetFreeHeapSize() { return -1; }
+#endif
+
+// test function: eat the heap
+lisp heap() {
+    void* a[60];
+    int c = 0;
+
+    int t = 0;
+    int z = 16384;
+    // TODO: keep allocated in free list and deallocate?
+    while (z > 0) {
+        //while (xPortGetFreeHeapSize() < z) z = z/2; // enable to make allocation overflow "safer"
+        //void* p = pvPortMalloc(z);
+        void* p = malloc(z);
+        if (!p) {
+            z = z/2;
+            continue;
+        }
+        printf("%u %d %d %d\n", (unsigned int)p, z, t, xPortGetFreeHeapSize());
+        t += z;
+        // test is writable
+        int* x = p;
+        *x = 4711;
+        if (*x != 4711) printf("--- Write failed! %d\n", *x);
+        a[c++] = p;
+        if (c == 60) break; // before it crashes!
+    }
+    int i;
+    for (i = 0; i < c; i++) {
+        free(a[i]);
+        printf("%u %d\n", (unsigned int)a[i], xPortGetFreeHeapSize());
+    }
+    return mkint(t);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // flash fielesystem
 // 
@@ -2322,6 +2360,9 @@ lisp lisp_init() {
     PRIM(atrun, -1, atrun);
 
     PRIM(fib, 1, fibb);
+
+    //PRIM(readit, 0, readit);
+    PRIM(heap, 1, heap);
 
     // another small lisp in 1K lines
     // - https://github.com/rui314/minilisp/blob/master/minilisp.c
