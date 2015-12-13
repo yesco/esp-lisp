@@ -226,10 +226,12 @@ void user_init(void) {
 
     sdk_uart_div_modify(0, UART_CLK_FREQ / 115200);
 
-    lispTask(NULL); return;
+    // this doesn't have enough stack!
+    //lispTask(NULL); return;
+
     // for now run in a task, in order to allocate a bigger stack
     //xTaskCreate(lispTask, (signed char *)"lispTask", 2048, &mainqueue, 2, NULL);
-    xTaskCreate(lispTask, (signed char *)"lispTask", 1024, NULL, 2, NULL);
+    xTaskCreate(lispTask, (signed char *)"lispTask", 2048, NULL, 2, NULL);
 }
 
 void exit(int e) {
