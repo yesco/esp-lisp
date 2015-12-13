@@ -17,6 +17,10 @@ echo
 # we define UNIX for compilations for unix target
 # and we cp tlisp.ccc to tlisp.c, can't keep it as tlisp.c when compiling for esp as it's macro takes all files
 
+# use these lines when imacs integrated... look into recursive git project...
+#cp tlisp.ccc tlisp.c && gcc -m32 -O2 -DUNIX=1 tlisp.c common.c httpd.c lisp.c imacs.c -o opt ; rm tlisp.c
+#cp tlisp.ccc tlisp.c && gcc -m32 -g -pg -DUNIX=1 tlisp.c common.c httpd.c lisp.c imacs.c && time ./a.out ; rm tlisp.c
+
 cp tlisp.ccc tlisp.c && gcc -m32 -O2 -DUNIX=1 tlisp.c common.c httpd.c lisp.c -o opt ; rm tlisp.c
 cp tlisp.ccc tlisp.c && gcc -m32 -g -pg -DUNIX=1 tlisp.c common.c httpd.c lisp.c && time ./a.out ; rm tlisp.c
 

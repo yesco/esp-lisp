@@ -66,6 +66,9 @@ int main() {
     lastClock = clock();
     lastMem = 0;
 
+    setbuf(stdin, NULL);
+    setbuf(stdout, NULL);
+
     lisp env = lisp_init();
     lisp_run(&env);
 }

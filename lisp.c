@@ -96,14 +96,45 @@
 // TODO: use pointer to store some tag data, use this for exteded types
 // last bits (3 as it allocates in at least 8 bytes boundaries):
 // ----------
-// 000 = normal pointer, generic extended lisp data/struct - DONE
-// 001 = integer << 1 - DONE
-// -- byte[8] lispheap[MAX_HEAP], then still need byte[8] lisptag[MAX_HEAP]
-// 010 = lispheap, cons == 8 bytes, 2 cells
+// 000 = heap pointer, generic extended lisp data/struct with tag field - DONE
+//  01 = integer << 2 - DONE
+//  11 = inline symbol stored inside pointer! - DONE
+//       32 bits = 6 chars * 5 bits = 30 bits + 11   OR   4*ASCII, if shifted
+//
+// -- byte[8] lispheap[MAX_HEAP]
+// 010 = lispheap, cons == 8 bytes, 2 cells - DONE
 // 100 = lispheap, symbol == name + primptr, not same as value
-// 110 = 
+// 110 = ??
 
-// inline symbol? 32 bits = 6 * 5 bits = 30 bits = 6 "chars" x10, but then symbol cannot have ptr
+// 000 heap (string, symbol, prim...) - DONE
+// 001 int 1 - DONE
+// 010 cons heap - DONE
+// 011 inline symbol 1 - DONE
+// 100                    ??? hash symbol ???
+// 101 int 2 - DONE
+// 110                    ??? array cons?
+// 111 inline symbol 2 - DONE
+//
+// ROM storage, issue of serializing atom and be able to execute from ROM symbols cannot change name
+// so need "unique" pointer, but since symbols can be determined dynamically we cannot change
+// in ROM. Let's say we use 24 bits hash (1M /usr/share/dict/words cause 290 clashes),
+// 32-24 = 8 - 3 bits id => 5 (length) of following string/symbol name. len=0 means it's "unique":
+// 1. a symbol can be SYMP (ROM/ROM compatible)
+// 2. a symbol can be HEAP ALLOC
+// 3. a symbol can be hash in ROM string (len < 2^5 = 32)
+// 4. a symbol can be hash in RAM
+//
+// 3 & 4 needs to verify when used???? Hmmmm, harmonize number 2 with 3 & 4
+
+// symbol hashes
+// -------------
+// (hash, pointer to value, pointer to string)
+// (0, 0, 0) end, or use linked list
+
+// linear list: (value, hash, inline string<32), ..., (0000, nil)
+// extended cons list: (cons (symbol, value), ...)
+// extended env list: next, value, symbol ("cons3")
+// extended env list: next, value, hashp/string/value (var sized, "cons3+")
 
 // TODO: move all defs into this:
 #include "lisp.h"
@@ -193,15 +224,15 @@ typedef struct {
 #define GETINT(x) (((signed int)x) >> 2)
 #define MKINT(i) ((lisp)((((unsigned int)(i)) << 2) | 1))
 
+// TODO: can we merge this and symbol, as all prim:s have name
 #define prim_TAG 4
 typedef struct {
     char tag;
-    char xx;
+    signed char n; // TODO: maybe could use xx tag above?
     short index;
 
-    signed char n; // TODO: maybe could use xx tag above?
     void* f;
-    char* name; // TODO: should point to an SYMBOL! integrate SYMBOL and prims!
+    char* name; // TODO: could point to symbol, however "foo" in program will always be there as string
 } prim;
 
 // TODO: somehow a symbol is very similar to a conss cell.
@@ -215,6 +246,7 @@ typedef struct symboll {
 
     struct symboll* next;
     char* name; // TODO should be char name[1]; // inline allocation!
+    // TODO: lisp value; // globla value (prims)
 } symboll;
 
 #define SYMP(x) ((((unsigned int)x) & 3) == 3)
@@ -348,17 +380,19 @@ void* perMalloc(int bytes) {
 void* alloc_slot[SALLOC_MAX_SIZE] = {0}; // TODO: probably too many sizes...
 
 void sfree(void** p, int bytes, int tag) {
-    if (CONSP((lisp)p)) {
-        printf("sfree.CONS.error\n");
-        exit(1);
+    if (IS((lisp)p, symboll) || CONSP((lisp)p)) {
+        printf("sfree.ERROR: symbol or cons!\n");
+        exit(3);
     }
     if (bytes >= SALLOC_MAX_SIZE) {
         used_bytes -= bytes;
         return free(p);
     }
+    /// TODO: use sfree?
     if (IS((lisp)p, string)) {
         free(((string*)p)->p);
     }
+
     // store for reuse
     void* n = alloc_slot[bytes];
     *p = n;
@@ -396,7 +430,7 @@ void* salloc(int bytes) {
 void* myMalloc(int bytes, int tag) {
     ///printf("MALLOC: %d %s\n", tag, tag_name[tag]);
 
-    if (1) { // 830ms -> 770ms 5% faster if removed
+    if (1) { // 830ms -> 770ms 5% faster if removed, depends on the week!?
     used_count++;
     tag_count[tag]++;
     tag_bytes[tag] += bytes;
@@ -410,8 +444,9 @@ void* myMalloc(int bytes, int tag) {
 
     void* p = salloc(bytes);
 
-    // thunk optimization, they are given back shortly after created so need to be kept track of
-    if (tag == immediate_TAG) {
+    // immediate optimization, they are given back shortly after created so no need to be kept track of
+    // symbols are never freed, no need keep track of or GC
+    if (tag == immediate_TAG || tag == symboll_TAG) {
         ((lisp)p)->index = -1;
         return p;
     }
@@ -442,6 +477,7 @@ symboll* symbol_list = NULL;
 void mark(lisp x);
 void gc_conses();
 lisp mem_usage(int count);
+void syms_mark();
 
 static int blockGC = 0;
 
@@ -452,7 +488,7 @@ lisp gc(lisp* envp) {
     }
 
     // mark
-    mark(nil); mark((lisp)symbol_list); // TODO: remove?
+    syms_mark();
 
     //if (envp) { printf("ENVP %u=", (unsigned int)*envp); princ(*envp); terpri();}
     if (envp) mark(*envp);
@@ -714,18 +750,19 @@ void report_allocs(int verbose) {
     // print static sizes...
     if (verbose) {
         int tot = 0, b;
-        b = sizeof(tag_name); printf("tag_name: %d\n", b); tot += b;
-        b = sizeof(tag_size); printf("tag_size: %d\n", b); tot += b;
-        b = sizeof(tag_count); printf("tag_count: %d\n", b); tot += b;
-        b = sizeof(tag_bytes); printf("tag_bytes: %d\n", b); tot += b;
-        b = sizeof(tag_freed_count); printf("tag_freed_count: %d\n", b); tot += b;
-        b = sizeof(tag_freed_bytes); printf("tag_freed_bytes: %d\n", b); tot += b;
-        b = sizeof(allocs); printf("allocs: %d\n", b); tot += b;
-        b = sizeof(alloc_slot); printf("alloc_slot: %d\n", b); tot += b;
-        b = sizeof(symbol_list); printf("symbol_list: %d\n", b); tot += b; // TODO: it's wrong!
-        b = CONSES_BYTES; printf("conses: %d\n", b); tot += b;
-        b = sizeof(cons_used); printf("cons_used: %d\n", b); tot += b;
-        printf("=== TOTAL: %d\n", tot);
+        printf("\nSTATICS ");
+        b = sizeof(tag_name); printf("tag_name: %d ", b); tot += b;
+        b = sizeof(tag_size); printf("tag_size: %d ", b); tot += b;
+        b = sizeof(tag_count); printf("tag_count: %d ", b); tot += b;
+        b = sizeof(tag_bytes); printf("tag_bytes: %d ", b); tot += b;
+        b = sizeof(tag_freed_count); printf("tag_freed_count: %d ", b); tot += b;
+        b = sizeof(tag_freed_bytes); printf("tag_freed_bytes: %d ", b); tot += b;
+        b = sizeof(allocs); printf("allocs: %d ", b); tot += b;
+        b = sizeof(alloc_slot); printf("alloc_slot: %d ", b); tot += b;
+        b = sizeof(symbol_list); printf("symbol_list: %d ", b); tot += b; // TODO: it's wrong!
+        b = CONSES_BYTES; printf("conses: %d ", b); tot += b;
+        b = sizeof(cons_used); printf("cons_used: %d ", b); tot += b;
+        printf(" === TOTAL: %d\n", tot);
     }
 
     // TODO: this one doesn't make sense?
@@ -1097,20 +1134,206 @@ lisp find_symbol(char *s, int len) {
     return NULL;
 }
 
+lisp hashsym(lisp sym);
+
+inline lisp HASH(lisp s) { 
+    hashsym(s); // make sure have global binding in "symtable"
+    return s;
+}
+
 // linear search to intern the string
 // will always return same symbol
 lisp symbol(char* s) {
     if (!s) return nil;
     lisp sym = find_symbol(s, strlen(s));
-    if (sym) return sym;
-    return secretMkSymbol(s);
+    if (sym) return HASH(sym);
+    return HASH(secretMkSymbol(s));
 }
 
 // create a copy of partial string if not found
 lisp symbolCopy(char* start, int len) {
     lisp sym = find_symbol(start, len);
-    if (sym) return sym;
-    return secretMkSymbol(strndup(start, len));
+    if (sym) return HASH(sym);
+    return HASH(secretMkSymbol(strndup(start, len)));
+}
+
+// hash symbols
+// purpose is two fold:
+// 1. find symbol (to unique-ify the pointer for a name)
+// 2. lookup value of "global" symbol
+
+// ==== unmodified
+// lisp> (time (fibo 22))
+//   (23 . 28657)
+// lisp> (time (fibo 30))
+//   (1099 . 1346269)
+// === with hashsyms
+// lisp> (time (fibo 22))
+//   (19 . 28657)
+// lisp> (time (fibo 30))
+//   (914 . 1346269)
+// === summary
+// lisp> (- 1099 914)
+//   185
+// lisp> (/ 18500 914)
+//   20
+// !!!! 20% faster!!!
+
+// memory usage:
+// === unmodified
+// used_count=72 cons_count=354 free=19580 USED=16 bytes
+// === hashsym
+// used_count=72 cons_count=486 free=17320 USED=12 bytes  // SLOTS = 63
+// used_count=72 cons_count=486 free=17608 USED=12 bytes  // SLOTS = 31 (latest)
+// used_count=72 cons_count=486 free=17592 USED=12 bytes  // SLOTS = 31
+// used_count= 8 cons_count=510 free=17360 USED=12 bytes  // SLOTS = 2
+// 
+// (- 19580 17608) = 1972 bytes!!! WTF?
+// (* 31 16) = 496 bytes for hashsym array // 31 slots
+// (* (- 70 31) (+ 16 8)) = 936 bytes for hashsym allocs of linked list items
+// TOTAL: (+ 496 936) = 1432
+// however, we free (- 486 354) = 132 conses for the bindings (* 132 8) = 1056 bytes "saved" (or moved)
+//
+// (- 1972 1432) = 540 bytes unaccounted for... (extra strings?)
+//
+// we even saved 63*4 bytes (maybe in prim)? :=( ???? where they go?
+
+// TODO: remove more error strings
+// TODO: no need create binding for symbol that has no value (HASH function not to be called)
+// TODO: since never free some types (prim symbol (and symbol name) symbol value allocate from separate heap with no overhead)
+//                                   that is *8 bytes per allocation no other overhead (to get correct pointers)
+//                                   symbol name can be from another heap space, no alignment needed, allocate block?
+// 
+//    prim:  63 allocations of  1008 bytes, and still use  63 total  1008 bytes
+//    symbol:   7 allocations of    84 bytes, and still use   7 total    84 bytes
+
+// so if can merge prim with symbol_value could save 1008 bytes with the saved 1056 bytes concells that's even...
+
+// I'm still thinking that most global named variables == binding == symbol == primitive function, sot let's combine all!
+
+// -- untouched w task and stacksize=2048
+// used_count=73 cons_count=353 free=13620 USED=16 bytes stackMax=36 startMem=29384 startTask=20108 afterInit=14328
+// lisp> (time (fibo 22))
+//   (1980 . 28657)
+// lisp> (time (fibo 30))
+//   (94570 . 1346269)
+
+// -- hashsym w task and stacksize=2048
+// used_count=74 cons_count=486 free=12792 USED=12 bytes stackUsed=1642 startMem=29248 startTask=19876 afterInit=12892 
+// lisp> (time (fibo 22))
+//   (1840 . 28657)
+// lisp> (time (fibo 30))
+//   (86830 . 1346269)
+// used_count=74 cons_count=487 free=12172 USED=12 bytes stackUsed=26 startMem=29248 startTask=19876 afterInit=12892 
+//
+// ==> (- 1980 1840) = 140 (/ 14000 1980) = 7% faster
+// ==> (- 94570 86830) = 7740 (/ 774000 94570) = 8% faster
+// ==> (- 14328 12892) = 1436 bytes more memory used, (- 486 353) = 133 cons:es freed => (* 133 16) = 2128! bytes
+//     TOTAL: gained (- 2128 1436) = 692 bytes!
+// 
+// Drawback, each (non global) symbol creates global entry with binding to nil
+
+#define LARSONS_SALT 0
+
+unsigned long larsons_hash(const char* s) {
+    unsigned long h = LARSONS_SALT;
+    while (*s)
+        h = h * 101 + *(unsigned char*)s++;
+    return h;
+}
+
+typedef struct {
+    lisp symbol;
+    lisp value;
+    lisp next; // linked list of ones in same bucket
+    // padding as this struct is returned as a fake conss pointer (!) from getBind(), need align correctly
+    lisp extra; // TODO: what more to store for symbols??? get rid of PRIM type maybe!!!
+} symbol_val;
+
+// http://stackoverflow.com/questions/664014/what-integer-hash-function-are-good-that-accepts-an-integer-hash-key
+unsigned int int_hash(unsigned int x) {
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x);
+    return x;
+}
+
+// cannot be 2^N (because we're dealing with ascii and it's regularity in bits)
+//#define SYM_SLOTS 63
+#define SYM_SLOTS 31
+//#define SYM_SLOTS 2
+
+symbol_val* symbol_hash; // malloc to align correctly on esp8266
+
+// TODO: generlize for lisp type ARRAY and HASH!!!
+
+// returns "binding" "conss"
+lisp hashsym(lisp sym) {
+    if (!symbol_hash) {
+        symbol_hash = malloc(SYM_SLOTS * sizeof(symbol_val));
+        memset(symbol_hash, 0, SYM_SLOTS * sizeof(symbol_val));
+    }
+
+    unsigned long h = 0;
+    if (SYMP(sym)) h = (unsigned long)sym;
+    //else if (IS(sym, symboll)) h = larsons_hash(ATTR(symboll, sym, name)); // TODO: this is close to hashatoms effect
+    else if (IS(sym, symboll)) h = (unsigned int)sym; // TODO: ok for now, but should use  hashatoms?
+
+    h = h % SYM_SLOTS;
+    symbol_val* s = &symbol_hash[h];
+    while (s && s->symbol != sym) s = (symbol_val*)s->next;
+    if (s) {
+        return MKCONS(s);
+    } else {
+        // not there, insert first
+        symbol_val* prev = NULL;
+        if (symbol_hash[h].symbol) {
+            prev = malloc(sizeof(symbol_val));
+            memcpy(prev, &symbol_hash[h], sizeof(symbol_val));
+        }
+        symbol_val* nw = &symbol_hash[h];
+        nw->symbol = sym;
+        nw->value = nil;
+        nw->next = (lisp)prev;
+        return MKCONS(nw); // pretend it's a cons!
+    }
+}
+
+void syms_mark() {
+    int i;
+    for(i = 0; i < SYM_SLOTS; i++) {
+        symbol_val* s = &symbol_hash[i];
+        while (s && s->symbol) {
+            if (s->value) mark(s->value);
+            s = (symbol_val*)s->next;
+        }
+    }
+}
+
+// print the slots
+lisp syms(lisp f) {
+    int n = 0;
+    int i;
+    for(i = 0; i < SYM_SLOTS; i++) {
+        symbol_val* s = &symbol_hash[i];
+        if (!f) printf("%3d : ", i);
+        int nn = 0;
+        while (s && s->symbol) {
+            nn++;
+            if (!f) {
+                princ(s->symbol); putchar('='); princ(s->value); putchar(' ');
+            } else {
+                lisp env = nil;
+                // TODO: may run out of memory... GC?
+                funcall(f, list(s->symbol, s->value, mkint(i), END), &env, nil, 1);
+            }
+            s = (symbol_val*)s->next;
+        }
+        n += nn;
+        if (!f) printf(" --- #%d\n", nn);
+    }
+    
+    return mkint(n);
 }
 
 // TODO: not used??? this can be used to implement generators
@@ -1192,7 +1415,7 @@ void mark_deep(lisp next, int deep) {
     }
 }
 
-void mark(lisp x) {
+inline void mark(lisp x) {
     mark_deep(x, 1);
 }
 
@@ -1261,43 +1484,44 @@ lisp equal(lisp a, lisp b) {
     return t;
 }
 
-lisp _setqq(lisp* envp, lisp name, lisp v) {
+inline lisp getBind(lisp* envp, lisp name) {
     lisp bind = assoc(name, *envp);
-    if (bind) {
-      setcdr(bind, v);
-    } else {
-      *envp = cons( cons(name, v), *envp);
-    }
-    return v;
+    if (bind) return bind;
+    // check "global"
+    return hashsym(name);
 }
 
-lisp _setq(lisp* envp, lisp name, lisp v) {
-    lisp bind = assoc(name, *envp);
+// like setqq but returns binding
+inline lisp _setqqbind(lisp* envp, lisp name, lisp v) {
+    lisp bind = getBind(envp, name);
     if (!bind) {
-        // need to create binding first for self recursive functions
         bind = cons(name, nil);
         *envp = cons(bind, *envp);
     }
+    setcdr(bind, v);
+    return bind;
+}
+
+inline lisp _setqq(lisp* envp, lisp name, lisp v) {
+    _setqqbind(envp, name, nil);
+    return v;
+}
+// next line only needed because C99 can't get pointer to inlined function?
+lisp _setqq_(lisp* envp, lisp name, lisp v) { return _setqq(envp, name, v); }
+
+inline lisp _setq(lisp* envp, lisp name, lisp v) {
+    lisp bind = _setqqbind(envp, name, nil);
+    // eval using our own named binding to enable recursion
     v = eval(v, envp);
     setcdr(bind, v);
     return v;
 }
 
-lisp _set(lisp* envp, lisp name, lisp v) {
-    name = eval(name, envp);
-    lisp bind = assoc(name, *envp);
-    if (!bind) {
-        // need to create binding first for self recursive functions
-        bind = cons(name, nil);
-        *envp = cons(bind, *envp);
-    }
-    v = eval(v, envp);
-    setcdr(bind, v);
-    return v;
+inline lisp _set(lisp* envp, lisp name, lisp v) {
+    return _setq(envp, eval(name, envp), v);
 }
-
-lisp eval(lisp e, lisp* envp);
-lisp funcall(lisp f, lisp args, lisp* envp, lisp e, int noeval);
+// next line only needed because C99 can't get pointer to inlined function?
+lisp _set_(lisp* envp, lisp name, lisp v) { return _set(envp, name, v); }
 
 lisp apply(lisp f, lisp args) {
     // TODO: for now, block GC as args could have been built out of thin air!
@@ -1482,7 +1706,7 @@ static lisp reads(char *s) {
 //     ==  (write object :stream output-stream :escape t :pretty t)
 lisp princ(lisp x) {
     if (x == nil) {
-        printf("nil");
+        printf("nil"); fflush(stdout);
         return x;
     }
     int tag = TAG(x);
@@ -1529,8 +1753,8 @@ static int level = 0;
 
 static lisp funcapply(lisp f, lisp args, lisp* envp, int noeval);
 
-static lisp getvar(lisp e, lisp env) {
-    lisp v = assoc(e, env); 
+static inline lisp getvar(lisp e, lisp env) {
+    lisp v = getBind(&env, e);
     if (v) return cdr(v);
     printf("\n-- ERROR: Undefined symbol: "); princ(e); terpri();
     //printf("ENV= "); princ(env); terpri();
@@ -1562,7 +1786,7 @@ inline static lisp eval_hlp(lisp e, lisp* envp) {
         // maybe must search all list till find null, then can look on symbol :-(
         // but that's everytime? actually, not it's a lexical scope!
         // TODO: only replace if not found in ENV and is on an SYMBOL!
-        setcar(e, f);
+setcar(e, f);
     }
 
     return funcall(f, cdr(e), envp, e, 0);
@@ -1630,6 +1854,7 @@ lisp evalGC(lisp e, lisp* envp) {
 
     if (level >= MAX_STACK) {
         printf("%%Stack blowup! You're royally screwed! why does it still work?\n");
+        // TODO: print stack!!!
         #ifdef UNIX
           exit(1);
         #endif
@@ -1893,6 +2118,10 @@ lisp atrun(lisp* envp) {
     return bind;
 }
 
+//lisp imacs_(lisp name) {
+//    return mkint(imacs_main(0, NULL));
+//}
+
 #ifdef UNIX
 int xPortGetFreeHeapSize() { return -1; }
 #endif
@@ -1929,6 +2158,7 @@ lisp heap() {
     }
     return mkint(t);
 }
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // flash fielesystem
@@ -2148,57 +2378,90 @@ lisp scan(lisp s) {
 
 #endif
 
-lisp flashlisp(lisp x, lisp* buffer, int *n) {
+lisp serializeLisp(lisp x, lisp* buffer, int *n) {
     if (*n <= 2) return symbol("*FULL*");
-    // TODO: move string to flash?
-    // TODO: move (long) symbols to flash
-    if (!x || atomp(x)) return x;
+    if (!x || INTP(x) || SYMP(x)) return x;
+    if (IS(x, string)) {
+        // string is simple, just serialize a "heap" object with, pointer (to next cells)
+        int sz = sizeof(string);
+        memcpy(buffer, x, sz);
+        // point to next cell
+        lisp s = (lisp) &buffer[2];
+        buffer[1] = s;
+        int len = strlen(getstring(x));
+
+        int ilen = (len + 3) & ~3;
+        int iz = ilen / sizeof(lisp);
+        if (*n <= 2 + iz) return symbol("*FULL*");
+        memset(s, 0, ilen);
+        memcpy(s, getstring(x), len);
+        *n -= 2 + iz;
+        return (lisp)buffer;
+    }
+    //if (IS(x, symboll)) {
+        // - symboll (heap allocated symbols) are more difficult
+        //   as their pointer may be different each run
+        //   1. either lazy lookup every time, but that'll be slow
+        //   2. flash all (long) symbols as they are found! only RAM overhead for "value binding"
+        //   3. merge symbols with global "env" hashtable to fast lookup "global" function as we can't modify code
+    //}
     if (CONSP(x)) {
         *n -= 2;
         lisp* cr = buffer+2; int beforecar = *n;
-        buffer[0] = flashlisp(car(x), cr, n);
+        buffer[0] = serializeLisp(car(x), cr, n);
         int sz = beforecar - *n;
-        buffer[1] = flashlisp(cdr(x), cr + sz, n);
-        return (lisp)buffer;
+        buffer[1] = serializeLisp(cdr(x), cr + sz, n);
+        printf("CONSP! %x\n", (unsigned int) buffer);
+        return MKCONS(buffer);
     }
 
-    printf("*UnknownTag:%d*", TAG(x));
+    printf("flashit.ERROR: unsupported type: %d %s\n", TAG(x), tag_name[TAG(x)]);
     return symbol("*ERROR*");
 }
 
 #define MAXFLASHLISP 256
 
+lisp flashArray(lisp *serialized, int len) {
+    if (!CONSP(serialized) && !IS((lisp)serialized, string)) {
+        printf("flashArray.ERROR: wrong type %d\n", TAG((lisp)serialized));
+        return nil;
+    }
+    // patch up internal references
+    lisp* where = malloc(len * sizeof(lisp));
+    int i;
+
+    lisp* from = (lisp*)GETCONS(serialized);
+    for(i = 0; i < len; i++) {
+        lisp p = from[i];
+        int o = (lisp)(((unsigned int)p) & ~3) - (lisp)from; // does this work for all serialized types?
+        //printf("%2d : %d [%x] : ", i, o, (unsigned int)p); princ(p); terpri();
+
+        where[i] = p;
+        if (INTP(p) || SYMP(p))
+            ;
+        else if (o >= 0 && o < MAXFLASHLISP)
+            where[i] = (lisp)(where + o);
+    }
+
+    // TODO: pointer stupidity, works fine for CONS, string/heap, but not symboll?
+    unsigned int us = (unsigned int)serialized;
+    if (CONSP(*serialized)) return MKCONS(where);
+    return (lisp)((unsigned int)where | (us & 2));
+}
+
 lisp flashit(lisp x) {
-    lisp buffer[MAXFLASHLISP] = {0};
+    lisp* buffer = malloc(MAXFLASHLISP * sizeof(lisp)); // align as conss
+    memset(buffer, 0, MAXFLASHLISP * sizeof(lisp));
     int n = MAXFLASHLISP;
-    flashlisp(x, &buffer[0], &n);
+    lisp ret = serializeLisp(x, (lisp*)buffer, &n);
     int len = MAXFLASHLISP - n;
     if (!len) return x;
 
-    // patch up internal references
-    lisp where = 0; //nextFlashAddr();
-    int i;
-    printf("   : (\n");
-    for(i = 0; i < len; i++) {
-        lisp p = buffer[i];
-        int o = p - (lisp)&buffer[0];
-        if (o >= 0 && o < MAXFLASHLISP) { // flashcons reference
-            buffer[i] = where + o;
-            if (o == i+1) {
-                ; // nothing, just point to next cell
-            } else if (i % 2 == 1) { // cdr ptr
-                printf("%2d :  ...@%d\n", i, o);
-            } else { // car and new list
-                printf("%2d : (   @%d\n", i, o);
-            }
-        } else if (i % 2 == 0 || p) { // car position, or non-nil
-            printf("%2d :    ", i); princ(p); terpri();
-        } else { // nil at cdr
-            printf("%2d :        )\n", i);
-        }
-    }
-    // return flashArray(buffer, n);
-    return mkint(len);
+  printf("flashit.serialized [len=%d]: ", len); princ(ret); terpri();
+    lisp f = flashArray((lisp*)ret, len);
+  printf("flashit.flash [len=%d]: ", len); princ(f); terpri();
+    free(buffer);
+    return f;
 }
 
 // (flash) -> read
@@ -2332,9 +2595,9 @@ lisp lisp_init() {
 
     PRIM(read, 1, read_);
 
-    PRIM(set, -2, _set);
+    PRIM(set, -2, _set_);
     PRIM(setq, -2, _setq);
-    PRIM(setqq, -2, _setqq);
+    PRIM(setqq, -2, _setqq_);
     PRIM(quote, -1, _quote);
 
     // define
@@ -2364,6 +2627,8 @@ lisp lisp_init() {
     PRIM(stop, -1, stop);
     PRIM(atrun, -1, atrun);
 
+//    PRIM(imacs, -1, imacs_);
+    PRIM(syms, 0, syms);
     PRIM(fib, 1, fibb);
 
     //PRIM(readit, 0, readit);
@@ -2558,6 +2823,8 @@ void readeval(lisp* envp) {
             print_memory_info(2);
         } else if (strcmp(ln, "mem") == 0) {
             print_memory_info(1);
+        } else if (strcmp(ln, "exit") == 0 || strcmp(ln, "quit") == 0) {
+            exit(0);
         } else if (strlen(ln) > 0) { // lisp
             print_memory_info(0);
             run(ln, envp);
@@ -2642,6 +2909,9 @@ void load_library(lisp* envp) {
 //   20 instructions: 40 bytes
 // 
 // HOWEVER: If put in flash, maybe we don't need to care?
+// 
+//   picolisp: Only 20 of the 196 bytes stay in RAM (for the fibo symbol), the rest is moved off to ROM.
+//   esp-lisp: all conses can move "moved" to FLASH! (192 bytes!) + 4 bytes for the "function", must be RAM, plus symbol (none)
 }
 
 void testc(lisp* envp , char* whats, lisp val, lisp expect) {
