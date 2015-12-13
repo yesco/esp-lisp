@@ -229,9 +229,10 @@ void user_init(void) {
     setbuf(stdin, NULL);
     setbuf(stdout, NULL);
 
+    // this doesn't have enough stack!
     //lispTask(NULL); return;
+
     // for now run in a task, in order to allocate a bigger stack
-    //xTaskCreate(lispTask, (signed char *)"lispTask", 2048, &mainqueue, 2, NULL);
     // 1024 --> (fibo 13)
     // 2048 --> (fibo 30) ???
     xTaskCreate(lispTask, (signed char *)"lispTask", 2048, NULL, 2, NULL);

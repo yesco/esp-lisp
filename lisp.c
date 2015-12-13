@@ -141,6 +141,7 @@
 
 // forwards
 void gc_conses();
+int kbhit();
 
 // big value ok as it's used mostly no inside evaluation but outside at toplevel
 #define READLINE_MAXLEN 1024
@@ -1523,7 +1524,9 @@ lisp evalGC(lisp e, lisp* envp) {
             }
         }
         if (trace) terpri();
-        mygc(); 
+        mygc();
+        // check ctlr-t and maybe at queue (GC issue needs resolve first)
+        kbhit();
     }
 
     if (trace) { indent(level); printf("---> "); princ(e); terpri(); }
@@ -2347,8 +2350,23 @@ void idle(int lticks) {
     print_memory_info(0);
 }
 
-void print_status(long lticks) {
-    printf("\n[lticks: %ld] ", lticks); fflush(stdout);
+// tweenex style ctrl-t process status
+// freebsd10$ sleep 5 ... ctrl-t
+// load: 0.67  cmd: sleep 90628 [nanslp] 0.92r 0.00u 0.00s 0% 1464k
+// sleep: about 4 second(s) left out of the original 5
+// Could print "load" (ticks last second, keep time last tick)
+void print_status(long last_ticks, long ticks, int last_ms, int ms, int max_ticks_per_ms) {
+    int s = ms / 1000;
+    int m = s / 60; s -= m * 60;
+    // we approximate the load with ticks seen since "last"
+    int ld = 100 - (100 * (ticks - last_ticks)) / max_ticks_per_ms;
+    if (ld < 0) ld = 0;
+    if (ld > 99) ld = 99;
+    // %3.2f doesn't work on esp-open-rtos
+    printf("[%% %d:%02d load: 0.%02d dticks: %ld, last: %ld, ticks: %ld mtps = %d]\n",
+           m, s, 
+           ld, ticks - last_ticks, last_ticks, ticks, max_ticks_per_ms);
+    // TODO: print compressed stack!!! (and last call with number!)
 }
 
 // make an blocking mygetchar() that waits for kbhit() to be true 
@@ -2357,26 +2375,34 @@ static int thechar = 0;
 
 // TODO: call from gc, or more often?
 int kbhit() {
-    if (thechar) return thechar;
+    static int last_ms = 0;
+    static int last_ticks = 0;
+    static int max_ticks_per_ms = 1;
+    int ms = clock_ms();
 
-    idle(lisp_ticks++);
+    if (!thechar) {
+        thechar = nonblock_getch();
+        if (thechar < 0) thechar = 0;
+        if (thechar == 'T'-64) {
+            if (last_ms && last_ms != ms) {
+                int tms = (lisp_ticks - last_ticks) / (ms - last_ms);
+                if (tms > max_ticks_per_ms) max_ticks_per_ms = tms;
+            }
+        
+            print_status(last_ticks, lisp_ticks++, last_ms, ms, max_ticks_per_ms);
 
-    thechar = nonblock_getch();
-    if (thechar < 0) thechar = 0;
-    // tweenex style ctrl-t process status
-    // freebsd10$ sleep 5 ... ctrl-t
-    // load: 0.67  cmd: sleep 90628 [nanslp] 0.92r 0.00u 0.00s 0% 1464k
-    // sleep: about 4 second(s) left out of the original 5
-    // Could print "load" (ticks last second, keep time last tick)
-    if (thechar == 'T'-64) {
-        print_status(lisp_ticks);
-        thechar = 0;
+            last_ms = ms;
+            last_ticks = lisp_ticks;
+
+            thechar = 0;
+        }
     }
+
     return thechar;
 }
 
 int mygetchar() {
-    while(!kbhit()) {}
+    while (!kbhit()) idle(lisp_ticks++); 
     int c = thechar;
     thechar = 0;
     return c;
