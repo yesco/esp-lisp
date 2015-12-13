@@ -91,7 +91,7 @@ void print_memory_info(int verbose) {
         // The value returned is the high water mark in words (for example,
         // on a 32 bit machine a return value of 1 would indicate that
         // 4 bytes of stack were unused)
-        printf("stackMax=%d ", uxTaskGetStackHighWaterMark(NULL));
+        printf("stackMax=%lu ", uxTaskGetStackHighWaterMark(NULL));
         if (startMem) printf("startMem=%u ", startMem);
         if (startTask) printf("startTask=%u ", startTask);
         if (afterInit) printf("afterInit=%u ", afterInit);
