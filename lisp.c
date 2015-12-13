@@ -2790,6 +2790,8 @@ void readeval(lisp* envp) {
             print_memory_info(2);
         } else if (strcmp(ln, "mem") == 0) {
             print_memory_info(1);
+        } else if (strcmp(ln, "exit") == 0 || strcmp(ln, "quit") == 0) {
+            exit(0);
         } else if (strlen(ln) > 0) { // lisp
             print_memory_info(0);
             run(ln, envp);
