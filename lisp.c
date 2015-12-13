@@ -1114,16 +1114,19 @@ lisp symbolCopy(char* start, int len) {
 // used_count=72 cons_count=354 free=19580 USED=16 bytes
 // === hashsym
 // used_count=72 cons_count=486 free=17320 USED=12 bytes  // SLOTS = 63
+// used_count=72 cons_count=486 free=17608 USED=12 bytes  // SLOTS = 31 (latest)
 // used_count=72 cons_count=486 free=17592 USED=12 bytes  // SLOTS = 31
 // used_count= 8 cons_count=510 free=17360 USED=12 bytes  // SLOTS = 2
 // 
-// (- 19580 17592) = 1988 bytes!!! WTF?
+// (- 19580 17608) = 1972 bytes!!! WTF?
 // (* 31 16) = 496 bytes for hashsym array // 31 slots
-// (* (- 70 31) (+ 16 4)) = 780 bytes for hashsym allocs of linked list items
-// TOTAL: (+ 496 780) = 1276
+// (* (- 70 31) (+ 16 8)) = 936 bytes for hashsym allocs of linked list items
+// TOTAL: (+ 496 936) = 1432
 // however, we free (- 486 354) = 132 conses for the bindings (* 132 8) = 1056 bytes "saved" (or moved)
 //
-// (- 1988 1276) = 712 bytes unaccounted for...
+// (- 1972 1432) = 540 bytes unaccounted for... (extra strings?)
+//
+// we even saved 63*4 bytes (maybe in prim)? :=( ???? where they go?
 
 // TODO: remove more error strings
 // TODO: no need create binding for symbol that has no value (HASH function not to be called)
@@ -1135,6 +1138,8 @@ lisp symbolCopy(char* start, int len) {
 //    symbol:   7 allocations of    84 bytes, and still use   7 total    84 bytes
 
 // so if can merge prim with symbol_value could save 1008 bytes with the saved 1056 bytes concells that's even...
+
+// I'm still thinking that most global named variables == binding == symbol == primitive function, sot let's combine all!
 
 #define LARSONS_SALT 0
 
