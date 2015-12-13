@@ -1,7 +1,7 @@
 /* Distributed under Mozilla Public Licence 2.0   */
 /* https://www.mozilla.org/en-US/MPL/2.0/         */
 /* 2015-09-22 (C) Jonas S Karlsson, jsk@yesco.org */
-/* A mini "lisp machine" */
+/* A mini "lisp machine", main                    */
 
 // in speed it's comparable to compiled LUA
 // - simple "readline"
@@ -136,10 +136,11 @@
 // extended env list: next, value, symbol ("cons3")
 // extended env list: next, value, hashp/string/value (var sized, "cons3+")
 
-// TODO: move all defs into this:
 #include "lisp.h"
-
 #include "compat.h"
+
+// forwards
+void gc_conses();
 
 // big value ok as it's used mostly no inside evaluation but outside at toplevel
 #define READLINE_MAXLEN 1024
@@ -149,21 +150,11 @@ static int traceGC = 0;
 static int trace = 0;
 
 // use for list(mkint(1), symbol("foo"), mkint(3), END);
-lisp END = (lisp) -1;
-
-// global symbol variables, set in lisp_init()
-lisp nil = NULL;
-lisp t = NULL;
-lisp LAMBDA = NULL;
-lisp _FREE_ = NULL;
-
-lisp evalGC(lisp e, lisp *envp);
 
 // if non nil enables continous GC
 // TODO: remove
-int dogc = 0;
+static int dogc = 0;
 
-#define string_TAG 1
 typedef struct {
     char tag;
     char xx;
@@ -174,7 +165,6 @@ typedef struct {
 
 // conss name in order to be able to have a function named 'cons()'
 // these are special, not stored in the allocated array
-#define conss_TAG 2
 typedef struct {
     lisp car;
     lisp cdr;
@@ -203,12 +193,7 @@ typedef struct {
 // - http://www.esp8266.com/viewtopic.php?f=44&t=6574
 // - uses 20KB, so 12 KB available for JS code + vars...
 
-#define CONSP(x) ((((unsigned int)x) & 7) == 2)
-#define GETCONS(x) ((conss*)(((unsigned int)x) & ~2))
-#define MKCONS(x) ((lisp)(((unsigned int)x) | 2))
-
 // stored using inline pointer
-#define intint_TAG 3
 typedef struct {
     char tag;
     char xx;
@@ -217,12 +202,7 @@ typedef struct {
     int v;
 } intint; // TODO: handle overflow...
 
-#define INTP(x) ((((unsigned int)x) & 3) == 1)
-#define GETINT(x) (((signed int)x) >> 2)
-#define MKINT(i) ((lisp)((((unsigned int)(i)) << 2) | 1))
-
 // TODO: can we merge this and symbol, as all prim:s have name
-#define prim_TAG 4
 typedef struct {
     char tag;
     signed char n; // TODO: maybe could use xx tag above?
@@ -232,24 +212,7 @@ typedef struct {
     char* name; // TODO: could point to symbol, however "foo" in program will always be there as string
 } prim;
 
-// TODO: somehow a symbol is very similar to a conss cell.
-// it has two pointers, next/cdr, diff is first pointer points a naked string/not lisp string. Maybe it should?
-// TODO: if we make this a 2-cell or 1-cell lisp? or maybe symbols should have no property list or value, just use ENV for that
-#define symboll_TAG 5
-typedef struct symboll {
-    char tag;
-    char xx;
-    short index;
-
-    struct symboll* next;
-    char* name; // TODO should be char name[1]; // inline allocation!
-    // TODO: lisp value; // globla value (prims)
-} symboll;
-
-#define SYMP(x) ((((unsigned int)x) & 3) == 3)
-
 // Pseudo closure that is returned by if/progn and other construct that takes code, should handle tail recursion
-#define thunk_TAG 6
 typedef struct thunk {
     char tag;
     char xx;
@@ -260,7 +223,6 @@ typedef struct thunk {
     // This needs be same as immediate
 } thunk;
 
-#define immediate_TAG 7
 typedef struct immediate {
     char tag;
     char xx;
@@ -270,8 +232,6 @@ typedef struct immediate {
     lisp env;
     // This needs be same as thunk
 } immediate;
-
-#define func_TAG 8
 
 typedef struct func {
     char tag;
@@ -283,7 +243,6 @@ typedef struct func {
     // This needs be same as thunk
 } func;
 
-#define MAX_TAGS 16
 int tag_count[MAX_TAGS] = {0};
 int tag_bytes[MAX_TAGS] = {0};
 int tag_freed_count[MAX_TAGS] = {0};
@@ -291,13 +250,6 @@ int tag_freed_bytes[MAX_TAGS] = {0};
 
 char* tag_name[MAX_TAGS] = { "total", "string", "cons", "int", "prim", "symbol", "thunk", "immediate", "func", 0 };
 int tag_size[MAX_TAGS] = { 0, sizeof(string), sizeof(conss), sizeof(intint), sizeof(prim), sizeof(thunk), sizeof(immediate), sizeof(func) };
-
-#define TAG(x) ({ lisp _x = (x); INTP(_x) ? intint_TAG : CONSP(_x) ? conss_TAG : SYMP(_x) ? symboll_TAG : (_x ? ((lisp)_x)->tag : 0 ); })
-//#define TAG(x) ({ lisp _x = (x); INTP(_x) ? intint_TAG : CONSP(_x) ? conss_TAG : (_x ? ((lisp)_x)->tag : 0 ); })
-
-#define ALLOC(type) ({type* x = myMalloc(sizeof(type), type ## _TAG); x->tag = type ## _TAG; x;})
-#define ATTR(type, x, field) ((type*)x)->field
-#define IS(x, type) (x && TAG(x) == type ## _TAG)
 
 int gettag(lisp x) {
     return TAG(x);
@@ -403,7 +355,7 @@ void sfree(void** p, int bytes, int tag) {
     tag_freed_bytes[0] += bytes;
 }
 
-void* salloc(int bytes) {
+static void* salloc(int bytes) {
     void** p = alloc_slot[bytes];
     if (bytes >= SALLOC_MAX_SIZE) {
         used_bytes += bytes;
@@ -428,11 +380,15 @@ void* myMalloc(int bytes, int tag) {
     ///printf("MALLOC: %d %s\n", tag, tag_name[tag]);
 
     if (1) { // 830ms -> 770ms 5% faster if removed, depends on the week!?
-    used_count++;
-    tag_count[tag]++;
-    tag_bytes[tag] += bytes;
-    tag_count[0]++;
-    tag_bytes[0] += bytes;
+        if (tag > 0) {
+            tag_count[tag]++;
+            tag_bytes[tag] += bytes;
+        } else {
+            used_count++;
+        }
+
+        tag_count[0]++;
+        tag_bytes[0] += bytes;
     }
 
     // use for heap debugging, put in offending addresses
@@ -443,7 +399,7 @@ void* myMalloc(int bytes, int tag) {
 
     // immediate optimization, they are given back shortly after created so no need to be kept track of
     // symbols are never freed, no need keep track of or GC
-    if (tag == immediate_TAG || tag == symboll_TAG) {
+    if (tag <= 0 || tag == immediate_TAG || tag == symboll_TAG) {
         ((lisp)p)->index = -1;
         return p;
     }
@@ -465,16 +421,9 @@ void* myMalloc(int bytes, int tag) {
     return p;
 }
 
-void mark_clean() {
+static void mark_clean() {
     memset(used, 0, sizeof(used));
 }
-
-symboll* symbol_list = NULL;
-
-void mark(lisp x);
-void gc_conses();
-lisp mem_usage(int count);
-void syms_mark();
 
 static int blockGC = 0;
 
@@ -756,7 +705,6 @@ void report_allocs(int verbose) {
         b = sizeof(tag_freed_bytes); printf("tag_freed_bytes: %d ", b); tot += b;
         b = sizeof(allocs); printf("allocs: %d ", b); tot += b;
         b = sizeof(alloc_slot); printf("alloc_slot: %d ", b); tot += b;
-        b = sizeof(symbol_list); printf("symbol_list: %d ", b); tot += b; // TODO: it's wrong!
         b = CONSES_BYTES; printf("conses: %d ", b); tot += b;
         b = sizeof(cons_used); printf("cons_used: %d ", b); tot += b;
         printf(" === TOTAL: %d\n", tot);
@@ -785,6 +733,7 @@ int getint(lisp x) {
     return IS(x, intint) ? ATTR(intint, x, v) : 0;
 }
 
+// TODO: remove, just had an idea that pointers to function have special "pattern"
 unsigned int allprims = 0;
 //const char* const foobar = "FOOBAR";
 
@@ -815,25 +764,6 @@ lisp member(lisp e, lisp r) {
     return nil;
 }
 
-lisp symbol(char* s);
-lisp quote(lisp x);
-
-// User, macros, assume a "globaL" env variable implicitly, and updates it
-#define SET(sname, val) _setq(envp, sname, val)
-#define SETQc(sname, val) _setq(envp, symbol(#sname), val)
-#define SETQ(sname, val) _setq(envp, symbol(#sname), reads(#val))
-#define SETQQ(sname, val) _setq(envp, symbol(#sname), quote(reads(#val)))
-#define DEF(fname, sbody) _setq(envp, symbol(#fname), reads(#sbody))
-#define EVAL(what) eval(reads(#what), envp)
-#define PRINT(what) ({ princ(EVAL(what)); terpri(); })
-#define SHOW(what) ({ printf(#what " => "); princ(EVAL(what)); terpri(); })
-#define TEST(what, expect) testss(envp, #what, #expect)
-#define PRIM(fname, argn, fun) _setq(envp, symbol(#fname), mkprim(#fname, argn, fun))
-
-// echo '
-// (wget "yesco.org" "http://yesco.org/index.html" (lambda (t a v) (princ t) (cond (a (princ " ") (princ a) (princ "=") (princ v)(terpri)))))
-// ' | ./run
-
 lisp out(lisp pin, lisp value) {
     gpio_enable(getint(pin), GPIO_OUTPUT);
     gpio_write(getint(pin), getint(value));
@@ -848,6 +778,9 @@ lisp in(lisp pin) {
 //    gpio_set_interrupt(gpio, int_type);
 
 // wget functions...
+// echo '
+// (wget "yesco.org" "http://yesco.org/index.html" (lambda (t a v) (princ t) (cond (a (princ " ") (princ a) (princ "=") (princ v)(terpri)))))
+// ' | ./run
 
 static void f_emit_text(lisp callback, char* path[], char c) {
     maybeGC();
@@ -1050,289 +983,6 @@ lisp primapply(lisp ff, lisp args, lisp* envp, lisp all, int noeval) {
     return r;
 }
 
-// don't call this directly, call symbol
-lisp secretMkSymbol(char* s) {
-    symboll* r = ALLOC(symboll);
-    r->name = s;
-    // link it in first
-    r->next = (symboll*)symbol_list;
-    symbol_list = r;
-    return (lisp)r;
-}
-
-// in many basic lisp program most function names/symbols are 6 charcters or less
-// few special characters are used (- _ ? /), if other fancy character used (< + etc)
-//
-// first try, len <= 6:
-//   pointer = aaaaabbbbbcccccdddddeeeeefffff11 = 32 bits len <= 6 each char mapped to range 32 as per below
-// if len <=3 or any character out of range:
-//   pointer = aaaaaaabbbbbbbcccccccxxxx1111111 = 32 bits len <= 3 ascii characters 0-127
-//
-// encode char -> 0..31
-//    \0 _ a-z  -  ?  /   3ASCII
-//    0  1 2 27 28 29 30  31
-
-static lisp str2sym3ascii(char* s, int len) {
-    if (len > 3) return nil;
-    unsigned int c0 = len >= 1 ? s[0] : 0;
-    unsigned int c1 = (c0 && len >= 2) ? s[1] : 0;
-    unsigned int c2 = (c1 && len >= 3) ? s[2] : 0;
-    if (c0 < 0 || c1 < 0 || c2 < 0 || c0 > 127 || c1 > 127 || c2 > 127) return nil;
-    unsigned int n = (c0 << (32-1*7)) + (c1 << (32-2*7)) + (c2 << (32-3*7)) + 127;
-    return (lisp) n;
-}
-
-
-static lisp str2sym(char* s, int len) {
-    if (len > 6) return nil; // too long
-    if (len <= 3) return str2sym3ascii(s, len);
-    unsigned int n = 0;
-    int i;
-    for(i = 0; i < 6; i++) {
-        char c = (i < len) ? *(s+i) : 0;
-        int e = c == '-' ?  28 : c == '?' ? 29 : c == '/' ? 30 : c ? c - '_' + 1 : 0;
-        if (e < 0 || e > 32) return nil;
-        n = n * 32 + e;
-    }
-    return (lisp) ((n << 2) | 3);
-}
-
-static void sym2str(lisp s, char name[7]) {
-    if (!s) return;
-    // 3ASCII?
-    unsigned int n = (unsigned int) s;
-    if (n % 128 == 127) {
-        name[0] = (n >> (32-1*7)) % 128;
-        name[1] = (n >> (32-2*7)) % 128;
-        name[2] = (n >> (32-3*7)) % 128;
-        name[3] = 0;
-        return;
-    }
-    n /= 4;
-    int i;
-    for(i = 0; i < 6; i++) {
-        int e = n % 32;
-        int c = e == 28 ? '-' : e == 29 ? '?' : e == 30 ? '/' : e ? (e + '_' - 1) : 0;
-        name[6 - 1 - i] = c;
-        n /= 32;
-    }
-    name[6] = 0;
-}
-
-lisp find_symbol(char *s, int len) {
-    lisp e = str2sym(s, len);
-    if (e) return e;
-    symboll* cur = (symboll*)symbol_list;
-    while (cur) {
-        if (strncmp(s, cur->name, len) == 0 && strlen(cur->name) == len)
-	  return (lisp)cur;
-        cur = cur->next;
-    }
-    return NULL;
-}
-
-lisp hashsym(lisp sym);
-
-inline lisp HASH(lisp s) { 
-    hashsym(s); // make sure have global binding in "symtable"
-    return s;
-}
-
-// linear search to intern the string
-// will always return same symbol
-lisp symbol(char* s) {
-    if (!s) return nil;
-    lisp sym = find_symbol(s, strlen(s));
-    if (sym) return HASH(sym);
-    return HASH(secretMkSymbol(s));
-}
-
-// create a copy of partial string if not found
-lisp symbolCopy(char* start, int len) {
-    lisp sym = find_symbol(start, len);
-    if (sym) return HASH(sym);
-    return HASH(secretMkSymbol(strndup(start, len)));
-}
-
-// hash symbols
-// purpose is two fold:
-// 1. find symbol (to unique-ify the pointer for a name)
-// 2. lookup value of "global" symbol
-
-// ==== unmodified
-// lisp> (time (fibo 22))
-//   (23 . 28657)
-// lisp> (time (fibo 30))
-//   (1099 . 1346269)
-// === with hashsyms
-// lisp> (time (fibo 22))
-//   (19 . 28657)
-// lisp> (time (fibo 30))
-//   (914 . 1346269)
-// === summary
-// lisp> (- 1099 914)
-//   185
-// lisp> (/ 18500 914)
-//   20
-// !!!! 20% faster!!!
-
-// memory usage:
-// === unmodified
-// used_count=72 cons_count=354 free=19580 USED=16 bytes
-// === hashsym
-// used_count=72 cons_count=486 free=17320 USED=12 bytes  // SLOTS = 63
-// used_count=72 cons_count=486 free=17608 USED=12 bytes  // SLOTS = 31 (latest)
-// used_count=72 cons_count=486 free=17592 USED=12 bytes  // SLOTS = 31
-// used_count= 8 cons_count=510 free=17360 USED=12 bytes  // SLOTS = 2
-// 
-// (- 19580 17608) = 1972 bytes!!! WTF?
-// (* 31 16) = 496 bytes for hashsym array // 31 slots
-// (* (- 70 31) (+ 16 8)) = 936 bytes for hashsym allocs of linked list items
-// TOTAL: (+ 496 936) = 1432
-// however, we free (- 486 354) = 132 conses for the bindings (* 132 8) = 1056 bytes "saved" (or moved)
-//
-// (- 1972 1432) = 540 bytes unaccounted for... (extra strings?)
-//
-// we even saved 63*4 bytes (maybe in prim)? :=( ???? where they go?
-
-// TODO: remove more error strings
-// TODO: no need create binding for symbol that has no value (HASH function not to be called)
-// TODO: since never free some types (prim symbol (and symbol name) symbol value allocate from separate heap with no overhead)
-//                                   that is *8 bytes per allocation no other overhead (to get correct pointers)
-//                                   symbol name can be from another heap space, no alignment needed, allocate block?
-// 
-//    prim:  63 allocations of  1008 bytes, and still use  63 total  1008 bytes
-//    symbol:   7 allocations of    84 bytes, and still use   7 total    84 bytes
-
-// so if can merge prim with symbol_value could save 1008 bytes with the saved 1056 bytes concells that's even...
-
-// I'm still thinking that most global named variables == binding == symbol == primitive function, sot let's combine all!
-
-// -- untouched w task and stacksize=2048
-// used_count=73 cons_count=353 free=13620 USED=16 bytes stackMax=36 startMem=29384 startTask=20108 afterInit=14328
-// lisp> (time (fibo 22))
-//   (1980 . 28657)
-// lisp> (time (fibo 30))
-//   (94570 . 1346269)
-
-// -- hashsym w task and stacksize=2048
-// used_count=74 cons_count=486 free=12792 USED=12 bytes stackUsed=1642 startMem=29248 startTask=19876 afterInit=12892 
-// lisp> (time (fibo 22))
-//   (1840 . 28657)
-// lisp> (time (fibo 30))
-//   (86830 . 1346269)
-// used_count=74 cons_count=487 free=12172 USED=12 bytes stackUsed=26 startMem=29248 startTask=19876 afterInit=12892 
-//
-// ==> (- 1980 1840) = 140 (/ 14000 1980) = 7% faster
-// ==> (- 94570 86830) = 7740 (/ 774000 94570) = 8% faster
-// ==> (- 14328 12892) = 1436 bytes more memory used, (- 486 353) = 133 cons:es freed => (* 133 16) = 2128! bytes
-//     TOTAL: gained (- 2128 1436) = 692 bytes!
-// 
-// Drawback, each (non global) symbol creates global entry with binding to nil
-
-#define LARSONS_SALT 0
-
-unsigned long larsons_hash(const char* s) {
-    unsigned long h = LARSONS_SALT;
-    while (*s)
-        h = h * 101 + *(unsigned char*)s++;
-    return h;
-}
-
-typedef struct {
-    lisp symbol;
-    lisp value;
-    lisp next; // linked list of ones in same bucket
-    // padding as this struct is returned as a fake conss pointer (!) from getBind(), need align correctly
-    lisp extra; // TODO: what more to store for symbols??? get rid of PRIM type maybe!!!
-} symbol_val;
-
-// http://stackoverflow.com/questions/664014/what-integer-hash-function-are-good-that-accepts-an-integer-hash-key
-unsigned int int_hash(unsigned int x) {
-    x = ((x >> 16) ^ x) * 0x45d9f3b;
-    x = ((x >> 16) ^ x) * 0x45d9f3b;
-    x = ((x >> 16) ^ x);
-    return x;
-}
-
-// cannot be 2^N (because we're dealing with ascii and it's regularity in bits)
-//#define SYM_SLOTS 63
-#define SYM_SLOTS 31
-//#define SYM_SLOTS 2
-
-symbol_val* symbol_hash; // malloc to align correctly on esp8266
-
-// TODO: generlize for lisp type ARRAY and HASH!!!
-
-// returns "binding" "conss"
-lisp hashsym(lisp sym) {
-    if (!symbol_hash) {
-        symbol_hash = malloc(SYM_SLOTS * sizeof(symbol_val));
-        memset(symbol_hash, 0, SYM_SLOTS * sizeof(symbol_val));
-    }
-
-    unsigned long h = 0;
-    if (SYMP(sym)) h = (unsigned long)sym;
-    //else if (IS(sym, symboll)) h = larsons_hash(ATTR(symboll, sym, name)); // TODO: this is close to hashatoms effect
-    else if (IS(sym, symboll)) h = (unsigned int)sym; // TODO: ok for now, but should use  hashatoms?
-
-    h = h % SYM_SLOTS;
-    symbol_val* s = &symbol_hash[h];
-    while (s && s->symbol != sym) s = (symbol_val*)s->next;
-    if (s) {
-        return MKCONS(s);
-    } else {
-        // not there, insert first
-        symbol_val* prev = NULL;
-        if (symbol_hash[h].symbol) {
-            prev = malloc(sizeof(symbol_val));
-            memcpy(prev, &symbol_hash[h], sizeof(symbol_val));
-        }
-        symbol_val* nw = &symbol_hash[h];
-        nw->symbol = sym;
-        nw->value = nil;
-        nw->next = (lisp)prev;
-        return MKCONS(nw); // pretend it's a cons!
-    }
-}
-
-void syms_mark() {
-    int i;
-    for(i = 0; i < SYM_SLOTS; i++) {
-        symbol_val* s = &symbol_hash[i];
-        while (s && s->symbol) {
-            if (s->value) mark(s->value);
-            s = (symbol_val*)s->next;
-        }
-    }
-}
-
-// print the slots
-lisp syms(lisp f) {
-    int n = 0;
-    int i;
-    for(i = 0; i < SYM_SLOTS; i++) {
-        symbol_val* s = &symbol_hash[i];
-        if (!f) printf("%3d : ", i);
-        int nn = 0;
-        while (s && s->symbol) {
-            nn++;
-            if (!f) {
-                princ(s->symbol); putchar('='); princ(s->value); putchar(' ');
-            } else {
-                lisp env = nil;
-                // TODO: may run out of memory... GC?
-                funcall(f, list(s->symbol, s->value, mkint(i), END), &env, nil, 1);
-            }
-            s = (symbol_val*)s->next;
-        }
-        n += nn;
-        if (!f) printf(" --- #%d\n", nn);
-    }
-    
-    return mkint(n);
-}
-
 // TODO: not used??? this can be used to implement generators
 lisp mkthunk(lisp e, lisp env) {
     thunk* r = ALLOC(thunk);
@@ -1402,10 +1052,8 @@ void mark_deep(lisp next, int deep) {
         SET_USED(index);
         //printf("Marked %i deep %i :: p=%u ", index, deep, p); princ(p); terpri();
             
-        // follow pointers, recurse on one end, or set next for continue
-        if (IS(p, symboll)) { // shouldn't be needed?
-            next = (lisp)ATTR(symboll, (void*)p, next);
-        } else if (IS(p, thunk) || IS(p, immediate) || IS(p, func)) {
+        int tag = TAG(p);
+        if (tag == thunk_TAG || tag == immediate_TAG || tag == func_TAG) {
             mark_deep(ATTR(thunk, p, e), deep+1);
             next = ATTR(thunk, p, env);
         }
@@ -1713,7 +1361,7 @@ lisp princ(lisp x) {
     else if (tag == prim_TAG) printf("#%s", ATTR(prim, x, name));
     // for now we have two "symbolls" one inline in pointer and another heap allocated
     else if (SYMP(x)) { char s[7] = {0}; sym2str(x, s); printf("%s", s); }
-    else if (tag == symboll_TAG) printf("%s", ATTR(symboll, x, name));
+    else if (tag == symboll_TAG) printf("%s", symbol_getString(x));
     else if (tag == thunk_TAG) { printf("#thunk["); princ(ATTR(thunk, x, e)); putchar(']'); }
     else if (tag == immediate_TAG) { printf("#immediate["); princ(ATTR(thunk, x, e)); putchar(']'); }
     else if (tag == func_TAG) { printf("#func["); /* princ(ATTR(thunk, x, e)); */ putchar(']'); } // circular...
@@ -1838,7 +1486,6 @@ lisp mem_usage(int count) {
 
 int needGC() {
     if (cons_count < MAX_CONS * 0.2) return 1;
-    //printf("cons_count = %d and not need GC\n", cons_count);
     return (used_count < MAX_ALLOCS * 0.8) ? 0 : 1;
 }
 
@@ -2701,13 +2348,14 @@ void idle(int lticks) {
 }
 
 void print_status(long lticks) {
-    printf(" [lticks: %ld] ", lticks); fflush(stdout);
+    printf("\n[lticks: %ld] ", lticks); fflush(stdout);
 }
 
 // make an blocking mygetchar() that waits for kbhit() to be true 
 // and meanwhile calls idle() continously.
 static int thechar = 0;
 
+// TODO: call from gc, or more often?
 int kbhit() {
     if (thechar) return thechar;
 
@@ -2715,6 +2363,11 @@ int kbhit() {
 
     thechar = nonblock_getch();
     if (thechar < 0) thechar = 0;
+    // tweenex style ctrl-t process status
+    // freebsd10$ sleep 5 ... ctrl-t
+    // load: 0.67  cmd: sleep 90628 [nanslp] 0.92r 0.00u 0.00s 0% 1464k
+    // sleep: about 4 second(s) left out of the original 5
+    // Could print "load" (ticks last second, keep time last tick)
     if (thechar == 'T'-64) {
         print_status(lisp_ticks);
         thechar = 0;
@@ -2790,6 +2443,8 @@ void readeval(lisp* envp) {
             print_memory_info(2);
         } else if (strcmp(ln, "mem") == 0) {
             print_memory_info(1);
+        } else if (strcmp(ln, "exit") == 0 || strcmp(ln, "quit") == 0) {
+            exit(0);
         } else if (strlen(ln) > 0) { // lisp
             print_memory_info(0);
             run(ln, envp);
