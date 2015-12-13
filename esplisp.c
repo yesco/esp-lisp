@@ -91,7 +91,7 @@ void print_memory_info(int verbose) {
         // The value returned is the high water mark in words (for example,
         // on a 32 bit machine a return value of 1 would indicate that
         // 4 bytes of stack were unused)
-        printf("stackMax=%lu ", uxTaskGetStackHighWaterMark(NULL));
+        printf("stackUsed=%lu ", uxTaskGetStackHighWaterMark(NULL));
         if (startMem) printf("startMem=%u ", startMem);
         if (startTask) printf("startTask=%u ", startTask);
         if (afterInit) printf("afterInit=%u ", afterInit);
@@ -229,10 +229,12 @@ void user_init(void) {
     setbuf(stdin, NULL);
     setbuf(stdout, NULL);
 
-    lispTask(NULL); return;
+    //lispTask(NULL); return;
     // for now run in a task, in order to allocate a bigger stack
     //xTaskCreate(lispTask, (signed char *)"lispTask", 2048, &mainqueue, 2, NULL);
-    xTaskCreate(lispTask, (signed char *)"lispTask", 1024, NULL, 2, NULL);
+    // 1024 --> (fibo 13)
+    // 2048 --> (fibo 30) ???
+    xTaskCreate(lispTask, (signed char *)"lispTask", 2048, NULL, 2, NULL);
 }
 
 void exit(int e) {

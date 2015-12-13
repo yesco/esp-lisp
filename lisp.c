@@ -1208,6 +1208,28 @@ lisp symbolCopy(char* start, int len) {
 
 // I'm still thinking that most global named variables == binding == symbol == primitive function, sot let's combine all!
 
+// -- untouched w task and stacksize=2048
+// used_count=73 cons_count=353 free=13620 USED=16 bytes stackMax=36 startMem=29384 startTask=20108 afterInit=14328
+// lisp> (time (fibo 22))
+//   (1980 . 28657)
+// lisp> (time (fibo 30))
+//   (94570 . 1346269)
+
+// -- hashsym w task and stacksize=2048
+// used_count=74 cons_count=486 free=12792 USED=12 bytes stackUsed=1642 startMem=29248 startTask=19876 afterInit=12892 
+// lisp> (time (fibo 22))
+//   (1840 . 28657)
+// lisp> (time (fibo 30))
+//   (86830 . 1346269)
+// used_count=74 cons_count=487 free=12172 USED=12 bytes stackUsed=26 startMem=29248 startTask=19876 afterInit=12892 
+//
+// ==> (- 1980 1840) = 140 (/ 14000 1980) = 7% faster
+// ==> (- 94570 86830) = 7740 (/ 774000 94570) = 8% faster
+// ==> (- 14328 12892) = 1436 bytes more memory used, (- 486 353) = 133 cons:es freed => (* 133 16) = 2128! bytes
+//     TOTAL: gained (- 2128 1436) = 692 bytes!
+// 
+// Drawback, each (non global) symbol creates global entry with binding to nil
+
 #define LARSONS_SALT 0
 
 unsigned long larsons_hash(const char* s) {
