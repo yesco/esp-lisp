@@ -747,18 +747,19 @@ void report_allocs(int verbose) {
     // print static sizes...
     if (verbose) {
         int tot = 0, b;
-        b = sizeof(tag_name); printf("tag_name: %d\n", b); tot += b;
-        b = sizeof(tag_size); printf("tag_size: %d\n", b); tot += b;
-        b = sizeof(tag_count); printf("tag_count: %d\n", b); tot += b;
-        b = sizeof(tag_bytes); printf("tag_bytes: %d\n", b); tot += b;
-        b = sizeof(tag_freed_count); printf("tag_freed_count: %d\n", b); tot += b;
-        b = sizeof(tag_freed_bytes); printf("tag_freed_bytes: %d\n", b); tot += b;
-        b = sizeof(allocs); printf("allocs: %d\n", b); tot += b;
-        b = sizeof(alloc_slot); printf("alloc_slot: %d\n", b); tot += b;
-        b = sizeof(symbol_list); printf("symbol_list: %d\n", b); tot += b; // TODO: it's wrong!
-        b = CONSES_BYTES; printf("conses: %d\n", b); tot += b;
-        b = sizeof(cons_used); printf("cons_used: %d\n", b); tot += b;
-        printf("=== TOTAL: %d\n", tot);
+        printf("\nSTATICS ");
+        b = sizeof(tag_name); printf("tag_name: %d ", b); tot += b;
+        b = sizeof(tag_size); printf("tag_size: %d ", b); tot += b;
+        b = sizeof(tag_count); printf("tag_count: %d ", b); tot += b;
+        b = sizeof(tag_bytes); printf("tag_bytes: %d ", b); tot += b;
+        b = sizeof(tag_freed_count); printf("tag_freed_count: %d ", b); tot += b;
+        b = sizeof(tag_freed_bytes); printf("tag_freed_bytes: %d ", b); tot += b;
+        b = sizeof(allocs); printf("allocs: %d ", b); tot += b;
+        b = sizeof(alloc_slot); printf("alloc_slot: %d ", b); tot += b;
+        b = sizeof(symbol_list); printf("symbol_list: %d ", b); tot += b; // TODO: it's wrong!
+        b = CONSES_BYTES; printf("conses: %d ", b); tot += b;
+        b = sizeof(cons_used); printf("cons_used: %d ", b); tot += b;
+        printf(" === TOTAL: %d\n", tot);
     }
 
     // TODO: this one doesn't make sense?
@@ -1237,12 +1238,17 @@ unsigned int int_hash(unsigned int x) {
 #define SYM_SLOTS 31
 //#define SYM_SLOTS 2
 
-symbol_val symbol_hash[SYM_SLOTS] = {{0}};
+symbol_val* symbol_hash; // malloc to align correctly on esp8266
 
 // TODO: generlize for lisp type ARRAY and HASH!!!
 
 // returns "binding" "conss"
 lisp hashsym(lisp sym) {
+    if (!symbol_hash) {
+        symbol_hash = malloc(SYM_SLOTS * sizeof(symbol_val));
+        memset(symbol_hash, 0, SYM_SLOTS * sizeof(symbol_val));
+    }
+
     unsigned long h = 0;
     if (SYMP(sym)) h = (unsigned long)sym;
     //else if (IS(sym, symboll)) h = larsons_hash(ATTR(symboll, sym, name)); // TODO: this is close to hashatoms effect
@@ -1280,20 +1286,26 @@ void syms_mark() {
 }
 
 // print the slots
-lisp syms() {
+lisp syms(lisp f) {
     int n = 0;
     int i;
     for(i = 0; i < SYM_SLOTS; i++) {
         symbol_val* s = &symbol_hash[i];
-        printf("%3d : ", i);
+        if (!f) printf("%3d : ", i);
         int nn = 0;
         while (s && s->symbol) {
             nn++;
-            princ(s->symbol); putchar('='); princ(s->value); putchar(' ');
+            if (!f) {
+                princ(s->symbol); putchar('='); princ(s->value); putchar(' ');
+            } else {
+                lisp env = nil;
+                // TODO: may run out of memory... GC?
+                funcall(f, list(s->symbol, s->value, mkint(i), END), &env, nil, 1);
+            }
             s = (symbol_val*)s->next;
         }
         n += nn;
-        printf(" --- #%d\n", nn);
+        if (!f) printf(" --- #%d\n", nn);
     }
     
     return mkint(n);
@@ -1486,9 +1498,6 @@ inline lisp _set(lisp* envp, lisp name, lisp v) {
 // next line only needed because C99 can't get pointer to inlined function?
 lisp _set_(lisp* envp, lisp name, lisp v) { return _set(envp, name, v); }
 
-lisp eval(lisp e, lisp* envp);
-lisp funcall(lisp f, lisp args, lisp* envp, lisp e, int noeval);
-
 lisp apply(lisp f, lisp args) {
     // TODO: for now, block GC as args could have been built out of thin air!
     blockGC++; 
@@ -1672,7 +1681,7 @@ static lisp reads(char *s) {
 //     ==  (write object :stream output-stream :escape t :pretty t)
 lisp princ(lisp x) {
     if (x == nil) {
-        printf("nil");
+        printf("nil"); fflush(stdout);
         return x;
     }
     int tag = TAG(x);
@@ -1820,6 +1829,7 @@ lisp evalGC(lisp e, lisp* envp) {
 
     if (level >= MAX_STACK) {
         printf("%%Stack blowup! You're royally screwed! why does it still work?\n");
+        // TODO: print stack!!!
         #ifdef UNIX
           exit(1);
         #endif

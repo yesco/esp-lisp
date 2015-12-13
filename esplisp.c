@@ -225,6 +225,9 @@ void user_init(void) {
     startMem = lastMem = xPortGetFreeHeapSize();
 
     sdk_uart_div_modify(0, UART_CLK_FREQ / 115200);
+    
+    setbuf(stdin, NULL);
+    setbuf(stdout, NULL);
 
     lispTask(NULL); return;
     // for now run in a task, in order to allocate a bigger stack
