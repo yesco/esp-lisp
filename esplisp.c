@@ -26,9 +26,16 @@
 
 #include "lisp.h"
 
+int startTask, afterInit;
+
 void lispTask(void *pvParameters)
 {
+    startTask = xPortGetFreeHeapSize();
+
     lisp env = lisp_init();
+
+    afterInit = xPortGetFreeHeapSize();
+
     lisp_run(&env);
     return;
 
@@ -62,10 +69,10 @@ void recvTask(void *pvParameters)
     }
 }
 
-static xQueueHandle mainqueue;
 
 unsigned int lastTick = 0;
 int lastMem = 0;
+int startMem = 0;
 
 void print_memory_info(int verbose) {
     report_allocs(verbose);
@@ -74,11 +81,20 @@ void print_memory_info(int verbose) {
     int ms = (tick - lastTick) / portTICK_RATE_MS;
     int mem = xPortGetFreeHeapSize();
     if (verbose == 2)
-        printf("=== free=%u USED=%u bytes TIME=%d ms ===\n", mem, lastMem-mem, ms);
+        printf("=== free=%u USED=%u bytes TIME=%d ms, startMem=%u ===\n", mem, lastMem-mem, ms, startMem);
     else if (verbose == 1) {
         if (mem) printf("free=%u ", mem);
         if (lastMem-mem) printf("USED=%u bytes ", lastMem-mem);
         if (ms) printf("TIME=%d ms ", ms);
+        // http://www.freertos.org/uxTaskGetStackHighWaterMark.html
+        //   uxTaskGetStackHighWaterMark( NULL );
+        // The value returned is the high water mark in words (for example,
+        // on a 32 bit machine a return value of 1 would indicate that
+        // 4 bytes of stack were unused)
+        printf("stackMax=%d ", uxTaskGetStackHighWaterMark(NULL));
+        if (startMem) printf("startMem=%u ", startMem);
+        if (startTask) printf("startTask=%u ", startTask);
+        if (afterInit) printf("afterInit=%u ", afterInit);
         printf("\n");
     }
     lastTick = tick;
@@ -127,18 +143,93 @@ int clock_ms() {
     return xTaskGetTickCount() * 10;
 }
 
+// //#define configMINIMAL_STACK_SIZE	( ( unsigned short )256 )
+// #define configMINIMAL_STACK_SIZE	( ( unsigned short )2048 )
+// === TOTAL: 5192
+//
+// used_count=72 cons_count=354 free=21468 USED=12 bytes startMem=27412 startTask=27276 startTask=21520 
+//
+// lisp> (- 27276 21520)
+//    5756
+//
+// lisp> (setq a (lambda (n) (princ n) (terpri) (+ 1 (a (+ 1 n
+// ... 37 crash
+
+// #define configMINIMAL_STACK_SIZE	( ( unsigned short )256 )
+// === TOTAL: 5192
+//
+// used_count=72 cons_count=354 free=28636 USED=12 bytes startMem=34580 startTask=34444 startTask=28688 
+//
+// lisp> (- 34580 28688)
+//    5892
+//
+// lisp> (setq a (lambda (n) (princ n) (terpri) (+ 1 (a (+ 1 n
+// ... 37 crash
+//
+// (/ (- 28688 21520) (- 2048 256))
+
+// //#define configTOTAL_HEAP_SIZE		( ( size_t ) ( 32 * 1024 ) )
+// #define configTOTAL_HEAP_SIZE		( ( size_t ) ( 64 * 1024 ) )
+//
+// used_count=72 cons_count=354 free=28636 USED=12 bytes startMem=34580 startTask=34444 startTask=28688 
+
+// // #define configMINIMAL_STACK_SIZE	( ( unsigned short )256 )
+// #define configMINIMAL_STACK_SIZE	( ( unsigned short )128 )
+// === TOTAL: 5192
+// used_count=72 cons_count=355 free=29148 USED=12 bytes startMem=35092 startTask=34956 startTask=29200 
+
+// #define configMINIMAL_STACK_SIZE	( ( unsigned short )0 )
+// used_count=72 cons_count=354 free=29656 USED=12 bytes startMem=35600 startTask=35464 startTask=29708
+// a recurse only 7 levels, (fib 40) no problem...
+//
+// used_count=72 cons_count=355 free=31700 USED=12 bytes startMem=37644 startTask=37508 startTask=31752
+//
+// used_count=72 cons_count=355 free=31716 USED=12 bytes startMem=37660 startTask=37524 startTask=31768
+
+// use a single task 2048 space
+// used_count=72 cons_count=354 free=22372 USED=16 bytes startMem=37628 startTask=28216 startTask=22460
+
+// removed mainqueue
+// used_count=72 cons_count=355 free=22516 USED=16 bytes startMem=37636 startTask=28360 startTask=22604 
+
+// (- 31768 22460)
+
+// stack = 2048
+// used_count=73 cons_count=333 free=21896 USED=16 bytes startMem=37636 startTask=28360 startTask=22604 
+
+// stack = 1024
+// used_count=72 cons_count=354 free=26612 USED=16 bytes startMem=37636 startTask=32456 startTask=26700 
+
+// stack = 512
+// used_count=72 cons_count=354 free=28660 USED=16 bytes startMem=37636 startTask=34504 startTask=28748
+// a recurse -> 52 deep
+
+//(- 31768 28748) = 3020 cost of a task of 512 bytes
+//(- 31768 22604) = 9164 cost of a task with 2048 bytes
+//
+//(- 37636 31768) = 5668
+//(- 37636 34504) = 3132 for  512
+//(- 37636 32456) = 5180 for 1024 + (- 5180 3132) = 2048
+//(- 37636 28360) = 9276 for 2048 + (- 9276 5180) = 4096
+
+// stack = 0
+// crash!
+
+// esp-open-rtos/FreeRTOS/Source/include/FreeRTOSConfig.h
+//
+// issue:
+//   https://github.com/SuperHouse/esp-open-rtos/issues/75
 
 void user_init(void) {
     lastTick = xTaskGetTickCount();
-    lastMem = xPortGetFreeHeapSize();
+    startMem = lastMem = xPortGetFreeHeapSize();
 
     sdk_uart_div_modify(0, UART_CLK_FREQ / 115200);
 
-    mainqueue = xQueueCreate(10, sizeof(uint32_t));
-
+    lispTask(NULL); return;
     // for now run in a task, in order to allocate a bigger stack
-    xTaskCreate(lispTask, (signed char *)"lispTask", 2048, &mainqueue, 2, NULL);
-    // xTaskCreate(recvTask, (signed char *)"recvTask", 256, &mainqueue, 2, NULL);
+    //xTaskCreate(lispTask, (signed char *)"lispTask", 2048, &mainqueue, 2, NULL);
+    xTaskCreate(lispTask, (signed char *)"lispTask", 1024, NULL, 2, NULL);
 }
 
 void exit(int e) {
