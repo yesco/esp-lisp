@@ -385,7 +385,6 @@ void* myMalloc(int bytes, int tag) {
         if (tag > 0) {
             tag_count[tag]++;
             tag_bytes[tag] += bytes;
-        } else {
             used_count++;
         }
 
@@ -599,7 +598,7 @@ lisp cons(lisp a, lisp b) {
     }
     // TODO: this is updating counter in myMalloc stats, maybe refactor...
     if (0) { // TOOD: enable this and it becomes very slow!!!!??? why compared to myMalloc shouldn't????
-    used_count++;
+    used_count++; // not correct as cons are different...
     tag_count[conss_TAG]++;
     tag_bytes[conss_TAG] += sizeof(conss);
     tag_count[0]++;
@@ -2413,29 +2412,33 @@ void print_status(long last_ticks, long ticks, int last_ms, int ms, int max_tick
 // and meanwhile calls idle() continously.
 static int thechar = 0;
 
-// TODO: call from gc, or more often?
+// called from idle in tight loop, also called each time we gc() during execution
 int kbhit() {
     static int last_ms = 0;
     static int last_ticks = 0;
     static int max_ticks_per_ms = 1;
+
     int ms = clock_ms();
+    int update = 0;
+    // update every s
+    if (ms - last_ms > 1000) {
+        int tms = (lisp_ticks - last_ticks) / (ms - last_ms);
+        if (tms > max_ticks_per_ms) max_ticks_per_ms = tms;
+        update = 1;
+    }
 
     if (!thechar) {
         thechar = nonblock_getch();
         if (thechar < 0) thechar = 0;
         if (thechar == 'T'-64) {
-            if (last_ms && last_ms != ms) {
-                int tms = (lisp_ticks - last_ticks) / (ms - last_ms);
-                if (tms > max_ticks_per_ms) max_ticks_per_ms = tms;
-            }
-        
             print_status(last_ticks, lisp_ticks++, last_ms, ms, max_ticks_per_ms);
-
-            last_ms = ms;
-            last_ticks = lisp_ticks;
-
             thechar = 0;
         }
+    }
+
+    if (update) {
+        last_ms = ms;
+        last_ticks = lisp_ticks;
     }
 
     return thechar;
