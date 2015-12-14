@@ -142,6 +142,7 @@
 // forwards
 void gc_conses();
 int kbhit();
+lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval);
 
 // big value ok as it's used mostly no inside evaluation but outside at toplevel
 #define READLINE_MAXLEN 1024
@@ -485,18 +486,24 @@ lisp gc(lisp* envp) {
 ////////////////////////////////////////////////////////////////////////////////
 // string
 
+// only have this in order to keep track of allocations
+char* my_strndup(char* s, int len) {
+    int l = strlen(s);
+    if (l > len) l = len;
+    char* r = myMalloc(len + 1, -1);
+    strncpy(r, s, len);
+    return r;
+}
+
 // make a string from POINTER (inside other string) by copying LEN bytes
 lisp mklenstring(char* s, int len) {
     string* r = ALLOC(string);
-    r->p = strndup(s, len); // TODO: how to deallocate?
+    r->p = my_strndup(s, len); // TODO: how to deallocate?
     return (lisp)r;
 }
 
 lisp mkstring(char* s) {
-    string* r = ALLOC(string);
-    // TODO: use salloc()
-    r->p = strdup(s); // what is s is in flash or program memory no need copy or deallocate...
-    return (lisp)r;
+    return mklenstring(s, strlen(s));
 }
 
 char* getstring(lisp s) {
@@ -1169,23 +1176,17 @@ inline lisp _set(lisp* envp, lisp name, lisp v) {
 // next line only needed because C99 can't get pointer to inlined function?
 lisp _set_(lisp* envp, lisp name, lisp v) { return _set(envp, name, v); }
 
+lisp reduce_immediate(lisp x);
+
+// not apply does not evaluate it's arguments
 lisp apply(lisp f, lisp args) {
     // TODO: for now, block GC as args could have been built out of thin air!
     blockGC++; 
 
-    lisp e = nil;
+    lisp e = nil; // dummy
     // TODO: like eval push on stack so can GC safely?
-    lisp x = funcall(f, args, &e, nil, 1);
-    // TODO: hmmm, combine/use in eval_hlp
-    while (x && TAG(x) == immediate_TAG) {
-        lisp tofree = x;
-        x = evalGC(ATTR(thunk, x, e), &ATTR(thunk, x, env));
-        // immediates are immediately consumed after evaluation, so they can be free:d directly
-        // TODO: make this go away?
-        tofree->tag = 0;
-        sfree((void*)tofree, sizeof(thunk), immediate_TAG);
-        used_count--; // TODO: move to sfree?
-    }
+    lisp x = callfunc(f, args, &e, nil, 1);
+    x = reduce_immediate(x);
 
     blockGC--;
     return x;
@@ -1266,10 +1267,23 @@ static int readInt(int v) {
 static lisp readString() {
     char* start = input;
     char c = next();
-    while (c && c != '"') c = next();
+    while (c && c != '"') {
+        if (c == '\\') c = next();
+        c = next();
+    }
     
     int len = input - start - 1;
-    return mklenstring(start, len);
+    lisp r = mklenstring(start, len);
+    // remove '\', this may waste a byte or two if any
+    char* from = getstring(r);
+    char* to = from;
+    while (*from) {
+        if (*from == '\\') from++;
+        *to = *from; // !
+        from++; to++;
+    }
+    *to = 0;
+    return r;
 }
 
 static lisp readSymbol(char c, int o) {
@@ -1350,23 +1364,30 @@ static lisp reads(char *s) {
 //                (write-char #\space output-stream))
 // (pprint object output-stream)
 //     ==  (write object :stream output-stream :escape t :pretty t)
-lisp princ(lisp x) {
-    if (x == nil) {
-        printf("nil"); fflush(stdout);
-        return x;
-    }
+lisp princ_hlp(lisp x, int readable) {
     int tag = TAG(x);
     // simple one liners
-    if (tag == string_TAG) printf("%s", ATTR(string, x, p));
+    if (!tag) printf("nil");
     else if (tag == intint_TAG) printf("%d", getint(x));
     else if (tag == prim_TAG) printf("#%s", ATTR(prim, x, name));
     // for now we have two "symbolls" one inline in pointer and another heap allocated
     else if (SYMP(x)) { char s[7] = {0}; sym2str(x, s); printf("%s", s); }
     else if (tag == symboll_TAG) printf("%s", symbol_getString(x));
+    // can't be made reable really unless "reveal" internal pointer
     else if (tag == thunk_TAG) { printf("#thunk["); princ(ATTR(thunk, x, e)); putchar(']'); }
     else if (tag == immediate_TAG) { printf("#immediate["); princ(ATTR(thunk, x, e)); putchar(']'); }
-    else if (tag == func_TAG) { printf("#func["); /* princ(ATTR(thunk, x, e)); */ putchar(']'); } // circular...
-    // longer blocks
+    else if (tag == func_TAG) { printf("#func["); princ(ATTR(thunk, x, e)); putchar(']'); } // circular...
+    // string
+    else if (tag == string_TAG) {
+        if (readable) putchar('"');
+        char* c = ATTR(string, x, p);
+        while (*c) {
+            if (readable && *c == '\"') putchar('\\');
+            putchar(*c++);
+        }
+        if (readable) putchar('"');
+    }
+    // cons
     else if (tag == conss_TAG) {
         putchar('(');
         princ(car(x));
@@ -1388,6 +1409,20 @@ lisp princ(lisp x) {
     // TODO: check performance implications
     fflush(stdout); 
     return x;
+}
+
+lisp princ(lisp x) {
+    return princ_hlp(x, 0);
+}
+// print in readable format
+lisp prin1(lisp x) {
+    return princ_hlp(x, 1);
+}
+
+lisp print(lisp x) {
+    lisp r = prin1(x);
+    terpri();
+    return r;
 }
 
 static void indent(int n) {
@@ -1432,10 +1467,26 @@ inline static lisp eval_hlp(lisp e, lisp* envp) {
         // maybe must search all list till find null, then can look on symbol :-(
         // but that's everytime? actually, not it's a lexical scope!
         // TODO: only replace if not found in ENV and is on an SYMBOL!
-setcar(e, f);
+        setcar(e, f);
     }
 
-    return funcall(f, cdr(e), envp, e, 0);
+    // This may return a immediate, this allows tail recursion evalGC will reduce it.
+    return callfunc(f, cdr(e), envp, e, 0);
+}
+
+lisp reduce_immediate(lisp x) {
+    while (x && IS(x, immediate)) {
+        lisp tofree = x;
+        if (trace) // make it visible
+            x = evalGC(ATTR(thunk, x, e), &ATTR(thunk, x, env));
+        else
+            x = eval_hlp(ATTR(thunk, x, e), &ATTR(thunk, x, env));
+        // immediates are immediately consumed after evaluation, so they can be free:d directly
+        tofree->tag = 0;
+        sfree((void*)tofree, sizeof(thunk), immediate_TAG);
+        used_count--;
+    }
+    return x;
 }
 
 static void mymark(lisp x) {
@@ -1535,19 +1586,7 @@ lisp evalGC(lisp e, lisp* envp) {
     if (trace) print_env(*envp);
 
     lisp r = eval_hlp(e, envp);
-    while (r && TAG(r) == immediate_TAG) {
-        lisp tofree = r;
-	// TODO: figure out if thunk->env should be thunk->envp ???
-        if (trace) // make it visible
-            r = evalGC(ATTR(thunk, r, e), &ATTR(thunk, r, env));
-        else
-            r = eval_hlp(ATTR(thunk, r, e), &ATTR(thunk, r, env));
-        // immediates are immediately consumed after evaluation, so they can be free:d directly
-        // TODO: make this go away?
-        tofree->tag = 0;
-        sfree((void*)tofree, sizeof(thunk), immediate_TAG);
-        used_count--; // TODO: move to sfree?
-    }
+    r = reduce_immediate(r);
 
     --level;
     if (trace) { indent(level); princ(r); printf(" <--- "); princ(e); terpri(); }
@@ -1563,8 +1602,6 @@ lisp iff(lisp* envp, lisp exp, lisp thn, lisp els) {
     // but we pass ENV on so it should be safe..., it'll mark it!
     return evalGC(exp, envp) ? mkimmediate(thn, *envp) : mkimmediate(els, *envp);
 }
-
-lisp progn(lisp* envp, lisp all);
 
 lisp cond(lisp* envp, lisp all) {
     while (all) {
@@ -1674,7 +1711,7 @@ lisp funcapply(lisp f, lisp args, lisp* envp, int noeval) {
 
 // TODO: evals it's arguments, shouldn't... 
 // TODO: prim apply/funcapply may return immediate... (so users should call apply instead)
-lisp funcall(lisp f, lisp args, lisp* envp, lisp e, int noeval) {
+lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval) {
     int tag = TAG(f);
     if (tag == prim_TAG) return primapply(f, args, envp, e, noeval);
     if (tag == func_TAG) return funcapply(f, args, envp, noeval);
@@ -2215,6 +2252,8 @@ lisp lisp_init() {
     PRIM(not, 1, not);
     PRIM(terpri, 0, terpri);
     PRIM(princ, 1, princ);
+    PRIM(prin1, 1, prin1);
+    PRIM(print, 1, print);
 
     PRIM(cons, 2, cons);
     PRIM(car, 1, car_);
@@ -2301,12 +2340,13 @@ void hello() {
 }
 
 void help(lisp* envp) {
-    printf("\n\nDocs - https://github.com/yesco/esp-lisp/\n");
-    printf("ENV: ");
-    PRINT((mapcar car (env)));
+    hello();
+    printf("SYMBOLS: ");
+    PRINT((syms (lambda (x) (princ x) (princ " "))));
     terpri();
-    printf("Commands: hello/help/trace on/trace off/gc on/gc off/wifi SSID PSWD/wget SERVER URL/mem EXPR\n");
+    printf("COMMANDS: hello/help/trace on/trace off/gc on/gc off/wifi SSID PSWD/wget SERVER URL/mem EXPR/quit/exit\n");
     terpri();
+    printf("CTRL-T: shows current time/load status\n");
 }
 
 void run(char* s, lisp* envp) {

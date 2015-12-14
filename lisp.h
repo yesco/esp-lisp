@@ -17,7 +17,7 @@ typedef struct {
 #define func_TAG 8
 #define MAX_TAGS 16
 
-#define TAG(x) ({ lisp _x = (x); INTP(_x) ? intint_TAG : CONSP(_x) ? conss_TAG : SYMP(_x) ? symboll_TAG : (_x ? ((lisp)_x)->tag : 0 ); })
+#define TAG(x) ({ lisp _x = (x); !_x ? 0 : INTP(_x) ? intint_TAG : CONSP(_x) ? conss_TAG : SYMP(_x) ? symboll_TAG : ((lisp)_x)->tag; })
 #define ALLOC(type) ({type* x = myMalloc(sizeof(type), type ## _TAG); x->tag = type ## _TAG; x;})
 #define ATTR(type, x, field) ((type*)x)->field
 #define IS(x, type) (x && TAG(x) == type ## _TAG)
@@ -54,7 +54,7 @@ void maybeGC();
 // lisp entry functions
 lisp apply(lisp f, lisp args);
 lisp eval(lisp e, lisp* envp);
-lisp funcall(lisp f, lisp args, lisp* envp, lisp e, int noeval);
+lisp progn(lisp* envp, lisp all);
 
 // lisp functions
 lisp princ(lisp x);
@@ -88,6 +88,7 @@ char* symbol_getString(lisp s); // be aware this only works for !SYMP(s) && IS(s
 // memory mgt
 lisp mem_usage(int count);
 void* myMalloc(int bytes, int tag);
+char* my_strndup(char* s, int len); // calls myMalloc
 
 lisp evalGC(lisp e, lisp *envp); // maybe not call directly... not safe if you've done a cons unless you mark it first...
 void mark(lisp x);

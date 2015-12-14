@@ -140,15 +140,6 @@ lisp symbol(char* s) {
     return HASH(secretMkSymbol(s));
 }
 
-// only have this in order to keep track of allocations
-char* my_strndup(char* s, int len) {
-    int l = strlen(s);
-    if (l > len) l = len;
-    char* r = myMalloc(len + 1, -1);
-    strncpy(r, s, len);
-    return r;
-}
-
 // create a copy of partial string if not found
 lisp symbolCopy(char* start, int len) {
     lisp sym = find_symbol(start, len);
@@ -322,9 +313,8 @@ lisp syms(lisp f) {
             if (!f) {
                 princ(s->symbol); putchar('='); princ(s->value); putchar(' ');
             } else {
-                lisp env = nil;
                 // TODO: may run out of memory... GC?
-                funcall(f, list(s->symbol, s->value, mkint(i), END), &env, nil, 1);
+                apply(f, list(s->symbol, s->value, mkint(i), END));
             }
             s = (symbol_val*)s->next;
         }
