@@ -106,14 +106,14 @@
 // 100 = lispheap, symbol == name + primptr, not same as value
 // 110 = ??
 
-// 000 heap (string, symbol, prim...) - DONE
-// 001 int 1 - DONE
-// 010 cons heap - DONE
-// 011 inline symbol 1 - DONE
-// 100                    ??? hash symbol ???
-// 101 int 2 - DONE
-// 110                    ??? array cons?
-// 111 inline symbol 2 - DONE
+//  000 HEAP (string, symbol, prim...) - DONE
+//  001 INTP 1 - DONE
+//  010 CONSP 1 - heap - DONE
+//  011 SYMP 1 inline pointer symbol - DONE
+//  100       ??? hash symbol ??? ??? array cons???
+//  101 INTP 2 - DONE
+//  110 PRIMP
+//  111 SYMP 2 inline pointer symbol - DONE
 //
 // ROM storage, issue of serializing atom and be able to execute from ROM symbols cannot change name
 // so need "unique" pointer, but since symbols can be determined dynamically we cannot change
@@ -177,6 +177,8 @@ typedef struct {
 // cons cells are 8 bytes, heap allocated objects are all 8 byte aligned too,
 // thus, the three lowest bits aren't used so we use it for tagging/inline types.
 //
+// this is not ACCURATE!!! see later.... 
+//
 // 00000000 nil
 //      000 heap allocated objects
 //       01 int stored inline in the pointer
@@ -184,8 +186,8 @@ typedef struct {
 //       11 symbol names stored inside the pointer
 //
 //      100 special pointer, see below...
-//     0100 UNUSED: (IROM) symbol/string, n*16 bytes, zero terminated
-//     1100 UNUSED: (IROM) longcons (array consequtive nil terminated list) n*16 bytes (n*8 cars)
+//     0100 UNUSED: ??? (IROM) symbol/string, n*16 bytes, zero terminated
+//     1100 UNUSED: ??? (IROM) longcons (array consequtive nil terminated list) n*16 bytes (n*8 cars)
 //
 //     x1yy cons style things? but with other type
 //     0110 UNUSED: maybe we have func/thunk/immediate
@@ -429,7 +431,7 @@ static void mark_clean() {
 
 static int blockGC = 0;
 
-lisp gc(lisp* envp) {
+PRIM gc(lisp* envp) {
     if (blockGC) {
         printf("\n%% [warning: GC called with blockGC=%d]\n", blockGC);
         return nil;
@@ -497,13 +499,13 @@ char* my_strndup(char* s, int len) {
 }
 
 // make a string from POINTER (inside other string) by copying LEN bytes
-lisp mklenstring(char* s, int len) {
+PRIM mklenstring(char* s, int len) {
     string* r = ALLOC(string);
     r->p = my_strndup(s, len); // TODO: how to deallocate?
     return (lisp)r;
 }
 
-lisp mkstring(char* s) {
+PRIM mkstring(char* s) {
     return mklenstring(s, strlen(s));
 }
 
@@ -581,7 +583,7 @@ void gc_cons_init() {
     gc_conses();
 }
 
-lisp cons(lisp a, lisp b) {
+PRIM cons(lisp a, lisp b) {
     conss* c = GETCONS(free_cons);
     cons_count--;
     if (!c) {
@@ -615,8 +617,8 @@ lisp cons(lisp a, lisp b) {
 }
 
 // inline works on both unix/gcc and c99 for esp8266
-inline lisp car(lisp x) { return CONSP(x) ? GETCONS(x)->car : nil; }
-inline lisp cdr(lisp x) { return CONSP(x) ? GETCONS(x)->cdr : nil; }
+inline PRIM car(lisp x) { return CONSP(x) ? GETCONS(x)->car : nil; }
+inline PRIM cdr(lisp x) { return CONSP(x) ? GETCONS(x)->cdr : nil; }
 
 int cons_count; // forward
 
@@ -626,14 +628,14 @@ int cons_count; // forward
   #define car_ car
   #define cdr_ cdr
 #else
-  lisp car_(lisp x) { return car(x); }
-  lisp cdr_(lisp x) { return cdr(x); }
+  PRIM car_(lisp x) { return car(x); }
+  PRIM cdr_(lisp x) { return cdr(x); }
 #endif
 
-lisp setcar(lisp x, lisp v) { return IS(x, conss) ? GETCONS(x)->car = v : nil; }
-lisp setcdr(lisp x, lisp v) { return IS(x, conss) ? GETCONS(x)->cdr = v : nil; }
+PRIM setcar(lisp x, lisp v) { return IS(x, conss) ? GETCONS(x)->car = v : nil; }
+PRIM setcdr(lisp x, lisp v) { return IS(x, conss) ? GETCONS(x)->cdr = v : nil; }
 
-lisp list(lisp first, ...) {
+PRIM list(lisp first, ...) {
     va_list ap;
     lisp r = nil;
     // points to cell where cdr is next pos
@@ -742,30 +744,10 @@ int getint(lisp x) {
     return IS(x, intint) ? ATTR(intint, x, v) : 0;
 }
 
-// TODO: remove, just had an idea that pointers to function have special "pattern"
-unsigned int allprims = 0;
-//const char* const foobar = "FOOBAR";
-
-lisp mkprim(char* name, int n, void *f) {
-    // TODO: can't make it save in a cons cell? actually no need GC, same as SYM
-    // can we use the range of program memory to recognize a function pointer???
-    prim* r = ALLOC(prim);
-    r->name = name; // symbol(name); // possible the strings already exists in ROM/RAM... so no saving?
-    r->n = n;
-    r->f = f;
-    allprims |= (unsigned int)f;
-// TEST to investigate function pointers...
-//    printf("PRIM %x   %s prims=%x conses=%x allocs=%x stack=%x vars=%x consstr=%x\n",
-//           (unsigned int)f, name, allprims, (unsigned int)conses, (unsigned int)allocs, (unsigned int)&r, (unsigned int)&allprims,
-//           (unsigned int)foobar
-//        );
-    return (lisp)r;
-}
-
 lisp eval(lisp e, lisp* env);
-lisp eq(lisp a, lisp b);
+PRIM eq(lisp a, lisp b);
 
-lisp member(lisp e, lisp r) {
+PRIM member(lisp e, lisp r) {
     while (r) {
         if (eq(e, car(r))) return r;
         r = cdr(r);
@@ -773,13 +755,13 @@ lisp member(lisp e, lisp r) {
     return nil;
 }
 
-lisp out(lisp pin, lisp value) {
+PRIM out(lisp pin, lisp value) {
     gpio_enable(getint(pin), GPIO_OUTPUT);
     gpio_write(getint(pin), getint(value));
     return value;
 }
 
-lisp in(lisp pin) {
+PRIM in(lisp pin) {
     gpio_enable(getint(pin), GPIO_INPUT);
     return mkint(gpio_read(getint(pin)));
 }
@@ -809,7 +791,7 @@ static void f_emit_attr(lisp callback, char* path[], char* tag, char* attr, char
     apply(callback, list(symbol(tag), symbol(attr), mkstring(value), END));
 }
 
-lisp wget_(lisp server, lisp url, lisp callback) {
+PRIM wget_(lisp server, lisp url, lisp callback) {
     wget_data data;
     memset(&data, 0, sizeof(data));
     data.userdata = callback;
@@ -854,7 +836,7 @@ static void response(int req, char* method, char* path) {
 // (web 8080 (lambda (w s m p) (princ w) (princ " ") (princ s) (princ " ") (princ m) (princ " ") (princ p) (terpri) "FISH-42"))
 // ' | ./run
 
-lisp _setq(lisp* envp, lisp name, lisp v);
+PRIM _setq(lisp* envp, lisp name, lisp v);
 
 int web_socket = 0;
 
@@ -863,7 +845,7 @@ int web_one() {
     return httpd_next(web_socket, header, body, response);
 }
 
-lisp web(lisp* envp, lisp port, lisp callback) {
+PRIM web(lisp* envp, lisp port, lisp callback) {
     //wget_data data;
     //memset(&data, 0, sizeof(data));
     //data.userdata = callback;
@@ -886,7 +868,7 @@ lisp web(lisp* envp, lisp port, lisp callback) {
 
 
 // lookup binding of symbol variable name (not work for int names)
-lisp assoc(lisp name, lisp env) {
+PRIM assoc(lisp name, lisp env) {
     while (env) {
         lisp bind = car(env);
         // only works for symbol
@@ -898,45 +880,45 @@ lisp assoc(lisp name, lisp env) {
     return nil;
 }
 
-lisp evallist(lisp e, lisp* envp) {
+PRIM evallist(lisp e, lisp* envp) {
     if (!e) return e;
     // TODO: don't recurse!
     return cons(eval(car(e), envp), evallist(cdr(e), envp));
 }
 
 // dummy function that doesn't eval, used instead of eval
-static lisp noEval(lisp x, lisp* envp) { return x; }
+static PRIM noEval(lisp x, lisp* envp) { return x; }
 
-lisp primapply(lisp ff, lisp args, lisp* envp, lisp all, int noeval) {
+PRIM primapply(lisp ff, lisp args, lisp* envp, lisp all, int noeval) {
     //printf("PRIMAPPLY "); princ(ff); princ(args); terpri();
-    int n = ATTR(prim, ff, n);
+    int n = GETPRIMNUM(ff);
     lisp (*e)(lisp x, lisp* envp) = (noeval && n > 0) ? noEval : evalGC;
     int an = abs(n);
 
     // these special cases are redundant, can be done at general solution
     // but for optimization we extracted them, it improves speed quite a lot
     if (n == 2) { // eq/plus etc
-        lisp (*fp)(lisp,lisp) = ATTR(prim, ff, f);
+        lisp (*fp)(lisp,lisp) = GETPRIMFUNC(ff);
         return (*fp)(e(car(args), envp), e(car(cdr(args)), envp)); // safe!
     }
     if (n == -3) { // if...
-        lisp (*fp)(lisp*,lisp,lisp,lisp) = ATTR(prim, ff, f);
+        lisp (*fp)(lisp*,lisp,lisp,lisp) = GETPRIMFUNC(ff);
         return (*fp)(envp, car(args), car(cdr(args)), car(cdr(cdr(args))));
     }
     if (n == -1) { // quote...
-        lisp (*fp)(lisp*,lisp) = ATTR(prim, ff, f);
+        lisp (*fp)(lisp*,lisp) = GETPRIMFUNC(ff);
         return (*fp)(envp, car(args));
     }
     if (n == 1) {
-        lisp (*fp)(lisp) = ATTR(prim, ff, f);
+        lisp (*fp)(lisp) = GETPRIMFUNC(ff);
         return (*fp)(e(car(args), envp));
     }
     if (n == 3) {
-        lisp (*fp)(lisp,lisp,lisp) = ATTR(prim, ff, f);
+        lisp (*fp)(lisp,lisp,lisp) = GETPRIMFUNC(ff);
         return (*fp)(e(car(args), envp), e(car(cdr(args)), envp), e(car(cdr(cdr(args))),envp));
     }
-    if (n == -16) { // lambda, quite uncommon
-        lisp (*fp)(lisp*,lisp,lisp) = ATTR(prim, ff, f);
+    if (n == -7) { // lambda, quite uncommon
+        lisp (*fp)(lisp*,lisp,lisp) = GETPRIMFUNC(ff);
         return (*fp)(envp, args, all);
     }
 
@@ -956,7 +938,7 @@ lisp primapply(lisp ff, lisp args, lisp* envp, lisp all, int noeval) {
             argv[i] = a;
             args = cdr(args);
         }
-        lisp (*fp)() = ATTR(prim, ff, f);
+        lisp (*fp)() = GETPRIMFUNC(ff);
         switch (an) {
         case 1: return fp(argv[0]);
         case 2: return fp(argv[0], argv[1]);
@@ -972,19 +954,19 @@ lisp primapply(lisp ff, lisp args, lisp* envp, lisp all, int noeval) {
     // prepare arguments
     if (n >= 0) {
         args = noeval ? args : evallist(args, envp);
-    } else if (n > -16) { // -1 .. -15 no-eval lambda, put env first
+    } else if (n > -7) { // -1 .. -7 no-eval lambda, put env first
         // TODO: for NLAMBDA this may not work...  may need a new lisp type
         args = cons(*envp, args);
     }
 
     lisp r;
-    if (abs(n) == 16) {
-        lisp (*fp)(lisp*, lisp, lisp) = ATTR(prim, ff, f);
+    if (abs(n) == 7) {
+        lisp (*fp)(lisp*, lisp, lisp) = GETPRIMFUNC(ff);
         r = fp(envp, args, all);
     } else {
         lisp a = args, b = cdr(a), c = cdr(b), d = cdr(c), e = cdr(d), f = cdr(e), g = cdr(f), h = cdr(g), i = cdr(h), j = cdr(i);
         // with C calling convention it's ok, but maybe not most efficient...
-        lisp (*fp)(lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp) = ATTR(prim, ff, f);
+        lisp (*fp)(lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp) = GETPRIMFUNC(ff);
         r = fp(car(a), car(b), car(c), car(d), car(e), car(f), car(g), car(h), car(i), car(j));
     }
 
@@ -1012,7 +994,7 @@ static inline lisp mkimmediate(lisp e, lisp env) {
 
 
 // these are formed by evaluating a lambda
-lisp mkfunc(lisp e, lisp env) {
+PRIM mkfunc(lisp e, lisp env) {
     func* r = ALLOC(func);
     r->e = e;
     r->env = env;
@@ -1027,6 +1009,7 @@ void mark_deep(lisp next, int deep) {
         // -- pointer contains tag
         if (INTP(next)) return;
         if (SYMP(next)) return;
+        if (PRIMP(next)) return;
 	if (CONSP(next)) {
 	    int i = (conss*)next - &conses[0];
             if (i >= MAX_CONS) {
@@ -1083,35 +1066,35 @@ static lisp reads(char *s);
 // -- lsp _foo()   ==   special function, order may be different (like it take env& as first)
 
 // first one liners
-lisp nullp(lisp a) { return a ? nil : t; }
-lisp consp(lisp a) { return IS(a, conss) ? t : nil; }
-lisp atomp(lisp a) { return IS(a, conss) ? nil : t; }
-lisp stringp(lisp a) { return IS(a, string) ? t : nil; }
-lisp symbolp(lisp a) { return IS(a, symboll) ? t : nil; } // rename struct symbol to symbol?
-lisp numberp(lisp a) { return IS(a, intint) ? t : nil; } // TODO: extend with float/real
-lisp integerp(lisp a) { return IS(a, intint) ? t : nil; }
-lisp funcp(lisp a) { return IS(a, func) || IS(a, thunk) || IS(a, prim) ? t : nil; }
+PRIM nullp(lisp a) { return a ? nil : t; }
+PRIM consp(lisp a) { return IS(a, conss) ? t : nil; }
+PRIM atomp(lisp a) { return IS(a, conss) ? nil : t; }
+PRIM stringp(lisp a) { return IS(a, string) ? t : nil; }
+PRIM symbolp(lisp a) { return IS(a, symboll) ? t : nil; } // rename struct symbol to symbol?
+PRIM numberp(lisp a) { return IS(a, intint) ? t : nil; } // TODO: extend with float/real
+PRIM integerp(lisp a) { return IS(a, intint) ? t : nil; }
+PRIM funcp(lisp a) { return IS(a, func) || IS(a, thunk) || IS(a, prim) ? t : nil; }
 
-lisp lessthan(lisp a, lisp b) { return getint(a) < getint(b) ?  t : nil; }
+PRIM lessthan(lisp a, lisp b) { return getint(a) < getint(b) ?  t : nil; }
 
-lisp plus(lisp a, lisp b) { return mkint(getint(a) + getint(b)); }
-lisp minus(lisp a, lisp b) { return b ? mkint(getint(a) - getint(b)) : mkint(-getint(a)); }
-lisp times(lisp a, lisp b) { return mkint(getint(a) * getint(b)); }
-lisp divide(lisp a, lisp b) { return mkint(getint(a) / getint(b)); }
-lisp mod(lisp a, lisp b) { return mkint(getint(a) % getint(b)); }
+PRIM plus(lisp a, lisp b) { return mkint(getint(a) + getint(b)); }
+PRIM minus(lisp a, lisp b) { return b ? mkint(getint(a) - getint(b)) : mkint(-getint(a)); }
+PRIM times(lisp a, lisp b) { return mkint(getint(a) * getint(b)); }
+PRIM divide(lisp a, lisp b) { return mkint(getint(a) / getint(b)); }
+PRIM mod(lisp a, lisp b) { return mkint(getint(a) % getint(b)); }
 
 // TODO: http://www.gnu.org/software/emacs/manual/html_node/elisp/Input-Functions.html#Input-Functions
 // http://www.lispworks.com/documentation/HyperSpec/Body/f_rd_rd.htm#read
-lisp read_(lisp s) { return reads(getstring(s)); }
-lisp terpri() { printf("\n"); return nil; }
+PRIM read_(lisp s) { return reads(getstring(s)); }
+PRIM terpri() { printf("\n"); return nil; }
 
 // TODO: consider http://picolisp.com/wiki/?ArticleQuote
-lisp _quote(lisp* envp, lisp x) { return x; }
-lisp quote(lisp x) { return list(symbol("quote"), x, END); } // TODO: optimize
-lisp _env(lisp* e, lisp all) { return *e; }
+PRIM _quote(lisp* envp, lisp x) { return x; }
+PRIM quote(lisp x) { return list(symbol("quote"), x, END); } // TODO: optimize
+PRIM _env(lisp* e, lisp all) { return *e; }
 
 // longer functions
-lisp eq(lisp a, lisp b) {
+PRIM eq(lisp a, lisp b) {
     if (a == b) return t;
     char ta = TAG(a);
     char tb = TAG(b);
@@ -1122,7 +1105,7 @@ lisp eq(lisp a, lisp b) {
     return nil;
 }
 
-lisp equal(lisp a, lisp b) {
+PRIM equal(lisp a, lisp b) {
     while (a != b) {
         lisp r = eq(a, b);
         if (r) return r;
@@ -1156,14 +1139,14 @@ inline lisp _setqqbind(lisp* envp, lisp name, lisp v) {
     return bind;
 }
 
-inline lisp _setqq(lisp* envp, lisp name, lisp v) {
+inline PRIM _setqq(lisp* envp, lisp name, lisp v) {
     _setqqbind(envp, name, nil);
     return v;
 }
 // next line only needed because C99 can't get pointer to inlined function?
-lisp _setqq_(lisp* envp, lisp name, lisp v) { return _setqq(envp, name, v); }
+PRIM _setqq_(lisp* envp, lisp name, lisp v) { return _setqq(envp, name, v); }
 
-inline lisp _setq(lisp* envp, lisp name, lisp v) {
+inline PRIM _setq(lisp* envp, lisp name, lisp v) {
     lisp bind = _setqqbind(envp, name, nil);
     // TODO: evalGC? probably safe as steqqbind changed an existing env
     // eval using our own named binding to enable recursion
@@ -1172,28 +1155,27 @@ inline lisp _setq(lisp* envp, lisp name, lisp v) {
     return v;
 }
 
-inline lisp _set(lisp* envp, lisp name, lisp v) {
+inline PRIM _set(lisp* envp, lisp name, lisp v) {
     // TODO: evalGC? probably safe as steqqbind changed an existing env
     return _setq(envp, eval(name, envp), v);
 }
 // next line only needed because C99 can't get pointer to inlined function?
-lisp _set_(lisp* envp, lisp name, lisp v) { return _set(envp, name, v); }
+PRIM _set_(lisp* envp, lisp name, lisp v) { return _set(envp, name, v); }
 
-lisp define(lisp* envp, lisp name, lisp v) {
+PRIM define(lisp* envp, lisp name, lisp v) {
     lisp r = _setq(envp, name, v);
     if (IS(r, func)) ((func*)r)->name = name;
-    printf("SET!\n");
     return r;
 }
 
-lisp de(lisp* envp, lisp namebody) {
+PRIM de(lisp* envp, lisp namebody) {
     return define(envp, car(namebody), cons(LAMBDA, cdr(namebody)));
 }
 
-lisp reduce_immediate(lisp x);
+PRIM reduce_immediate(lisp x);
 
 // not apply does not evaluate it's arguments
-lisp apply(lisp f, lisp args) {
+PRIM apply(lisp f, lisp args) {
     // TODO: for now, block GC as args could have been built out of thin air!
     blockGC++; 
 
@@ -1206,13 +1188,13 @@ lisp apply(lisp f, lisp args) {
     return x;
 }
 
-lisp mapcar(lisp f, lisp r) {
+PRIM mapcar(lisp f, lisp r) {
     if (!r || !consp(r) || !funcp(f)) return nil;
     lisp v = apply(f, cons(car(r), nil));
     return cons(v, mapcar(f, cdr(r)));
 }
 
-lisp map(lisp f, lisp r) {
+PRIM map(lisp f, lisp r) {
     while (r && consp(r) && funcp(f)) {
         apply(f, cons(car(r), nil));
         r = cdr(r);
@@ -1220,7 +1202,7 @@ lisp map(lisp f, lisp r) {
     return nil;
 }
 
-lisp length(lisp r) {
+PRIM length(lisp r) {
     if (IS(r, string)) return mkint(strlen(getstring(r)));
     if (!IS(r, conss)) return mkint(0);
     int c = 0;
@@ -1356,7 +1338,7 @@ static lisp readx() {
     return readSymbol(c, 0);
 }
 
-static lisp reads(char *s) {
+static PRIM reads(char *s) {
     input = s;
     nextChar = 0;
     return readx();
@@ -1383,14 +1365,14 @@ lisp princ_hlp(lisp x, int readable) {
     // simple one liners
     if (!tag) printf("nil");
     else if (tag == intint_TAG) printf("%d", getint(x));
-    else if (tag == prim_TAG) printf("#%s", ATTR(prim, x, name));
+    else if (tag == prim_TAG) { putchar('#'); princ(*(lisp*)GETPRIM(x)); }
     // for now we have two "symbolls" one inline in pointer and another heap allocated
     else if (SYMP(x)) { char s[7] = {0}; sym2str(x, s); printf("%s", s); }
     else if (tag == symboll_TAG) printf("%s", symbol_getString(x));
     // can't be made reable really unless "reveal" internal pointer
     else if (tag == thunk_TAG) { printf("#thunk["); princ(ATTR(thunk, x, e)); putchar(']'); }
     else if (tag == immediate_TAG) { printf("#immediate["); princ(ATTR(thunk, x, e)); putchar(']'); }
-    else if (tag == func_TAG) { printf("#"); princ(ATTR(func, x, name)); }
+    else if (tag == func_TAG) { putchar('#'); princ(ATTR(func, x, name)); }
     // string
     else if (tag == string_TAG) {
         if (readable) putchar('"');
@@ -1425,15 +1407,15 @@ lisp princ_hlp(lisp x, int readable) {
     return x;
 }
 
-lisp princ(lisp x) {
+PRIM princ(lisp x) {
     return princ_hlp(x, 0);
 }
 // print in readable format
-lisp prin1(lisp x) {
+PRIM prin1(lisp x) {
     return princ_hlp(x, 1);
 }
 
-lisp print(lisp x) {
+PRIM print(lisp x) {
     lisp r = prin1(x);
     terpri();
     return r;
@@ -1519,7 +1501,7 @@ lisp eval(lisp e, lisp* envp) {
     return r;
 }
 
-lisp _eval(lisp e, lisp env) {
+PRIM _eval(lisp e, lisp env) {
     // taking pointer creates a new "scrope"
     return evalGC(e, &env);
 }
@@ -1598,7 +1580,7 @@ void print_env(lisp env) {
     terpri();
 }
 
-lisp evalGC(lisp e, lisp* envp) {
+PRIM evalGC(lisp e, lisp* envp) {
     if (!e) return e;
     char tag = TAG(e);
     // look up variable
@@ -1657,14 +1639,14 @@ lisp evalGC(lisp e, lisp* envp) {
     return r;
 }
 
-lisp iff(lisp* envp, lisp exp, lisp thn, lisp els) {
+PRIM iff(lisp* envp, lisp exp, lisp thn, lisp els) {
     // evalGC is safe here as we don't construct any structes, yet
     // TODO: how did we get here? primapply does call evallist thus created something...
     // but we pass ENV on so it should be safe..., it'll mark it!
     return evalGC(exp, envp) ? mkimmediate(thn, *envp) : mkimmediate(els, *envp);
 }
 
-lisp cond(lisp* envp, lisp all) {
+PRIM cond(lisp* envp, lisp all) {
     while (all) {
         lisp nxt = car(all);
         lisp e = car(nxt);
@@ -1676,7 +1658,7 @@ lisp cond(lisp* envp, lisp all) {
     return nil;
 }
 
-lisp and(lisp* envp, lisp all) {
+PRIM and(lisp* envp, lisp all) {
     lisp r = nil;
     while(all) {
         // TODO: tail call on last?
@@ -1687,7 +1669,7 @@ lisp and(lisp* envp, lisp all) {
     return r;
 }
 
-lisp or(lisp* envp, lisp all) {
+PRIM or(lisp* envp, lisp all) {
     lisp r = nil;
     while(all) {
         // TODO: tail call on last?
@@ -1698,16 +1680,16 @@ lisp or(lisp* envp, lisp all) {
     return nil;
 }
 
-lisp not(lisp x) {
+PRIM not(lisp x) {
     return x ? nil : t;
 }
 
 // essentially this is a quote but it stores the environment so it's a closure!
-lisp lambda(lisp* envp, lisp all) {
+PRIM lambda(lisp* envp, lisp all) {
     return mkfunc(all, *envp);
 }
 
-lisp progn(lisp* envp, lisp all) {
+PRIM progn(lisp* envp, lisp all) {
     while (all && cdr(all)) {
         evalGC(car(all), envp);
         all = cdr(all);
@@ -1718,7 +1700,7 @@ lisp progn(lisp* envp, lisp all) {
 
 static inline lisp letevallist(lisp args, lisp* envp, lisp extend);
 
-lisp let(lisp* envp, lisp all) {
+PRIM let(lisp* envp, lisp all) {
     lisp vars = car(all);
     lisp lenv = letevallist(vars, envp, *envp);
     lisp ret = nil;
@@ -1783,22 +1765,22 @@ static inline lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval) {
     return nil;
 }
 
-static lisp test(lisp*);
+static PRIM test(lisp*);
 
 // ticks are counted up in idle() function, as well as this one, they are semi-unique per run
 static long lisp_ticks = 0;
-lisp ticks() { return mkint(lisp_ticks++ & 0xffffffff); } // TODO: mklong?
+PRIM ticks() { return mkint(lisp_ticks++ & 0xffffffff); } // TODO: mklong?
 
-lisp clock_() { return mkint(clock_ms()); }
+PRIM clock_() { return mkint(clock_ms()); }
 
-lisp time_(lisp* envp, lisp exp) {
+PRIM time_(lisp* envp, lisp exp) {
     int start = clock_ms();
     lisp ret = evalGC(exp, envp);
     int ms = clock_ms() - start;
     return cons(mkint(ms), ret);
 }
 
-lisp at(lisp* envp, lisp spec, lisp f) {
+PRIM at(lisp* envp, lisp spec, lisp f) {
     int c = clock_ms();
     int w = getint(spec);
     lisp r = cons(mkint(c + abs(w)), cons(spec, evalGC(f, envp)));
@@ -1812,7 +1794,7 @@ lisp at(lisp* envp, lisp spec, lisp f) {
 }
 
 // we allow stopping original scheduled event, or any repeated
-lisp stop(lisp* envp, lisp at) {
+PRIM stop(lisp* envp, lisp at) {
     lisp att = evalGC(at, envp);
     lisp nm = symbol("*at*");
     lisp bind = assoc(nm, *envp);
@@ -1830,7 +1812,7 @@ lisp stop(lisp* envp, lisp at) {
     return nil;
 }
 
-lisp atrun(lisp* envp) {
+PRIM atrun(lisp* envp) {
     lisp nm = symbol("*at*");
     lisp bind = assoc(nm, *envp);
     lisp lst = cdr(bind);
@@ -1872,16 +1854,16 @@ int xPortGetFreeHeapSize() { return -1; }
 // test stack usage on simple function
 // a simple function call takes 32 bytes (8 stack entry as reported by uxTaskGetStackHighWaterMark)
 // This means we can recurse about 233 times!
-extern unsigned long uxTaskGetStackHighWaterMark(void*);
+//extern unsigned long uxTaskGetStackHighWaterMark(void*);
 
-lisp rec(lisp i) {
+PRIM rec(lisp i) {
     int a = getint(i);
-    printf("%d - %u ::: stackUsed=%lu\n", a, (unsigned int)&a, uxTaskGetStackHighWaterMark(NULL));
+//    printf("%d - %u ::: stackUsed=%lu\n", a, (unsigned int)&a, uxTaskGetStackHighWaterMark(NULL));
     return mkint(1 + getint(rec(mkint(a - 1))));
 }
 
 // test function: eat the heap
-lisp heap() {
+PRIM heap() {
     void* a[60];
     int c = 0;
 
@@ -1935,7 +1917,7 @@ int readFromFlash(char* buff, int maxlen, int offset) {
     return 0;
 }
 
-lisp scan(lisp s) {
+PRIM scan(lisp s) {
     return nil;
 }
 
@@ -2047,7 +2029,7 @@ int findLastFlash() {
     return offset;
 }
 
-lisp scan(lisp s) {
+PRIM scan(lisp s) {
     int maxlen =  4*1024*1024;
     int i;
 
@@ -2176,9 +2158,9 @@ lisp serializeLisp(lisp x, lisp* buffer, int *n) {
     return symbol("*ERROR*");
 }
 
-#define MAXFLASHLISP 256
+#define MAXFLASHPRIM 256
 
-lisp flashArray(lisp *serialized, int len) {
+PRIM flashArray(lisp *serialized, int len) {
     if (!CONSP(serialized) && !IS((lisp)serialized, string)) {
         printf("flashArray.ERROR: wrong type %d\n", TAG((lisp)serialized));
         return nil;
@@ -2196,7 +2178,7 @@ lisp flashArray(lisp *serialized, int len) {
         where[i] = p;
         if (INTP(p) || SYMP(p))
             ;
-        else if (o >= 0 && o < MAXFLASHLISP)
+        else if (o >= 0 && o < MAXFLASHPRIM)
             where[i] = (lisp)(where + o);
     }
 
@@ -2206,12 +2188,12 @@ lisp flashArray(lisp *serialized, int len) {
     return (lisp)((unsigned int)where | (us & 2));
 }
 
-lisp flashit(lisp x) {
-    lisp* buffer = malloc(MAXFLASHLISP * sizeof(lisp)); // align as conss
-    memset(buffer, 0, MAXFLASHLISP * sizeof(lisp));
-    int n = MAXFLASHLISP;
+PRIM flashit(lisp x) {
+    lisp* buffer = malloc(MAXFLASHPRIM * sizeof(lisp)); // align as conss
+    memset(buffer, 0, MAXFLASHPRIM * sizeof(lisp));
+    int n = MAXFLASHPRIM;
     lisp ret = serializeLisp(x, (lisp*)buffer, &n);
-    int len = MAXFLASHLISP - n;
+    int len = MAXFLASHPRIM - n;
     if (!len) return x;
 
   printf("flashit.serialized [len=%d]: ", len); princ(ret); terpri();
@@ -2224,7 +2206,7 @@ lisp flashit(lisp x) {
 // (flash) -> read
 // (flash "foo") -> append
 // (flash "foo" 0) -> reset + write
-lisp flash(lisp s, lisp o) {
+PRIM flash(lisp s, lisp o) {
     if (!s) {
         int offset = 0;
         int i = 0;
@@ -2264,7 +2246,7 @@ lisp flash(lisp s, lisp o) {
 ////////////////////////////////////////////////////////////////////////////////
 // stuff
 
-lisp fibb(lisp n);
+PRIM fibb(lisp n);
 
 // returns an env with functions
 lisp lisp_init() {
@@ -2295,73 +2277,73 @@ lisp lisp_init() {
     t = symbol("t");
 
     // nil = symbol("nil"); // LOL? TODO:? that wouldn't make sense? then it would be taken as true!
-    LAMBDA = mkprim("lambda", -16, lambda);
+    LAMBDA = mkprim("lambda", -7, lambda);
 
     SETQc(lambda, LAMBDA);
     SETQ(t, 1);
     SETQ(nil, nil);
 
-    PRIM(null?, 1, nullp);
-    PRIM(cons?, 1, consp);
-    PRIM(atom?, 1, atomp);
-    PRIM(string?, 1, stringp);
-    PRIM(symbol?, 1, symbolp);
-    PRIM(number?, 1, numberp);
-    PRIM(integer?, 1, integerp);
-    PRIM(func?, 1, funcp);
+    DEFPRIM(null?, 1, nullp);
+    DEFPRIM(cons?, 1, consp);
+    DEFPRIM(atom?, 1, atomp);
+    DEFPRIM(string?, 1, stringp);
+    DEFPRIM(symbol?, 1, symbolp);
+    DEFPRIM(number?, 1, numberp);
+    DEFPRIM(integer?, 1, integerp);
+    DEFPRIM(func?, 1, funcp);
 
-    PRIM(<, 2, lessthan);
+    DEFPRIM(<, 2, lessthan);
 
-    PRIM(+, 2, plus);
-    PRIM(-, 2, minus);
-    PRIM(*, 2, times);
-    PRIM(/, 2, divide);
-    PRIM(%, 2, mod);
-    PRIM(eq, 2, eq);
-    PRIM(equal, 2, equal);
-    PRIM(=, 2, eq);
-    PRIM(if, -3, iff);
-    PRIM(cond, -16, cond);
-    PRIM(and, -16, and);
-    PRIM(or, -16, or);
-    PRIM(not, 1, not);
-    PRIM(terpri, 0, terpri);
-    PRIM(princ, 1, princ);
-    PRIM(prin1, 1, prin1);
-    PRIM(print, 1, print);
+    DEFPRIM(+, 2, plus);
+    DEFPRIM(-, 2, minus);
+    DEFPRIM(*, 2, times);
+    DEFPRIM(/, 2, divide);
+    DEFPRIM(%, 2, mod);
+    DEFPRIM(eq, 2, eq);
+    DEFPRIM(equal, 2, equal);
+    DEFPRIM(=, 2, eq);
+    DEFPRIM(if, -3, iff);
+    DEFPRIM(cond, -7, cond);
+    DEFPRIM(and, -7, and);
+    DEFPRIM(or, -7, or);
+    DEFPRIM(not, 1, not);
+    DEFPRIM(terpri, 0, terpri);
+    DEFPRIM(princ, 1, princ);
+    DEFPRIM(prin1, 1, prin1);
+    DEFPRIM(print, 1, print);
 
-    PRIM(cons, 2, cons);
-    PRIM(car, 1, car_);
-    PRIM(cdr, 1, cdr_);
-    PRIM(setcar, 2, setcar);
-    PRIM(setcdr, 2, setcdr);
+    DEFPRIM(cons, 2, cons);
+    DEFPRIM(car, 1, car_);
+    DEFPRIM(cdr, 1, cdr_);
+    DEFPRIM(setcar, 2, setcar);
+    DEFPRIM(setcdr, 2, setcdr);
 
-    PRIM(list, 16, _quote);
-    PRIM(length, 1, length);
-    PRIM(assoc, 2, assoc);
-    PRIM(member, 2, member);
-    PRIM(mapcar, 2, mapcar);
-    PRIM(map, 2, map);
-    // PRIM(quote, -16, quote);
-    // PRIM(list, 16, listlist);
+    DEFPRIM(list, 7, _quote);
+    DEFPRIM(length, 1, length);
+    DEFPRIM(assoc, 2, assoc);
+    DEFPRIM(member, 2, member);
+    DEFPRIM(mapcar, 2, mapcar);
+    DEFPRIM(map, 2, map);
+    // DEFPRIM(quote, -7, quote);
+    // DEFPRIM(list, 7, listlist);
 
-    PRIM(let, -16, let);
-    PRIM(progn, -16, progn);
-    PRIM(eval, 2, _eval);
-    PRIM(evallist, 2, evallist);
-    PRIM(apply, 2, apply);
-    PRIM(env, -16, _env);
+    DEFPRIM(let, -7, let);
+    DEFPRIM(progn, -7, progn);
+    DEFPRIM(eval, 2, _eval);
+    DEFPRIM(evallist, 2, evallist);
+    DEFPRIM(apply, 2, apply);
+    DEFPRIM(env, -7, _env);
 
-    PRIM(read, 1, read_);
+    DEFPRIM(read, 1, read_);
 
-    PRIM(set, -2, _set_);
-    PRIM(setq, -2, _setq);
-    PRIM(setqq, -2, _setqq_);
+    DEFPRIM(set, -2, _set_);
+    DEFPRIM(setq, -2, _setq);
+    DEFPRIM(setqq, -2, _setqq_);
 
-    PRIM(define, -2, define);
-    PRIM(de, -16, de);
+    DEFPRIM(define, -2, define);
+    DEFPRIM(de, -7, de);
 
-    PRIM(quote, -1, _quote);
+    DEFPRIM(quote, -1, _quote);
 
     // define
     // defun
@@ -2370,33 +2352,33 @@ lisp lisp_init() {
     // gensym
 
     // network
-    PRIM(wget, 3, wget_);
-    PRIM(web, -2, web);
-    PRIM(out, 2, out);
-    PRIM(in, 1, in);
+    DEFPRIM(wget, 3, wget_);
+    DEFPRIM(web, -2, web);
+    DEFPRIM(out, 2, out);
+    DEFPRIM(in, 1, in);
 
     // system stuff
-    PRIM(gc, -1, gc);
-    PRIM(test, -16, test);
+    DEFPRIM(gc, -1, gc);
+    DEFPRIM(test, -7, test);
 
-    PRIM(ticks, 1, ticks);
-    PRIM(clock, 1, clock_);
-    PRIM(time, -1, time_);
-    PRIM(flash, 2, flash);
-    PRIM(flashit, 1, flashit);
-    PRIM(scan, 2, scan);
+    DEFPRIM(ticks, 1, ticks);
+    DEFPRIM(clock, 1, clock_);
+    DEFPRIM(time, -1, time_);
+    DEFPRIM(flash, 2, flash);
+    DEFPRIM(flashit, 1, flashit);
+    DEFPRIM(scan, 2, scan);
 
-    PRIM(at, -2, at);
-    PRIM(stop, -1, stop);
-    PRIM(atrun, -1, atrun);
+    DEFPRIM(at, -2, at); // TODO: eval at => #stop?!?!??!
+    DEFPRIM(stop, -1, stop);
+    DEFPRIM(atrun, -1, atrun);
 
-//    PRIM(imacs, -1, imacs_);
-    PRIM(syms, 0, syms);
-    PRIM(fib, 1, fibb);
+//    DEFPRIM(imacs, -1, imacs_);
+    DEFPRIM(syms, 0, syms);
+    DEFPRIM(fib, 1, fibb);
 
-    //PRIM(readit, 0, readit);
-    PRIM(heap, 1, heap);
-    PRIM(rec, 1, rec);
+    //DEFPRIM(readit, 0, readit);
+    DEFPRIM(heap, 1, heap);
+    DEFPRIM(rec, 1, rec);
 
     // another small lisp in 1K lines
     // - https://github.com/rui314/minilisp/blob/master/minilisp.c
@@ -2453,9 +2435,9 @@ void maybeGC() {
     if (needGC()) gc(global_envp);
 }
 
-lisp atrun(lisp* envp);
+PRIM atrun(lisp* envp);
 
-void idle(int lticks) {
+PRIM idle(int lticks) {
     // 1 000 000 == 1s for x61 laptop
     //if (lticks % 1000000 == 0) { putchar('^'); fflush(stdout); }
 
@@ -2468,6 +2450,8 @@ void idle(int lticks) {
 
     // clean stats
     print_memory_info(0);
+
+    return nil;
 }
 
 // tweenex style ctrl-t process status
@@ -2619,7 +2603,7 @@ int fib(int n) {
     else return fib(n-1) + fib(n-2);
 }
 
-lisp fibb(lisp n) { return mkint(fib(getint(n))); }
+PRIM fibb(lisp n) { return mkint(fib(getint(n))); }
 
 // lisp implemented library functions hardcoded
 void load_library(lisp* envp) {
@@ -2712,7 +2696,7 @@ void testss(lisp* envp , char* what, char* expect) {
 //   http://john.freml.in/teepeedee2-vs-picolisp
 //   http://picolisp.com/wiki/?ErsatzWebApp
 
-static lisp test(lisp* e) {
+static PRIM test(lisp* e) {
 
 // removing the body of this function gives: (- 42688 41152) 1536
 // gives 25148 bytes, 19672k

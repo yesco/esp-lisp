@@ -3,10 +3,11 @@ echo "--- Lines of code (according to norvig) ---"
 grep -v "^\s*//" lisp.c | grep -v "^/\*" | grep -v "^$" | wc
 echo
 
+stty sane
+
 # for compiling 32 bit binary on 64 bit systgem
 # - sudo apt-get install libc6-dev-i386
 # - or http://askubuntu.com/questions/470796/fatal-error-sys-cdefs-h-no-such-file-or-directory
-
 
 # -- linker option for checking memory
 #   http://www.embeddedrelated.com/showthread/comp.arch.embedded/45390-1.php

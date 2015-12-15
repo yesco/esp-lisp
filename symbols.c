@@ -18,7 +18,7 @@
 //#include <ctype.h>
 //#include <stdarg.h>
 #include <string.h>
-//#include <stdlib.h>
+#include <stdlib.h>
 #include <stdio.h>
 
 #include "lisp.h"
@@ -249,19 +249,22 @@ typedef struct {
 //}
 
 // cannot be 2^N (because we're dealing with ascii and it's regularity in bits)
-//#define SYM_SLOTS 63
-#define SYM_SLOTS 31
+#define SYM_SLOTS 63
+//#define SYM_SLOTS 31
 //#define SYM_SLOTS 2
 
-symbol_val* symbol_hash; // malloc to align correctly on esp8266
+// afterInit=14716 when using ARRAY
+// afterInit=14264 ... lost (- 14716 14264) = 452 bytes (80*4 bytes overhead of malloc)
+// BUT TOTAL => (- 14262 12104) 2158 bytes saved!!!! 
+symbol_val** symbol_hash; // malloc to align correctly on esp8266
 
 // TODO: generlize for lisp type ARRAY and HASH!!!
 
 // returns a "binding" as a "conss" (same structure, but isn't)
 lisp hashsym(lisp sym) {
     if (!symbol_hash) {
-        symbol_hash = myMalloc(SYM_SLOTS * sizeof(symbol_val), -1);
-        memset(symbol_hash, 0, SYM_SLOTS * sizeof(symbol_val));
+        symbol_hash = myMalloc(SYM_SLOTS * sizeof(symbol_val*), -1);
+        memset(symbol_hash, 0, SYM_SLOTS * sizeof(symbol_val*));
     }
 
     unsigned long h = 0;
@@ -270,29 +273,56 @@ lisp hashsym(lisp sym) {
     else if (IS(sym, symboll)) h = (unsigned int)sym; // TODO: ok for now, but should use  hashatoms?
 
     h = h % SYM_SLOTS;
-    symbol_val* s = &symbol_hash[h];
+    symbol_val* s = symbol_hash[h];
     while (s && s->symbol != sym) s = (symbol_val*)s->next;
     if (s) {
         return MKCONS(s);
     } else {
         // not there, insert first
-        symbol_val* prev = NULL;
-        if (symbol_hash[h].symbol) {
-            prev = myMalloc(sizeof(symbol_val), -1);
-            memcpy(prev, &symbol_hash[h], sizeof(symbol_val));
-        }
-        symbol_val* nw = &symbol_hash[h];
+        symbol_val* nw = myMalloc(sizeof(symbol_val), -1);
         nw->symbol = sym;
         nw->value = nil;
-        nw->next = (lisp)prev;
+        nw->next = (lisp) symbol_hash[h];
+        symbol_hash[h] = nw;
+
         return MKCONS(nw); // pretend it's a cons!
     }
+}
+
+// quirky - piggy back on a symbol/hash_sym
+//   x: -rw-r--r-- 1 knoppix knoppix 220688 Dec 15 19:17 0x20000.bin
+//  64: -rw-r--r-- 1 knoppix knoppix 222768 Dec 15 20:41 0x20000.bin
+// 127: -rw-r--r-- 1 knoppix knoppix 235344 Dec 15 19:31 0x20000.bin
+// ==> (- 222768 220688) 2080 bytes extra for 64, but saves XXXX bytes from heap!!! (- 14716 12104) = 2614 bytes!!!
+// ==> 14656 bytes extra for 128 bytes !!!
+lisp mkprim(char* name, int n, void *f) {
+    lisp s = hashsym(symbol(name));
+    symbol_val* prim = (symbol_val*) (((unsigned int)s) & ~2); // GETCONS()
+    
+    prim->value = nil; // set later anyway
+    if ((unsigned int)f & 15 || abs(n) > 7) {
+        printf("\n\n%% Function: %s %d not aligned %d = %x, need specify LISP\n", name, n, (unsigned int)f, (unsigned int)f);
+        exit(1);
+    }
+    // maybe don't need -7 .. 7, will require 4 bits!
+    prim->extra = f + n + 7;
+    return MKPRIM(prim);
+}
+
+inline int getprimnum(lisp p) {
+    symbol_val* prim = (symbol_val*) (((unsigned int)p) & ~7); // GETCONS()
+    return ((unsigned int)(prim->extra) & 15) - 7;
+}
+
+inline void* getprimfunc(lisp p) {
+    symbol_val* prim = (symbol_val*) (((unsigned int)p) & ~7); // GETCONS()
+    return (void*)((unsigned int)(prim->extra) & ~15);
 }
 
 void syms_mark() {
     int i;
     for(i = 0; i < SYM_SLOTS; i++) {
-        symbol_val* s = &symbol_hash[i];
+        symbol_val* s = symbol_hash[i];
         while (s && s->symbol) {
             if (s->value) mark(s->value);
             s = (symbol_val*)s->next;
@@ -301,11 +331,11 @@ void syms_mark() {
 }
 
 // print the slots
-lisp syms(lisp f) {
+PRIM syms(lisp f) {
     int n = 0;
     int i;
     for(i = 0; i < SYM_SLOTS; i++) {
-        symbol_val* s = &symbol_hash[i];
+        symbol_val* s = symbol_hash[i];
         if (!f) printf("%3d : ", i);
         int nn = 0;
         while (s && s->symbol) {

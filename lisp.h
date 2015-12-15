@@ -1,6 +1,10 @@
 #ifndef LISP_H
 #define LISP_H 1
 
+// for PRIMP !
+//#define PRIM lisp
+#define PRIM __attribute__ ((aligned (16))) lisp
+
 typedef struct {
     char tag;
     char xx;
@@ -17,7 +21,7 @@ typedef struct {
 #define func_TAG 8
 #define MAX_TAGS 16
 
-#define TAG(x) ({ lisp _x = (x); !_x ? 0 : INTP(_x) ? intint_TAG : CONSP(_x) ? conss_TAG : SYMP(_x) ? symboll_TAG : ((lisp)_x)->tag; })
+#define TAG(x) ({ lisp _x = (x); !_x ? 0 : INTP(_x) ? intint_TAG : CONSP(_x) ? conss_TAG : SYMP(_x) ? symboll_TAG : PRIMP(_x) ? prim_TAG : ((lisp)_x)->tag; })
 #define ALLOC(type) ({type* x = myMalloc(sizeof(type), type ## _TAG); x->tag = type ## _TAG; x;})
 #define ATTR(type, x, field) ((type*)x)->field
 #define IS(x, type) (x && TAG(x) == type ## _TAG)
@@ -31,6 +35,14 @@ typedef struct {
 #define MKCONS(x) ((lisp)(((unsigned int)x) | 2))
 
 #define SYMP(x) ((((unsigned int)x) & 3) == 3)
+
+lisp mkprim(char* name, int n, void *f);
+
+#define PRIMP(x) ((((unsigned int)x) & 7) == 6)
+#define GETPRIM(x) ((conss*)(((unsigned int)x) & ~6))
+#define MKPRIM(x) ((lisp)(((unsigned int)x) | 6))
+#define GETPRIMFUNC(x) (getprimfunc(x))
+#define GETPRIMNUM(x) (getprimnum(x))
 
 lisp mkint(int v);
 int getint(lisp x);
@@ -59,6 +71,8 @@ lisp progn(lisp* envp, lisp all);
 // lisp functions
 lisp princ(lisp x);
 lisp terpri();
+lisp car(lisp x);
+lisp cdr(lisp x);
 
 // list(mkint(1), mkint(2), END);
 lisp list(lisp first, ...);
@@ -76,16 +90,20 @@ lisp list(lisp first, ...);
 #define PRINT(what) ({ princ(EVAL(what)); terpri(); })
 #define SHOW(what) ({ printf(#what " => "); princ(EVAL(what)); terpri(); })
 #define TEST(what, expect) testss(envp, #what, #expect)
-#define PRIM(fname, argn, fun) _setq(envp, symbol(#fname), mkprim(#fname, argn, fun))
+#define DEFPRIM(fname, argn, fun) _setq(envp, symbol(#fname), mkprim(#fname, argn, fun))
 
 // symbol (internalish) functions
 lisp hashsym(lisp sym);
 lisp symbolCopy(char* start, int len);
 void syms_mark();
-lisp syms(lisp f);
+PRIM syms(lisp f);
 
 void sym2str(lisp s, char name[7]); // be aware this only fork for SYMP(s)
 char* symbol_getString(lisp s); // be aware this only works for !SYMP(s) && IS(s, symboll)
+
+// TODO: inline or macro
+int getprimnum(lisp p);
+void* getprimfunc(lisp p);
 
 // memory mgt
 lisp mem_usage(int count);
