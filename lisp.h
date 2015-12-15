@@ -70,6 +70,8 @@ lisp list(lisp first, ...);
 #define SETQ(sname, val) _setq(envp, symbol(#sname), reads(#val))
 #define SETQQ(sname, val) _setq(envp, symbol(#sname), quote(reads(#val)))
 #define DEF(fname, sbody) _setq(envp, symbol(#fname), reads(#sbody))
+#define DEFINE(fname, sbody) define(envp, symbol(#fname), reads(#sbody))
+#define DE(all) de(envp, reads(#all))
 #define EVAL(what) eval(reads(#what), envp)
 #define PRINT(what) ({ princ(EVAL(what)); terpri(); })
 #define SHOW(what) ({ printf(#what " => "); princ(EVAL(what)); terpri(); })

@@ -67,9 +67,14 @@ void connect_wifi(char* ssid, char* password) { /* dummy */ }
 int nonblock_getch() {
     static int first = 1;
     static struct termios orig_termios;
+
+    void reset_terminal_mode() {
+    	 tcsetattr(0, TCSANOW, &orig_termios);
+    }
+
     if (first) {
         tcgetattr(0, &orig_termios);
-	//atexit(reset_terminal_mode);
+	atexit(reset_terminal_mode);
 	first = 0;
     }
 
@@ -98,7 +103,7 @@ int nonblock_getch() {
 
     // trap CTRL-C, clean exit
     if (r == 3) {
-        tcsetattr(0, TCSANOW, &orig_termios);
+        reset_terminal_mode();
 	exit(0);
     }
 

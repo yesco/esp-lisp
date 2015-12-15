@@ -242,7 +242,7 @@ typedef struct func {
 
     lisp e;
     lisp env;
-    // This needs be same as thunk
+    lisp name; // TODO: recycle
 } func;
 
 int tag_count[MAX_TAGS] = {0};
@@ -265,7 +265,8 @@ int gettag(lisp x) {
 //#define MAX_ALLOCS 512 // keeps 17K free
 //#define MAX_ALLOCS 256 // keeps 21K free
 //#define MAX_ALLOCS 128 // keeps 21K free
-#define MAX_ALLOCS 128
+//#define MAX_ALLOCS 128 // make slower!!!
+#define MAX_ALLOCS 256 // make faster???
 
 int allocs_count = 0;
 void* allocs[MAX_ALLOCS] = { 0 };
@@ -1015,6 +1016,7 @@ lisp mkfunc(lisp e, lisp env) {
     func* r = ALLOC(func);
     r->e = e;
     r->env = env;
+    r->name = nil;
     return (lisp)r;
 }
 
@@ -1174,6 +1176,17 @@ inline lisp _set(lisp* envp, lisp name, lisp v) {
 }
 // next line only needed because C99 can't get pointer to inlined function?
 lisp _set_(lisp* envp, lisp name, lisp v) { return _set(envp, name, v); }
+
+lisp define(lisp* envp, lisp name, lisp v) {
+    lisp r = _setq(envp, name, v);
+    if (IS(r, func)) ((func*)r)->name = name;
+    printf("SET!\n");
+    return r;
+}
+
+lisp de(lisp* envp, lisp namebody) {
+    return define(envp, car(namebody), cons(LAMBDA, cdr(namebody)));
+}
 
 lisp reduce_immediate(lisp x);
 
@@ -1375,7 +1388,7 @@ lisp princ_hlp(lisp x, int readable) {
     // can't be made reable really unless "reveal" internal pointer
     else if (tag == thunk_TAG) { printf("#thunk["); princ(ATTR(thunk, x, e)); putchar(']'); }
     else if (tag == immediate_TAG) { printf("#immediate["); princ(ATTR(thunk, x, e)); putchar(']'); }
-    else if (tag == func_TAG) { printf("#func["); princ(ATTR(thunk, x, e)); putchar(']'); } // circular...
+    else if (tag == func_TAG) { printf("#"); princ(ATTR(func, x, name)); }
     // string
     else if (tag == string_TAG) {
         if (readable) putchar('"');
@@ -1429,8 +1442,6 @@ static void indent(int n) {
     while (n-- > 0) putchar(' ');
 }
 
-static int level = 0;
-
 static lisp funcapply(lisp f, lisp args, lisp* envp, int noeval);
 
 static inline lisp getvar(lisp e, lisp env) {
@@ -1442,7 +1453,7 @@ static inline lisp getvar(lisp e, lisp env) {
     return nil;
 }
 
-inline static lisp eval_hlp(lisp e, lisp* envp) {
+static inline lisp eval_hlp(lisp e, lisp* envp) {
     if (!e) return e;
     char tag = TAG(e);
     if (tag == symboll_TAG) return getvar(e, *envp);
@@ -1473,7 +1484,8 @@ inline static lisp eval_hlp(lisp e, lisp* envp) {
     return callfunc(f, cdr(e), envp, e, 0);
 }
 
-lisp reduce_immediate(lisp x) {
+// inline this is essential to not have stack grow!
+inline lisp reduce_immediate(lisp x) {
     while (x && IS(x, immediate)) {
         lisp tofree = x;
         if (trace) // make it visible
@@ -1510,11 +1522,53 @@ lisp _eval(lisp e, lisp env) {
     return evalGC(e, &env);
 }
 
+lisp mem_usage(int count) {
+    // TODO: last nubmer conses not correct new usaga
+    if (traceGC) printf(" [GC freed %d used=%d bytes=%d conses=%d]\n", count, used_count, used_bytes, MAX_CONS - cons_count);
+    return nil;
+}
+
+inline int needGC() {
+    if (cons_count < MAX_CONS * 0.2) return 1;
+    return (used_count < MAX_ALLOCS * 0.8) ? 0 : 1;
+}
+
 #define MAX_STACK 256
 static struct stack {
     lisp e;
     lisp* envp;
 } stack[MAX_STACK];
+
+static int level = 0;
+
+void print_stack() {
+    int l;
+    printf(" @ ");
+    lisp last = nil;
+    int count = 0;
+    // TODO: DONE but too much: using fargs of f can use .envp to print actual arguments!
+    for(l = 0; l < level; l++) {
+        if (!stack[l].e && !stack[l].envp) break;
+        lisp f = car(stack[l].e);
+        if (f == last) {
+            count++;
+            continue;
+        }
+
+        if (count > 1) {
+            printf("%d ", count);
+            count = 0;
+        }
+        if (last) {
+            princ(last);
+            printf(" -> ");
+        }
+
+        last = f;
+    }
+    if (count > 1) printf("%d ", count);
+    if (last) princ(last);
+}
 
 // prints env and stops at (nil . nil) binding (hides "globals")
 void print_env(lisp env) {
@@ -1527,17 +1581,6 @@ void print_env(lisp env) {
 	xx = cdr(xx);
     }
     terpri();
-}
-
-lisp mem_usage(int count) {
-    // TODO: last nubmer conses not correct new usaga
-    if (traceGC) printf(" [GC freed %d used=%d bytes=%d conses=%d]\n", count, used_count, used_bytes, MAX_CONS - cons_count);
-    return nil;
-}
-
-int needGC() {
-    if (cons_count < MAX_CONS * 0.2) return 1;
-    return (used_count < MAX_ALLOCS * 0.8) ? 0 : 1;
 }
 
 lisp evalGC(lisp e, lisp* envp) {
@@ -1575,6 +1618,10 @@ lisp evalGC(lisp e, lisp* envp) {
         }
         if (trace) terpri();
         mygc();
+        // TODO: address growth?
+        if (needGC()) {
+            printf("\n[We GC:ed but after GC we need another GC - expect slowdowns!!!]\n");
+        }
         // check ctlr-t and maybe at queue (GC issue needs resolve first)
         kbhit();
     }
@@ -2281,6 +2328,10 @@ lisp lisp_init() {
     PRIM(set, -2, _set_);
     PRIM(setq, -2, _setq);
     PRIM(setqq, -2, _setqq_);
+
+    PRIM(define, -2, define);
+    PRIM(de, -16, de);
+
     PRIM(quote, -1, _quote);
 
     // define
@@ -2402,10 +2453,11 @@ void print_status(long last_ticks, long ticks, int last_ms, int ms, int max_tick
     if (ld < 0) ld = 0;
     if (ld > 99) ld = 99;
     // %3.2f doesn't work on esp-open-rtos
-    printf("[%% %d:%02d load: 0.%02d dticks: %ld, last: %ld, ticks: %ld mtps = %d]\n",
-           m, s, 
-           ld, ticks - last_ticks, last_ticks, ticks, max_ticks_per_ms);
-    // TODO: print compressed stack!!! (and last call with number!)
+    printf("[%% %d:%02d load: 0.%02d ", m, s, ld);
+    // printf("dticks: %ld, last: %ld, ticks: %ld mtps = %d",
+    //    ld, ticks - last_ticks, last_ticks, ticks, max_ticks_per_ms);
+    print_stack();
+    printf("]\n");
 }
 
 // make an blocking mygetchar() that waits for kbhit() to be true 
@@ -2541,7 +2593,9 @@ lisp fibb(lisp n) { return mkint(fib(getint(n))); }
 
 // lisp implemented library functions hardcoded
 void load_library(lisp* envp) {
-    DEF(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
+    //SETQ(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
+    //DEFINE(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
+    DE((fibo (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
 // POSSIBLE encodings to save memory:
     // symbol: fibo
     // "fibo" 
