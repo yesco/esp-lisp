@@ -142,7 +142,7 @@
 // forwards
 void gc_conses();
 int kbhit();
-lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval);
+static inline lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval);
 
 // big value ok as it's used mostly no inside evaluation but outside at toplevel
 #define READLINE_MAXLEN 1024
@@ -268,7 +268,8 @@ int gettag(lisp x) {
 //#define MAX_ALLOCS 128 // make slower!!!
 #define MAX_ALLOCS 256 // make faster???
 
-int allocs_count = 0;
+int allocs_count = 0; // number of elements currently in used in allocs array
+int allocs_next = 0; // top of allocations in allocs array
 void* allocs[MAX_ALLOCS] = { 0 };
 unsigned int used[MAX_ALLOCS/32 + 1] = { 0 };
     
@@ -278,11 +279,11 @@ unsigned int used[MAX_ALLOCS/32 + 1] = { 0 };
 // any slot with no value/nil can be reused
 int reuse_pos = 0;
 int reuse() {
-    int n = allocs_count;
+    int n = allocs_next;
     while(n--) {
         if (!allocs[reuse_pos]) return reuse_pos;
         reuse_pos++;
-        if (reuse_pos >= allocs_count) reuse_pos = 0;
+        if (reuse_pos >= allocs_next) reuse_pos = 0;
     }
     return -1;
 }
@@ -379,6 +380,7 @@ static void* salloc(int bytes) {
 }
 
 // call this malloc using ALLOC(typename) macro
+// if tag < 0 no GC on these (don't keep pointer around)
 void* myMalloc(int bytes, int tag) {
     ///printf("MALLOC: %d %s\n", tag, tag_name[tag]);
 
@@ -394,28 +396,26 @@ void* myMalloc(int bytes, int tag) {
     }
 
     // use for heap debugging, put in offending addresses
-    //if (allocs_count == 269) { printf("\n==============ALLOC: %d bytes of tag %s ========================\n", bytes, tag_name[tag]); }
+    //if (allocs_next == 269) { printf("\n==============ALLOC: %d bytes of tag %s ========================\n", bytes, tag_name[tag]); }
     //if ((int)p == 0x08050208) { printf("\n============================== ALLOC trouble pointer %d bytes of tag %d %s ===========\n", bytes, ag, tag_name[tag]); }
 
     void* p = salloc(bytes);
 
-    // immediate optimization, they are given back shortly after created so no need to be kept track of
-    // symbols are never freed, no need keep track of or GC
-    if (tag <= 0 || tag == immediate_TAG || tag == symboll_TAG) {
+    // immediate optimization, only used transiently, so given back fast, no need gc.
+    // symbols and prims are never freed, so no need keep track of or GC
+    if (tag <= 0 || tag == immediate_TAG || tag == symboll_TAG || tag == prim_TAG) {
         ((lisp)p)->index = -1;
         return p;
     }
 
     int pos = reuse();
-    if (pos < 0) {
-        pos = allocs_count;
-        allocs_count++;
-    }
+    if (pos < 0) pos = allocs_next++;
 
     allocs[pos] = p;
+    allocs_count++;
     ((lisp)p)->index = pos;
 
-    if (allocs_count >= MAX_ALLOCS) {
+    if (allocs_next >= MAX_ALLOCS) {
         printf("Exhausted myMalloc array!\n");
         report_allocs(2);
         exit(1);
@@ -446,7 +446,7 @@ lisp gc(lisp* envp) {
     
     int count = 0;
     int i ;
-    for(i = 0; i < allocs_count; i++) {
+    for(i = 0; i < allocs_next; i++) {
         lisp p = allocs[i];
         if (!p) continue;
         if (INTP(p) || CONSP(p)) {
@@ -474,6 +474,7 @@ lisp gc(lisp* envp) {
                 p->tag = 66;
             }
             allocs[i] = NULL;
+            allocs_count--;
             used_count--;
         }
     }
@@ -855,7 +856,6 @@ static void response(int req, char* method, char* path) {
 
 lisp _setq(lisp* envp, lisp name, lisp v);
 
-
 int web_socket = 0;
 
 int web_one() {
@@ -992,7 +992,7 @@ lisp primapply(lisp ff, lisp args, lisp* envp, lisp all, int noeval) {
 }
 
 // TODO: not used??? this can be used to implement generators
-lisp mkthunk(lisp e, lisp env) {
+static inline lisp mkthunk(lisp e, lisp env) {
     thunk* r = ALLOC(thunk);
     r->e = e;
     r->env = env;
@@ -1003,7 +1003,7 @@ lisp mkthunk(lisp e, lisp env) {
 // this implements continuation based evaluation thus maybe allowing tail recursion...
 // these are used to avoid stack growth on self/mutal recursion functions
 // if, lambda, progn etc return these instead of calling eval on the tail
-lisp mkimmediate(lisp e, lisp env) {
+static inline lisp mkimmediate(lisp e, lisp env) {
     immediate* r = ALLOC(immediate); //(thunk*)mkthunk(e, env); // inherit from func_TAG
     r->e = e;
     r->env = env;
@@ -1165,6 +1165,7 @@ lisp _setqq_(lisp* envp, lisp name, lisp v) { return _setqq(envp, name, v); }
 
 inline lisp _setq(lisp* envp, lisp name, lisp v) {
     lisp bind = _setqqbind(envp, name, nil);
+    // TODO: evalGC? probably safe as steqqbind changed an existing env
     // eval using our own named binding to enable recursion
     v = eval(v, envp);
     setcdr(bind, v);
@@ -1172,6 +1173,7 @@ inline lisp _setq(lisp* envp, lisp name, lisp v) {
 }
 
 inline lisp _set(lisp* envp, lisp name, lisp v) {
+    // TODO: evalGC? probably safe as steqqbind changed an existing env
     return _setq(envp, eval(name, envp), v);
 }
 // next line only needed because C99 can't get pointer to inlined function?
@@ -1530,10 +1532,23 @@ lisp mem_usage(int count) {
 
 inline int needGC() {
     if (cons_count < MAX_CONS * 0.2) return 1;
-    return (used_count < MAX_ALLOCS * 0.8) ? 0 : 1;
+    return (allocs_count < MAX_ALLOCS * 0.8) ? 0 : 1;
 }
 
-#define MAX_STACK 256
+
+#define MAX_STACK 80
+// (de rec (n) (print n) (rec (+ n 1)) nil) // not tail recursive!
+// === optimized:
+// ...
+// #767 0x0804d8b3 in evalGC ()
+//
+// #768 0x08051818 in progn ()
+// #770 0x0804d8b3 in evalGC ()
+//
+// #771 0x08051e67 in run ()
+// #772 0x08052d58 in readeval ()
+// #773 0x08048b57 in main ()
+
 static struct stack {
     lisp e;
     lisp* envp;
@@ -1701,7 +1716,7 @@ lisp progn(lisp* envp, lisp all) {
     return mkimmediate(car(all), *envp);
 }
 
-lisp letevallist(lisp args, lisp* envp, lisp extend);
+static inline lisp letevallist(lisp args, lisp* envp, lisp extend);
 
 lisp let(lisp* envp, lisp all) {
     lisp vars = car(all);
@@ -1715,14 +1730,14 @@ lisp let(lisp* envp, lisp all) {
 }
 
 // use bindEvalList unless NLAMBDA
-lisp bindList(lisp fargs, lisp args, lisp env) {
+static inline lisp bindList(lisp fargs, lisp args, lisp env) {
     // TODO: not recurse!
     if (!fargs) return env;
     lisp b = cons(car(fargs), car(args));
     return bindList(cdr(fargs), cdr(args), cons(b, env));
 }
 
-lisp bindEvalList(lisp fargs, lisp args, lisp* envp, lisp extend) {
+static inline lisp bindEvalList(lisp fargs, lisp args, lisp* envp, lisp extend) {
     while (fargs) {
         // This eval cannot be allowed to GC! (since it's part of building a cons structure
         lisp b = cons(car(fargs), eval(car(args), envp));
@@ -1733,7 +1748,7 @@ lisp bindEvalList(lisp fargs, lisp args, lisp* envp, lisp extend) {
     return extend;
 }
 
-lisp letevallist(lisp args, lisp* envp, lisp extend) {
+static inline lisp letevallist(lisp args, lisp* envp, lisp extend) {
     while (args) {
         lisp one = car(args);
         // This eval cannot be allowed to GC! (since it's part of building a cons structure
@@ -1744,7 +1759,7 @@ lisp letevallist(lisp args, lisp* envp, lisp extend) {
     return extend;
 }
 
-lisp funcapply(lisp f, lisp args, lisp* envp, int noeval) {
+static inline lisp funcapply(lisp f, lisp args, lisp* envp, int noeval) {
     lisp lenv = ATTR(thunk, f, env);
     lisp l = ATTR(thunk, f, e);
     //printf("FUNCAPPLY:"); princ(f); printf(" body="); princ(l); printf(" args="); princ(args); printf(" env="); princ(lenv); terpri();
@@ -1757,7 +1772,7 @@ lisp funcapply(lisp f, lisp args, lisp* envp, int noeval) {
 
 // TODO: evals it's arguments, shouldn't... 
 // TODO: prim apply/funcapply may return immediate... (so users should call apply instead)
-lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval) {
+static inline lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval) {
     int tag = TAG(f);
     if (tag == prim_TAG) return primapply(f, args, envp, e, noeval);
     if (tag == func_TAG) return funcapply(f, args, envp, noeval);
@@ -1854,6 +1869,17 @@ lisp atrun(lisp* envp) {
 int xPortGetFreeHeapSize() { return -1; }
 #endif
 
+// test stack usage on simple function
+// a simple function call takes 32 bytes (8 stack entry as reported by uxTaskGetStackHighWaterMark)
+// This means we can recurse about 233 times!
+extern unsigned long uxTaskGetStackHighWaterMark(void*);
+
+lisp rec(lisp i) {
+    int a = getint(i);
+    printf("%d - %u ::: stackUsed=%lu\n", a, (unsigned int)&a, uxTaskGetStackHighWaterMark(NULL));
+    return mkint(1 + getint(rec(mkint(a - 1))));
+}
+
 // test function: eat the heap
 lisp heap() {
     void* a[60];
@@ -1921,6 +1947,9 @@ lisp scan(lisp s) {
 #define FS_ADDRESS 0x60000
 
 // http://richard.burtons.org/2015/05/24/memory-map-limitation-for-rboot/
+
+// how lua can compile functions to flash file and then call it
+// - http://www.esp8266.com/viewtopic.php?f=19&t=1940
 
 typedef unsigned int uint32;
 
@@ -2253,7 +2282,7 @@ lisp lisp_init() {
     dogc = 0;
 
     // TODO: this is a leak!!!
-    allocs_count = 0;
+    allocs_next = 0;
 
     // need to before gc_cons_init()...
     _FREE_ = symbol("*FREE*");
@@ -2367,6 +2396,7 @@ lisp lisp_init() {
 
     //PRIM(readit, 0, readit);
     PRIM(heap, 1, heap);
+    PRIM(rec, 1, rec);
 
     // another small lisp in 1K lines
     // - https://github.com/rui314/minilisp/blob/master/minilisp.c
