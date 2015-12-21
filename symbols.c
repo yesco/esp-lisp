@@ -15,44 +15,19 @@
 //   (2330 . 1597)
 
 #include <unistd.h>
-//#include <ctype.h>
-//#include <stdarg.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 
 #include "lisp.h"
 
-// TODO: somehow a symbol is very similar to a conss cell.
-// it has two pointers, next/cdr, diff is first pointer points a naked string/not lisp string. Maybe it should?
-// TODO: if we make this a 2-cell or 1-cell lisp? or maybe symbols should have no property list or value, just use ENV for that
-typedef struct symboll {
-    char tag;
-    char xx;
-    short index;
+#define LARSONS_SALT 0
 
-    struct symboll* next;
-    char* name; // TODO should be char name[1]; // inline allocation!
-    // TODO: lisp value; // globla value (prims)
-} symboll;
-
-// be aware this only works for !SYMP(s) && IS(s, symboll)
-char* symbol_getString(lisp s) {
-    if (SYMP(s) || !IS(s, symboll)) return "*NOTSYMBOL*";
-    return ATTR(symboll, s, name);
-}
-
-// TODO: remove! use hashsyms instead
-static symboll* symbol_list = NULL;
-
-// don't call this directly, call symbol
-static lisp secretMkSymbol(char* s) {
-    symboll* r = ALLOC(symboll);
-    r->name = s;
-    // link it in first
-    r->next = (symboll*)symbol_list;
-    symbol_list = r;
-    return (lisp)r;
+static unsigned long larsons_hash(const char* s, int len) {
+    unsigned long h = LARSONS_SALT;
+    while (len-- > 0 && *s)
+        h = h * 101 + *(unsigned char*)s++;
+    return h;
 }
 
 // in many basic lisp program most function names/symbols are 6 charcters or less
@@ -61,9 +36,10 @@ static lisp secretMkSymbol(char* s) {
 // first try, len <= 6:
 //   pointer = aaaaabbbbbcccccdddddeeeeefffff11 = 32 bits len <= 6 each char mapped to range 32 as per below
 // if len <=3 or any character out of range:
-//   pointer = aaaaaaabbbbbbbcccccccxxxx1111111 = 32 bits len <= 3 ascii characters 0-127
+//   pointer = aaaaaaabbbbbbbccccccc00001111111 = 32 bits len <= 3 ascii characters 0-127
+// TODO: find "clever" use of 0000 "xxxx"!!!!
 //
-// encode char -> 0..31
+// encode char -> 0..30, 31=11111 on last char indicates 3ascii
 //    \0 _ a-z  -  ?  /   3ASCII
 //    0  1 2 27 28 29 30  31
 
@@ -76,7 +52,6 @@ static lisp str2sym3ascii(char* s, int len) {
     unsigned int n = (c0 << (32-1*7)) + (c1 << (32-2*7)) + (c2 << (32-3*7)) + 127;
     return (lisp) n;
 }
-
 
 static lisp str2sym(char* s, int len) {
     if (len > 6) return nil; // too long
@@ -114,37 +89,21 @@ void sym2str(lisp s, char name[7]) {
     name[6] = 0;
 }
 
-static lisp find_symbol(char *s, int len) {
-    lisp e = str2sym(s, len);
-    if (e) return e;
-    symboll* cur = (symboll*)symbol_list;
-    while (cur) {
-        if (strncmp(s, cur->name, len) == 0 && strlen(cur->name) == len)
-	  return (lisp)cur;
-        cur = cur->next;
-    }
-    return NULL;
+lisp symbol_len(char *s, int len) {
+    lisp sym = str2sym(s, len);
+    if (sym) return sym;
+    // string doesn't fit inside pointer, hash the name
+    unsigned long h = larsons_hash(s, len);
+    h = (h ^ (h >> 16) ^ (h << 16)) & 0xffffff; // 24 bits
+    sym = (lisp)(h << 8 | 0xfff); // lower 8 bits all set! (and one 0)
+    hashsym(sym, s, len);
+    return sym;
 }
 
-inline lisp HASH(lisp s) { 
-    hashsym(s); // make sure have global binding in "symtable"
-    return s;
-}
-
-// linear search to intern the string
-// will always return same symbol
+// use char* as string as already in RAM/ROM/program memory, no need copy
 lisp symbol(char* s) {
     if (!s) return nil;
-    lisp sym = find_symbol(s, strlen(s));
-    if (sym) return HASH(sym);
-    return HASH(secretMkSymbol(s));
-}
-
-// create a copy of partial string if not found
-lisp symbolCopy(char* start, int len) {
-    lisp sym = find_symbol(start, len);
-    if (sym) return HASH(sym);
-    return HASH(secretMkSymbol(my_strndup(start, len)));
+    return symbol_len(s, strlen(s));
 }
 
 // hash symbols
@@ -223,22 +182,33 @@ lisp symbolCopy(char* start, int len) {
 // 
 // Drawback, each (non global) symbol creates global entry with binding to nil
 
-#define LARSONS_SALT 0
+// this structure has three usages:
+// 1. it's an element of the symbol hash table, the symbol's name is "hashed"
+// 2. hashSym() & getBind() finds the symbol given and returns it as a "cons"
+//    of binding by changing the ponter to a conss (MKCONS)
+// 3. store PRIM primtive functions, as they are global/persistent in same way
+//    as a symbol. value will store a pointer to the struct marked as PRIM (MKPRIM).
 
-//static unsigned long larsons_hash(const char* s) {
-//    unsigned long h = LARSONS_SALT;
-//    while (*s)
-//        h = h * 101 + *(unsigned char*)s++;
-//    return h;
-//}
-
-typedef struct {
-    lisp symbol;
-    lisp value;
-    lisp next; // linked list of ones in same bucket
-    // padding as this struct is returned as a fake conss pointer (!) from getBind(), need align correctly
-    lisp extra; // TODO: what more to store for symbols??? get rid of PRIM type maybe!!!
+// TODO: PRIM alternative construct, make symbol_val part of "prim"
+// advantage 1) since it's alreay heap allocated 16b -> 24b, might as well use 4m byte of "lisp" tag
+// advantage 2) free's up a bit pattern
+typedef struct { // a "super-cons" (scons)
+    lisp symbol; // car.car (also used as the name of PRIM function)
+    lisp value;  // car.cdr
+    lisp next;   // cdr - linked list of ones in same bucket
+    lisp extra;  // used to store PRIM primitive function pointer, if not prim, TODO: may not be needed, hmmm // how to?
+    char s[0];   // only if HSYMP(symbol), then allocated
 } symbol_val;
+
+#define GETSYM(p) ((symbol_val*) (((unsigned int)(p)) & ~7))
+
+// be aware this only works for !SYMP(s) && IS(s, symboll)
+char* symbol_getString(lisp s) {
+    if (!HSYMP(s)) return "*NOTSYMBOL*";
+    lisp hs = hashsym(s, NULL, 0);
+    symbol_val* sv = GETSYM(hs);
+    return (char*)&(sv->s);
+}
 
 // http://stackoverflow.com/questions/664014/what-integer-hash-function-are-good-that-accepts-an-integer-hash-key
 //static unsigned int int_hash(unsigned int x) {
@@ -261,28 +231,39 @@ symbol_val** symbol_hash; // malloc to align correctly on esp8266
 // TODO: generlize for lisp type ARRAY and HASH!!!
 
 // returns a "binding" as a "conss" (same structure, but isn't)
-lisp hashsym(lisp sym) {
+// optionalString if given is used to create a new entry/check collision if not inline symbol pointer
+lisp hashsym(lisp sym, char* optionalString, int len) {
     if (!symbol_hash) {
         symbol_hash = myMalloc(SYM_SLOTS * sizeof(symbol_val*), -1);
         memset(symbol_hash, 0, SYM_SLOTS * sizeof(symbol_val*));
     }
 
-    unsigned long h = 0;
-    if (SYMP(sym)) h = (unsigned long)sym;
-    //else if (IS(sym, symboll)) h = larsons_hash(ATTR(symboll, sym, name)); // TODO: this is close to hashatoms effect
-    else if (IS(sym, symboll)) h = (unsigned int)sym; // TODO: ok for now, but should use  hashatoms?
-
+    unsigned long h = (unsigned long) sym; // inline characters, or hashed symbol, just use the bits as is
+    if (!SYMP(sym)) {
+        printf("\n\n%% hashsym.error: unknown type of symbol (%s): ", optionalString); princ(sym); terpri();
+        exit(1);
+    }
     h = h % SYM_SLOTS;
     symbol_val* s = symbol_hash[h];
     while (s && s->symbol != sym) s = (symbol_val*)s->next;
     if (s) {
+        if (optionalString && HSYMP(h)) { // hashed name - check is same!!!
+            // TODO: check, and if error do WHAT?
+            // if not same, means collision, it's serious
+            // (ly unprobable, but may happen, 290 words english collide out of 99171)
+        }
         return MKCONS(s);
     } else {
         // not there, insert first
-        symbol_val* nw = myMalloc(sizeof(symbol_val), -1);
+        symbol_val* nw = myMalloc(sizeof(symbol_val) + len + 1, -1);
         nw->symbol = sym;
         nw->value = nil;
         nw->next = (lisp) symbol_hash[h];
+        nw->extra = nil;
+        if (len) {
+            //printf("STRING: %s\n", optionalString);
+            strncpy((char*)&(nw->s), optionalString, len + 1);
+        }
         symbol_hash[h] = nw;
 
         return MKCONS(nw); // pretend it's a cons!
@@ -296,7 +277,7 @@ lisp hashsym(lisp sym) {
 // ==> (- 222768 220688) 2080 bytes extra for 64, but saves XXXX bytes from heap!!! (- 14716 12104) = 2614 bytes!!!
 // ==> 14656 bytes extra for 128 bytes !!!
 lisp mkprim(char* name, int n, void *f) {
-    lisp s = hashsym(symbol(name));
+    lisp s = hashsym(symbol(name), name, strlen(name));
     symbol_val* prim = (symbol_val*) (((unsigned int)s) & ~2); // GETCONS()
     
     prim->value = nil; // set later anyway
@@ -310,12 +291,12 @@ lisp mkprim(char* name, int n, void *f) {
 }
 
 inline int getprimnum(lisp p) {
-    symbol_val* prim = (symbol_val*) (((unsigned int)p) & ~7); // GETCONS()
+    symbol_val* prim = GETSYM(p);
     return ((unsigned int)(prim->extra) & 15) - 7;
 }
 
 inline void* getprimfunc(lisp p) {
-    symbol_val* prim = (symbol_val*) (((unsigned int)p) & ~7); // GETCONS()
+    symbol_val* prim = GETSYM(p);
     return (void*)((unsigned int)(prim->extra) & ~15);
 }
 

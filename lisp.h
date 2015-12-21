@@ -21,7 +21,7 @@ typedef struct {
 #define func_TAG 8
 #define MAX_TAGS 16
 
-#define TAG(x) ({ lisp _x = (x); !_x ? 0 : INTP(_x) ? intint_TAG : CONSP(_x) ? conss_TAG : SYMP(_x) ? symboll_TAG : PRIMP(_x) ? prim_TAG : ((lisp)_x)->tag; })
+#define TAG(x) ({ lisp _x = (x); !_x ? 0 : INTP(_x) ? intint_TAG : CONSP(_x) ? conss_TAG : SYMP(_x) ? symboll_TAG : HSYMP(_x) ? symboll_TAG : PRIMP(_x) ? prim_TAG : ((lisp)_x)->tag; })
 #define ALLOC(type) ({type* x = myMalloc(sizeof(type), type ## _TAG); x->tag = type ## _TAG; x;})
 #define ATTR(type, x, field) ((type*)x)->field
 #define IS(x, type) (x && TAG(x) == type ## _TAG)
@@ -35,6 +35,7 @@ typedef struct {
 #define MKCONS(x) ((lisp)(((unsigned int)x) | 2))
 
 #define SYMP(x) ((((unsigned int)x) & 3) == 3)
+#define HSYMP(x) ((((unsigned int)x) & 0xff) == 0xff)
 
 lisp mkprim(char* name, int n, void *f);
 
@@ -93,8 +94,8 @@ lisp list(lisp first, ...);
 #define DEFPRIM(fname, argn, fun) _setq(envp, symbol(#fname), mkprim(#fname, argn, fun))
 
 // symbol (internalish) functions
-lisp hashsym(lisp sym);
-lisp symbolCopy(char* start, int len);
+lisp hashsym(lisp sym, char* optionalString, int len);
+lisp symbol_len(char* start, int len);
 void syms_mark();
 PRIM syms(lisp f);
 

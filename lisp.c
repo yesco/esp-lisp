@@ -93,13 +93,19 @@
   #define LOOPTAIL "(tail 2999999 0)"
 #endif
 
-// TODO: use pointer to store some tag data, use this for exteded types
+// use pointer to store some tag data, use this for exteded types
 // last bits (3 as it allocates in at least 8 bytes boundaries):
 // ----------
 // 000 = heap pointer, generic extended lisp data/struct with tag field - DONE
 //  01 = integer << 2 - DONE
 //  11 = inline symbol stored inside pointer! - DONE
-//       32 bits = 6 chars * 5 bits = 30 bits + 11   OR   4*ASCII, if shifted
+//       32 bits = 6 chars * 5 bits = 30 bits + 11 or 3*ASCII(7)=28, if shifted
+// ....fffff11 :  fffff != 11111 means 6 char atom name inline
+// 00001111111 :  fffff == 11111 means 3 ascii atom name inline (names like "+" "-")
+// xxxx1111111 :  xxxxx > 0 FREE! FREE! FREE!
+// xxx11111111 :  24 bits left!!! == hashsymbol!!!
+// TODO: 15 type of "enums" possible each with values of 3*7=21 bits 0-2,097,152
+// 21+3 = 24 !!! use for hash syms!!!!
 //
 // -- byte[8] lispheap[MAX_HEAP]
 // 010 = lispheap, cons == 8 bytes, 2 cells - DONE
@@ -495,6 +501,7 @@ char* my_strndup(char* s, int len) {
     if (l > len) l = len;
     char* r = myMalloc(len + 1, -1);
     strncpy(r, s, len);
+    r[len] = 0;
     return r;
 }
 
@@ -1121,11 +1128,12 @@ PRIM equal(lisp a, lisp b) {
     return t;
 }
 
+// TODO: move into symbol.c (hopefully not effect inline/performance?)
 inline lisp getBind(lisp* envp, lisp name) {
     lisp bind = assoc(name, *envp);
     if (bind) return bind;
     // check "global"
-    return hashsym(name);
+    return hashsym(name, NULL, 0);
 }
 
 // like setqq but returns binding
@@ -1278,7 +1286,7 @@ static lisp readString() {
         *to = *from; // !
         from++; to++;
     }
-    *to = 0;
+    *from = 0;
     return r;
 }
 
@@ -1286,7 +1294,7 @@ static lisp readSymbol(char c, int o) {
     // TODO: cleanup, ugly
    if (!input) {
        char s[2] = {'-', 0};
-       return symbolCopy(s, 1);
+       return symbol_len(s, 1);
     }
     char* start = input - 1 + o;
     int len = 0;
@@ -1295,7 +1303,7 @@ static lisp readSymbol(char c, int o) {
 	c = next();
     }
     nextChar = c;
-    return symbolCopy(start, len-o);
+    return symbol_len(start, len-o);
 }
 
 static lisp readx();
@@ -1367,8 +1375,8 @@ lisp princ_hlp(lisp x, int readable) {
     else if (tag == intint_TAG) printf("%d", getint(x));
     else if (tag == prim_TAG) { putchar('#'); princ(*(lisp*)GETPRIM(x)); }
     // for now we have two "symbolls" one inline in pointer and another heap allocated
+    else if (HSYMP(x)) printf("%s", symbol_getString(x));
     else if (SYMP(x)) { char s[7] = {0}; sym2str(x, s); printf("%s", s); }
-    else if (tag == symboll_TAG) printf("%s", symbol_getString(x));
     // can't be made reable really unless "reveal" internal pointer
     else if (tag == thunk_TAG) { printf("#thunk["); princ(ATTR(thunk, x, e)); putchar(']'); }
     else if (tag == immediate_TAG) { printf("#immediate["); princ(ATTR(thunk, x, e)); putchar(']'); }
@@ -1379,7 +1387,8 @@ lisp princ_hlp(lisp x, int readable) {
         char* c = ATTR(string, x, p);
         while (*c) {
             if (readable && *c == '\"') putchar('\\');
-            putchar(*c++);
+            putchar(*c); //printf("[%d]", *c);
+            c++;
         }
         if (readable) putchar('"');
     }
