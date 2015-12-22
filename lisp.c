@@ -1425,9 +1425,45 @@ PRIM prin1(lisp x) {
 }
 
 PRIM print(lisp x) {
-    lisp r = prin1(x);
     terpri();
+    lisp r = prin1(x);
+    putchar(' ');
     return r;
+}
+
+// conforms to - http://www.gnu.org/software/emacs/manual/html_node/elisp/Formatting-Strings.html
+// which essentially is printf for lisp, they call it format in elisp
+PRIM printf_(lisp *envp, lisp all) {
+    char* f = getstring(car(all));
+    all = cdr(all);
+    while (*f) {
+        if (*f == '%') {
+            char fmt[16] = {0};
+            fmt[14] = 1; fmt[15] = 1;
+            char* p = &(fmt[0]);
+            while (*f && !isalpha((int)*f) && !*p)
+                *p++ = *f++;
+            char type = *p++ = *f++;
+            printf("[PRINTF: >%s< .... >%s< >%c<]", f, fmt, *p); fflush(stdout);
+            switch (type) {
+            case '%':
+                putchar('%'); break;
+            case 's':
+                princ(car(all)); break;
+            case 'S':
+                prin1(car(all)); break;
+            case 'o': case 'd': case 'x': case 'X': case 'c':
+                printf(fmt, getint(car(all))); break;
+            case 'e': case 'f': case 'g': break;
+                // printf(fmt, getfloat(car(x))); break;
+            }
+            if (type != '%')
+                all = cdr(all);
+        } else {
+            putchar(*f++);
+        }
+    }
+    return nil;
 }
 
 static void indent(int n) {
@@ -2126,8 +2162,14 @@ PRIM scan(lisp s) {
 
 #endif
 
+// returns lisp pointer into buffer
 lisp serializeLisp(lisp x, lisp* buffer, int *n) {
     if (*n <= 2) return symbol("*FULL*");
+    //if (HSYMP(x)) {
+        // TODO: serialize by putting first HSYM then string directly after...
+        // maybe make all symbol strings in linked list as local symbol table
+        // This will be known for flash memory, maybe need bit to indicate?
+    //}
     if (!x || INTP(x) || SYMP(x)) return x;
     if (IS(x, string)) {
         // string is simple, just serialize a "heap" object with, pointer (to next cells)
@@ -2146,14 +2188,13 @@ lisp serializeLisp(lisp x, lisp* buffer, int *n) {
         *n -= 2 + iz;
         return (lisp)buffer;
     }
-    //if (IS(x, symboll)) {
-        // - symboll (heap allocated symbols) are more difficult
-        //   as their pointer may be different each run
-        //   1. either lazy lookup every time, but that'll be slow
-        //   2. flash all (long) symbols as they are found! only RAM overhead for "value binding"
-        //   3. merge symbols with global "env" hashtable to fast lookup "global" function as we can't modify code
-    //}
     if (CONSP(x)) {
+        // TODO: what if buffer not aligned? cons need be lisp[2] (8 bytes boundary)
+        if ((unsigned int)buffer & 7) {
+            printf("serializeLisp: not aligned\n");
+            exit(3);
+            // TODO: pad by buffer++; n*--; !
+        }
         *n -= 2;
         lisp* cr = buffer+2; int beforecar = *n;
         buffer[0] = serializeLisp(car(x), cr, n);
@@ -2320,6 +2361,7 @@ lisp lisp_init() {
     DEFPRIM(princ, 1, princ);
     DEFPRIM(prin1, 1, prin1);
     DEFPRIM(print, 1, print);
+    DEFPRIM(printf, 7, printf_);
 
     DEFPRIM(cons, 2, cons);
     DEFPRIM(car, 1, car_);
