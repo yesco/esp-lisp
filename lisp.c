@@ -1414,7 +1414,7 @@ lisp princ_hlp(lisp x, int readable) {
         }
         putchar(')');
     } else {
-        printf("*UnknownTag:%d;%u;%x*", tag, (unsigned int) x, x);
+        printf("*UnknownTag:%d;%u;%x*", tag, (unsigned int)x, (unsigned int)x);
     }
     // is need on esp, otherwise it's buffered and comes some at a time...
     // TODO: check performance implications
@@ -2208,7 +2208,7 @@ lisp serializeLisp(lisp x, lisp* buffer, int *n) {
         buffer[0] = serializeLisp(car(x), cr, n);
         int sz = beforecar - *n;
         buffer[1] = serializeLisp(cdr(x), cr + sz, n);
-        printf("CONSP! %x  ", MKCONS(buffer)); prin1(MKCONS(buffer)); terpri();
+        printf("CONSP! %x  ", (unsigned int)MKCONS(buffer)); prin1(MKCONS(buffer)); terpri();
         return MKCONS(buffer);
     }
 
