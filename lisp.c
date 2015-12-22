@@ -3,6 +3,8 @@
 /* 2015-09-22 (C) Jonas S Karlsson, jsk@yesco.org */
 /* A mini "lisp machine", main                    */
 
+// http://stackoverflow.com/questions/3482389/how-many-primitives-does-it-take-to-build-a-lisp-machine-ten-seven-or-five
+
 // in speed it's comparable to compiled LUA
 // - simple "readline"
 // - maybe 2x as slow
@@ -154,6 +156,7 @@ static inline lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval);
 #define READLINE_MAXLEN 1024
 
 // set to 1 to get GC tracing messages
+// adding real debugging - http://software-lab.de/doc/tut.html#dbg
 static int traceGC = 0;
 static int trace = 0;
 
@@ -1373,14 +1376,14 @@ lisp princ_hlp(lisp x, int readable) {
     // simple one liners
     if (!tag) printf("nil");
     else if (tag == intint_TAG) printf("%d", getint(x));
-    else if (tag == prim_TAG) { putchar('#'); princ(*(lisp*)GETPRIM(x)); }
+    else if (tag == prim_TAG) { putchar('#'); princ_hlp(*(lisp*)GETPRIM(x), readable); }
     // for now we have two "symbolls" one inline in pointer and another heap allocated
     else if (HSYMP(x)) printf("%s", symbol_getString(x));
     else if (SYMP(x)) { char s[7] = {0}; sym2str(x, s); printf("%s", s); }
     // can't be made reable really unless "reveal" internal pointer
-    else if (tag == thunk_TAG) { printf("#thunk["); princ(ATTR(thunk, x, e)); putchar(']'); }
-    else if (tag == immediate_TAG) { printf("#immediate["); princ(ATTR(thunk, x, e)); putchar(']'); }
-    else if (tag == func_TAG) { putchar('#'); princ(ATTR(func, x, name)); }
+    else if (tag == thunk_TAG) { printf("#thunk["); princ_hlp(ATTR(thunk, x, e), readable); putchar(']'); }
+    else if (tag == immediate_TAG) { printf("#immediate["); princ_hlp(ATTR(thunk, x, e), readable); putchar(']'); }
+    else if (tag == func_TAG) { putchar('#'); princ_hlp(ATTR(func, x, name), readable); }
     // string
     else if (tag == string_TAG) {
         if (readable) putchar('"');
@@ -1395,16 +1398,16 @@ lisp princ_hlp(lisp x, int readable) {
     // cons
     else if (tag == conss_TAG) {
         putchar('(');
-        princ(car(x));
+        princ_hlp(car(x), readable);
         lisp d = cdr(x);
         while (d && gettag(d) == conss_TAG) {
             putchar(' ');
-            princ(car(d));
+            princ_hlp(car(d), readable);
             d = cdr(d);
         }
         if (d) {
             putchar(' '); putchar('.'); putchar(' ');
-            princ(d);
+            princ_hlp(d, readable);
         }
         putchar(')');
     } else {
@@ -1444,7 +1447,6 @@ PRIM printf_(lisp *envp, lisp all) {
             while (*f && !isalpha((int)*f) && !*p)
                 *p++ = *f++;
             char type = *p++ = *f++;
-            printf("[PRINTF: >%s< .... >%s< >%c<]", f, fmt, *p); fflush(stdout);
             switch (type) {
             case '%':
                 putchar('%'); break;
@@ -2246,9 +2248,9 @@ PRIM flashit(lisp x) {
     int len = MAXFLASHPRIM - n;
     if (!len) return x;
 
-  printf("flashit.serialized [len=%d]: ", len); princ(ret); terpri();
+  printf("flashit.serialized [len=%d]: ", len); prin1(ret); terpri();
     lisp f = flashArray((lisp*)ret, len);
-  printf("flashit.flash [len=%d]: ", len); princ(f); terpri();
+  printf("flashit.flash [len=%d]: ", len); prin1(f); terpri();
     free(buffer);
     return f;
 }
@@ -2464,7 +2466,7 @@ void help(lisp* envp) {
 
 void run(char* s, lisp* envp) {
     lisp r = reads(s);
-    princ(evalGC(r, envp)); terpri();
+    prin1(evalGC(r, envp)); terpri();
     // TODO: report parsing allocs separately?
     // mark(r); // keep history?
     gc(envp);
