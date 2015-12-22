@@ -8,10 +8,10 @@ Who doesn't need a lisp? I always wanted my own "lispmachine" anyway ;) It's ide
 ## design goals
 
 - embedded small lisp - OK
-- memory efficient - SOSO
+- memory efficient - OK
 - full closures ala scheme - DONE
 - tail recursion to allow for actors/coroutines - "OK"
-- interactive development instead of compile/upload/run
+- interactive development instead of compile/upload/run - OK
 - readline or better terminal interface - DONE
 - easy to add functions by registering, good FFI - DONE
 - no macros use NLAMBDA concept instead - "OK"
@@ -88,16 +88,26 @@ Flashes it to your esp-8266 device.
 
 To connect to it and run it.
 
+## Memory optimizations
+
+- integers stored free inside the pointer (only 32-3-29 bits) - DONE (increased speed 30%!)
+- a-z up to 6 letter symbol names stored for free inside pointer - DONE (saved 1600 bytes!)
+- 3 ascii symbol names stored for free inside pointer - DONE
+- global bindings stored in a hashed "symbol table" - DONE (increase speed 15%, saved 150 cons! ~ 1KB)
+- primtive functions are global and stored inside the global binding (4 bytes overhead) - DONE (saved 600 bytes!)
+- long name/non-alpha symbols allocated in global symbol table using "hash pointer" (for use in flash!)
+- cons stored in preallocated chunk with one bit overhead per cons, size about 5K - DONE (saved 8 bytes per cons)
+
 ## TODO
 
-- regression tests - DONE
-- more tests
-- simple web interface (ala http://john.freml.in/teepeedee2-vs-picolisp) - DONE
+- regression tests - in progress
+- more tests - working on it
+- simple web server interface (ala http://john.freml.in/teepeedee2-vs-picolisp) - DONE
 - speed regression test suite (tail recursion and http://software-lab.de/radical.pdf)
 - add functionality ala nodemcu see http://www.nodemcu.com/docs/
 - want nodemcu spiffs style filesystem on flash - depends on esp-open-rtos/issue
 - hardware io functions: spi i2c
-- put lisp functions in ROM at compile time, see below for inspiriation
+- put lisp functions in ROM at compile time, see below for inspiriation - in progress
 - get lcd/tft display functions ala nodemcu
 - make a stand-alone lisp machine, that can take PC2 keyboard and a 240x160 color display
 
