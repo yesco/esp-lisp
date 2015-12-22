@@ -1173,7 +1173,10 @@ inline PRIM _set(lisp* envp, lisp name, lisp v) {
 // next line only needed because C99 can't get pointer to inlined function?
 PRIM _set_(lisp* envp, lisp name, lisp v) { return _set(envp, name, v); }
 
+PRIM de(lisp* envp, lisp namebody);
+
 PRIM define(lisp* envp, lisp name, lisp v) {
+    if (!SYMP(name) && CONSP(name)) return de(envp, cons(car(name), cons(cdr(name), cons(v, nil))));
     lisp r = _setq(envp, name, v);
     if (IS(r, func)) ((func*)r)->name = name;
     return r;
