@@ -47,6 +47,10 @@ char* readline_int(char* prompt, int maxlen, int (*myreadchar)(char*)) {
             continue;
         }
         //printf("[%d]", ch); fflush(stdout);
+        if (ch == 3) { // ctrl-c, restart
+            i = 0;
+            ch = 12; // force a redraw of prompt
+        }
         if (ch == 12) { // ctrl-l, redraw
             buffer[i] = 0;
             printf("\n%s%s", prompt, &buffer[0]);

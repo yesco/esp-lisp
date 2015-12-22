@@ -101,12 +101,6 @@ int nonblock_getch() {
 	    r = c;
     }
 
-    // trap CTRL-C, clean exit
-    if (r == 3) {
-        reset_terminal_mode();
-	exit(0);
-    }
-
     return r;
 }
 

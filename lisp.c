@@ -1186,7 +1186,7 @@ PRIM de(lisp* envp, lisp namebody) {
     return define(envp, car(namebody), cons(LAMBDA, cdr(namebody)));
 }
 
-PRIM reduce_immediate(lisp x);
+lisp reduce_immediate(lisp x);
 
 // not apply does not evaluate it's arguments
 PRIM apply(lisp f, lisp args) {
@@ -2472,11 +2472,22 @@ void help(lisp* envp) {
     printf("CTRL-T: shows current time/load status\n");
 }
 
+#include <setjmp.h>
+
+jmp_buf lisp_break = {0};
+
 void run(char* s, lisp* envp) {
-    lisp r = reads(s);
-    prin1(evalGC(r, envp)); terpri();
-    // TODO: report parsing allocs separately?
-    // mark(r); // keep history?
+    if (setjmp(lisp_break) == 0) {
+        lisp r = reads(s);
+        prin1(evalGC(r, envp)); terpri();
+        // TODO: report parsing allocs separately?
+        // mark(r); // keep history?
+    } else {
+        // escaped w ctrl-c (longjmp)
+    }
+    // disable longjmp
+    memset(lisp_break, 0, sizeof(lisp_break));
+
     gc(envp);
 }
 
@@ -2560,6 +2571,17 @@ int kbhit() {
         if (thechar == 'T'-64) {
             print_status(last_ticks, lisp_ticks++, last_ms, ms, max_ticks_per_ms);
             thechar = 0;
+        }
+        if (thechar == 'C'-64) {
+            jmp_buf empty = {0};
+            if (memcmp(lisp_break, empty, sizeof(empty))) {
+                thechar = 0;
+                printf("...CTRL-C!\n");
+                longjmp(lisp_break, 1);
+                // does not continue!
+            } else {
+                // return the ctrl-c!
+            }
         }
     }
 
