@@ -1411,7 +1411,7 @@ lisp princ_hlp(lisp x, int readable) {
         }
         putchar(')');
     } else {
-        printf("*UnknownTag:%d*", tag);
+        printf("*UnknownTag:%d;%u;%x*", tag, (unsigned int) x, x);
     }
     // is need on esp, otherwise it's buffered and comes some at a time...
     // TODO: check performance implications
@@ -2168,6 +2168,7 @@ PRIM scan(lisp s) {
 lisp serializeLisp(lisp x, lisp* buffer, int *n) {
     if (*n <= 2) return symbol("*FULL*");
     //if (HSYMP(x)) {
+        // for now just "pray" - collisions in english language are 190/99K!
         // TODO: serialize by putting first HSYM then string directly after...
         // maybe make all symbol strings in linked list as local symbol table
         // This will be known for flash memory, maybe need bit to indicate?
@@ -2178,15 +2179,17 @@ lisp serializeLisp(lisp x, lisp* buffer, int *n) {
         int sz = sizeof(string);
         memcpy(buffer, x, sz);
         // point to next cell
-        lisp s = (lisp) &buffer[2];
+        sz = (sz + 3) / 4;
+        *n -= sz;
+        lisp* p = buffer + sz;
+        lisp s = (lisp) p;
         buffer[1] = s;
         int len = strlen(getstring(x));
 
-        int ilen = (len + 3) & ~3;
-        int iz = ilen / sizeof(lisp);
+        int ilen = (len + 4) & ~3;
+        int iz = ilen / 4;
         if (*n <= 2 + iz) return symbol("*FULL*");
-        memset(s, 0, ilen);
-        memcpy(s, getstring(x), len);
+        strncpy((char*)s, getstring(x), len);
         *n -= 2 + iz;
         return (lisp)buffer;
     }
@@ -2194,15 +2197,15 @@ lisp serializeLisp(lisp x, lisp* buffer, int *n) {
         // TODO: what if buffer not aligned? cons need be lisp[2] (8 bytes boundary)
         if ((unsigned int)buffer & 7) {
             printf("serializeLisp: not aligned\n");
-            exit(3);
-            // TODO: pad by buffer++; n*--; !
+            *n -= 1;
+            return serializeLisp(x, buffer + 1, n);
         }
         *n -= 2;
         lisp* cr = buffer+2; int beforecar = *n;
         buffer[0] = serializeLisp(car(x), cr, n);
         int sz = beforecar - *n;
         buffer[1] = serializeLisp(cdr(x), cr + sz, n);
-        printf("CONSP! %x\n", (unsigned int) buffer);
+        printf("CONSP! %x  ", MKCONS(buffer)); prin1(MKCONS(buffer)); terpri();
         return MKCONS(buffer);
     }
 
@@ -2224,14 +2227,16 @@ PRIM flashArray(lisp *serialized, int len) {
     lisp* from = (lisp*)GETCONS(serialized);
     for(i = 0; i < len; i++) {
         lisp p = from[i];
-        int o = (lisp)(((unsigned int)p) & ~3) - (lisp)from; // does this work for all serialized types?
-        //printf("%2d : %d [%x] : ", i, o, (unsigned int)p); princ(p); terpri();
+        // TODO: not safe... as it could overlap with some bitrepresentation of other type...
+        int o = (lisp)(((unsigned int)p) & ~3) - (lisp)from; // index from from[0]
+        //printf("%2d : %d [%x] : ", i, o, (unsigned int)p); prin1(p); terpri();
 
         where[i] = p;
         if (INTP(p) || SYMP(p))
             ;
-        else if (o >= 0 && o < MAXFLASHPRIM)
-            where[i] = (lisp)(where + o);
+        else if (o >= 0 && o < MAXFLASHPRIM) // pointers are generated for cons, string (maybe symbol) and some heap types
+            where[i] = (lisp)((unsigned int)p - (unsigned int)from + (unsigned int)where);
+        //printf("%u %u %d %s\n", (unsigned int) p, (unsigned int) where[i], TAG(where[i]), tag_name[TAG(where[i])]);
     }
 
     // TODO: pointer stupidity, works fine for CONS, string/heap, but not symboll?
