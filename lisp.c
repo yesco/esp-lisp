@@ -1590,12 +1590,12 @@ static int level = 0;
 
 void print_stack() {
     int l;
-    printf(" @ ");
     lisp last = nil;
     int count = 0;
     // TODO: DONE but too much: using fargs of f can use .envp to print actual arguments!
     for(l = 0; l < level; l++) {
         if (!stack[l].e && !stack[l].envp) break;
+        if (!l) printf(" @ ");
         lisp f = car(stack[l].e);
         if (f == last) {
             count++;
@@ -1637,14 +1637,7 @@ PRIM evalGC(lisp e, lisp* envp) {
     if (tag == symboll_TAG) return getvar(e, *envp); 
     if (tag != symboll_TAG && tag != conss_TAG && tag != thunk_TAG) return e;
 
-    if (level >= MAX_STACK) {
-        printf("%%Stack blowup! You're royally screwed! why does it still work?\n");
-        // TODO: print stack!!!
-        #ifdef UNIX
-          exit(1);
-        #endif
-        return nil;
-    }
+    if (level >= MAX_STACK) { error("Stack blowup!"); exit(3); }
 
     stack[level].e = e;
     stack[level].envp = envp;
@@ -2477,9 +2470,16 @@ void help(lisp* envp) {
 jmp_buf lisp_break = {0};
 
 void error(char* msg) {
+    printf("\n%%%s\nSTACK: ", msg);
+    print_stack(); terpri();
     jmp_buf empty = {0};
     if (memcmp(lisp_break, empty, sizeof(empty))) { // contains valid value
-        printf("%s", msg); terpri();
+        printf("\n%%%s\n", msg);
+
+        // reset stack
+        stack[0].e = nil;
+        stack[0].envp = NULL;
+
         longjmp(lisp_break, 1);
         // does not continue!
     }
