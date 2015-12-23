@@ -2306,7 +2306,7 @@ lisp lisp_init() {
     // enable to observer startup sequence
     if (1) {
         char* f = readline("start lisp>", 1);
-        free(f);
+        if (f) free(f);
     }
     print_memory_info(2); // init by first call
 

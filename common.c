@@ -57,7 +57,9 @@ char* readline_int(char* prompt, int maxlen, int (*myreadchar)(char*)) {
             fflush(stdout);
             continue;
         }
-
+        if (ch == 4) { // ctrl-d eof
+            return NULL;
+        }
         int eol = (ch == '\n' || ch == '\r');
         if (!eol) {
             putchar(ch); fflush(stdout);
