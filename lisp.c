@@ -151,6 +151,7 @@
 void gc_conses();
 int kbhit();
 static inline lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval);
+void error(char* msg);
 
 // big value ok as it's used mostly no inside evaluation but outside at toplevel
 #define READLINE_MAXLEN 1024
@@ -345,8 +346,7 @@ void* alloc_slot[SALLOC_MAX_SIZE] = {0}; // TODO: probably too many sizes...
 
 void sfree(void** p, int bytes, int tag) {
     if (IS((lisp)p, symboll) || CONSP((lisp)p)) {
-        printf("sfree.ERROR: symbol or cons!\n");
-        exit(3);
+        error("sfree.ERROR: symbol or cons!\n");
     }
     if (bytes >= SALLOC_MAX_SIZE) {
         used_bytes -= bytes;
@@ -427,9 +427,8 @@ void* myMalloc(int bytes, int tag) {
     ((lisp)p)->index = pos;
 
     if (allocs_next >= MAX_ALLOCS) {
-        printf("Exhausted myMalloc array!\n");
         report_allocs(2);
-        exit(1);
+        error("Exhausted myMalloc array!\n");
     }
     return p;
 }
@@ -597,13 +596,10 @@ PRIM cons(lisp a, lisp b) {
     conss* c = GETCONS(free_cons);
     cons_count--;
     if (!c) {
-        printf("Run out of conses\n");
-        exit(1);
+        error("Run out of conses\n");
     }
     if (cons_count < 0) {
-        printf("Really ran out of conses\n");
-        // TODO: shouldn't get here, should have been caught above...
-        exit(1);
+        error("Really ran out of conses\n");
     }
     if (c->car != _FREE_) {
         printf("Conses corruption error %u ... %u CONSP=%d\n", (int)c, (int)free_cons, CONSP(free_cons));
@@ -1503,6 +1499,11 @@ static inline lisp eval_hlp(lisp e, lisp* envp) {
         f = evalGC(f, envp);
         tag = TAG(f);
     }
+
+    // This may return a immediate, this allows tail recursion evalGC will reduce it.
+    lisp r = callfunc(f, cdr(e), envp, e, 0);
+
+    // we replace it after as no error was generated...
     if (f != orig) {
         // "macro expansion" lol (replace with implementation)
         // TODO: not safe if found through variable (like all!)
@@ -1514,8 +1515,7 @@ static inline lisp eval_hlp(lisp e, lisp* envp) {
         setcar(e, f);
     }
 
-    // This may return a immediate, this allows tail recursion evalGC will reduce it.
-    return callfunc(f, cdr(e), envp, e, 0);
+    return r;
 }
 
 // inline this is essential to not have stack grow!
@@ -1810,8 +1810,8 @@ static inline lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval) {
     if (tag == func_TAG) return funcapply(f, args, envp, noeval);
     if (tag == thunk_TAG) return f; // ignore args
 
-    printf("\n-- ERROR: tag=%d %s .... ", tag, tag_name[tag]);
-    princ(f); printf(" is not a function: "); printf("\n in "); princ(e ? e : cons(f, args)); terpri();
+    princ(f); printf(" is not a function in "); princ(e ? e : cons(f, args)); terpri();
+    error("Not a function");
     return nil;
 }
 
@@ -2476,6 +2476,15 @@ void help(lisp* envp) {
 
 jmp_buf lisp_break = {0};
 
+void error(char* msg) {
+    jmp_buf empty = {0};
+    if (memcmp(lisp_break, empty, sizeof(empty))) { // contains valid value
+        printf("%s", msg); terpri();
+        longjmp(lisp_break, 1);
+        // does not continue!
+    }
+}
+
 void run(char* s, lisp* envp) {
     if (setjmp(lisp_break) == 0) {
         lisp r = reads(s);
@@ -2573,15 +2582,11 @@ int kbhit() {
             thechar = 0;
         }
         if (thechar == 'C'-64) {
-            jmp_buf empty = {0};
-            if (memcmp(lisp_break, empty, sizeof(empty))) {
-                thechar = 0;
-                printf("...CTRL-C!\n");
-                longjmp(lisp_break, 1);
-                // does not continue!
-            } else {
-                // return the ctrl-c!
-            }
+            int c = thechar;
+            thechar = 0;
+            error("CTRL-C");
+            // error only returns if couln't longjmp to setjmp position, so keep the ctrl-c
+            thechar = c;
         }
     }
 
