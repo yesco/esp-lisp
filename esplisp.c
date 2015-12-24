@@ -28,6 +28,8 @@
 
 int startTask, afterInit;
 
+#include "compat.h"
+
 void lispTask(void *pvParameters)
 {
     startTask = xPortGetFreeHeapSize();
@@ -236,6 +238,11 @@ void user_init(void) {
     // 1024 --> (fibo 13)
     // 2048 --> (fibo 30) ???
     xTaskCreate(lispTask, (signed char *)"lispTask", 2048, NULL, 2, NULL);
+}
+
+int process_file(char* filename, process_input process) {
+    error("process_file: not implemented!");
+    return -1;
 }
 
 void exit(int e) {

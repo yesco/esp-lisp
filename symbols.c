@@ -90,6 +90,7 @@ void sym2str(lisp s, char name[7]) {
 }
 
 lisp symbol_len(char *s, int len) {
+    if (s && len == 3 && strncmp(s, "nil", len) == 0) return nil; // hack, to keep nil==0
     lisp sym = str2sym(s, len);
     if (sym) return sym;
 
@@ -238,6 +239,7 @@ lisp hashsym(lisp sym, char* optionalString, int len) {
         symbol_hash = myMalloc(SYM_SLOTS * sizeof(symbol_val*), -1);
         memset(symbol_hash, 0, SYM_SLOTS * sizeof(symbol_val*));
     }
+    if (!sym) return nil;
 
     unsigned long h = (unsigned long) sym; // inline characters, or hashed symbol, just use the bits as is
     if (!SYMP(sym)) {

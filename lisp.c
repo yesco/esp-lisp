@@ -1257,7 +1257,7 @@ static char next() {
 
 static void skipSpace() {
     char c = next();
-    while (c && isspace(c)) c = next();
+    while (c && isspace((int)c)) c = next();
     nextChar = c;
 }
 
@@ -1301,7 +1301,7 @@ static lisp readSymbol(char c, int o) {
     }
     char* start = input - 1 + o;
     int len = 0;
-    while (c && c!='(' && c!=')' && !isspace(c) && c!='.') {
+    while (c && c!='(' && c!=')' && !isspace((int)c) && c!='.') {
         len++;
 	c = next();
     }
@@ -1326,15 +1326,27 @@ static lisp readList() {
 
     lisp a = readx();
     skipSpace();
-    c = next(); if (c == '.') next(); else nextChar = c;
-    skipSpace();
-    return cons(a, readList());
+    c = next();
+    lisp d = nil;
+    if (c == '.') {
+        d = readx();
+        c = next();
+        if (c != ')') error("Dotted pair expected ')'!");
+        c = next();
+    } else {
+        nextChar = c;
+        d = readList();
+        c = next();
+    }
+    nextChar = c;
+    return cons(a, d);
 }
 
 static lisp readx() {
     skipSpace();
     unsigned char c = next();
     if (!c) return NULL;
+    if (c == '\'') return quote(readx());
     if (c == '(') return readList();
     if (c == ')') return nil;
     if (isdigit(c)) return mkint(readInt(c - '0'));
@@ -2350,6 +2362,11 @@ PRIM fibb(lisp n);
 
 // returns an env with functions
 lisp lisp_init() {
+    nil = 0;
+
+    // initialize symbol stuff with allocate one real symbol
+    hashsym(nil, NULL, 0);
+
     // enable to observer startup sequence
     if (1) {
         char* f = readline("start lisp>", 1);
@@ -2374,14 +2391,11 @@ lisp lisp_init() {
     gc_cons_init();
     gc(NULL);
 
-    t = symbol("t");
 
-    // nil = symbol("nil"); // LOL? TODO:? that wouldn't make sense? then it would be taken as true!
     LAMBDA = mkprim("lambda", -7, lambda);
-
     SETQc(lambda, LAMBDA);
+    t = symbol("t");
     SETQ(t, 1);
-    SETQ(nil, nil);
 
     DEFPRIM(null?, 1, nullp);
     DEFPRIM(cons?, 1, consp);
@@ -2855,6 +2869,9 @@ static PRIM test(lisp* e) {
     terpri();
 
     TEST(nil, nil);
+    TEST(nil, (car (quote (nil . nil)))); // lol (was an issue)
+    TEST(nil, (cdr (quote (nil . nil)))); // lol
+
     TEST(42, 42);
 
     // make sure have one failure
