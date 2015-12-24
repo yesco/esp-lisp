@@ -42,6 +42,20 @@ Lot's of stuff is missing...
 
 The esp-lisp is interpreted, to keep the code small and simple. Compared to lua from the NodeMCU it's about 2x slower, but lua is compiled and uses lots of memory for functions. Lua uses about 600 bytes for a simple function, whereas esp-lisp about 100 bytes for a function printing hello.
 
+## advanced terminal interaction
+
+In the read-eval loop:
+- CTRL-C will terminate input and start over on new line
+- CTRL-H/DEL will delete last character
+- CTRL-L will reprint line cleanly
+- CTRL-T print current status time/load
+
+During evalation
+- CTRL-T print current status time/load and a compressed stack (names of functions only)
+- CTRL-C will "break" the code and print the stack, cleanup and go to top-level
+- 'kill -20 <pid>' in another will clear screen and print the current stack
+- 'watch -n 0 kill -20 '<pid>' will continously print the stack; try it on '(fibo 90)' - quite facinating!
+
 ## how to build
 
 ### I want to run it on my linux/cygwin, I have GCC
