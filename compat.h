@@ -13,6 +13,9 @@ int nonblock_getch();
 char* readline(char* prompt, int maxlen);
 char* readline_int(char* prompt, int maxlen, int (*myreadchar)(char*));
 
+typedef void (*process_input)(char* input, char* filename, int startno, int endno);
+int process_file(char* filename, process_input process);
+
 //////////////////////////////////////////////////////////////////////
 // xml
 

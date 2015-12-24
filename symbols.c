@@ -92,6 +92,7 @@ void sym2str(lisp s, char name[7]) {
 lisp symbol_len(char *s, int len) {
     lisp sym = str2sym(s, len);
     if (sym) return sym;
+
     // string doesn't fit inside pointer, hash the name
     unsigned long h = larsons_hash(s, len);
     h = (h ^ (h >> 16) ^ (h << 16)) & 0xffffff; // 24 bits
@@ -262,7 +263,8 @@ lisp hashsym(lisp sym, char* optionalString, int len) {
         nw->extra = nil;
         if (len) {
             //printf("STRING: %s\n", optionalString);
-            strncpy((char*)&(nw->s), optionalString, len + 1);
+            strncpy((char*)&(nw->s), optionalString, len);
+            *((char*)&(nw->s) + len) = 0; // need to terminate explicitly
         }
         symbol_hash[h] = nw;
 

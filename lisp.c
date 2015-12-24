@@ -152,6 +152,7 @@ void gc_conses();
 int kbhit();
 static inline lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval);
 void error(char* msg);
+void run(char* s, lisp* envp);
 
 // big value ok as it's used mostly no inside evaluation but outside at toplevel
 #define READLINE_MAXLEN 1024
@@ -552,8 +553,8 @@ char* getstring(lisp s) {
 // CONS
 
 //#define MAX_CONS 137 // allows allocation of (list 1 2)
-//#define MAX_CONS 1024
-#define MAX_CONS 512
+#define MAX_CONS 1024
+//#define MAX_CONS 512
 #define CONSES_BYTES (MAX_CONS * sizeof(conss))
 
 conss* conses = NULL;
@@ -1256,7 +1257,7 @@ static char next() {
 
 static void skipSpace() {
     char c = next();
-    while (c && c == ' ') c = next();
+    while (c && isspace(c)) c = next();
     nextChar = c;
 }
 
@@ -1300,7 +1301,7 @@ static lisp readSymbol(char c, int o) {
     }
     char* start = input - 1 + o;
     int len = 0;
-    while (c && c!='(' && c!=')' && c!=' ' && c!='.') {
+    while (c && c!='(' && c!=')' && !isspace(c) && c!='.') {
         len++;
 	c = next();
     }
@@ -1831,7 +1832,7 @@ static inline lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval) {
     if (tag == func_TAG) return funcapply(f, args, envp, noeval);
     if (tag == thunk_TAG) return f; // ignore args
 
-    princ(f); printf(" is not a function in "); princ(e ? e : cons(f, args)); terpri();
+    princ(f); printf(" is not a function in: "); princ(e ? e : cons(f, args)); terpri();
     error("Not a function");
     return nil;
 }
@@ -1849,6 +1850,24 @@ PRIM time_(lisp* envp, lisp exp) {
     lisp ret = evalGC(exp, envp);
     int ms = clock_ms() - start;
     return cons(mkint(ms), ret);
+}
+
+PRIM load(lisp* envp, lisp name) {
+    void evalIt(char* s, char* filename, int startno, int endno) {
+        if (!s || !s[0] || s[0] == ';') return;
+        printf("\n========================= %s :%d-%d>\n%s\n", filename, startno, endno, s);
+        // TODO: way to make it silent?
+        // TODO: also, abort on error?
+        lisp r = reads(s);
+        print(r);
+        printf("===>\n\n");
+        prin1(evalGC(r, envp)); terpri();
+        printf("\n------------------------\n\n");
+        //gc(envp); // NOT SAFE!!!?? filename dissapears!
+    }
+
+    int r = process_file(getstring(name), evalIt);
+    return mkint(r);
 }
 
 PRIM at(lisp* envp, lisp spec, lisp f) {
@@ -2446,6 +2465,8 @@ lisp lisp_init() {
     DEFPRIM(ticks, 1, ticks);
     DEFPRIM(clock, 1, clock_);
     DEFPRIM(time, -1, time_);
+    DEFPRIM(load, -1, load);
+
     DEFPRIM(flash, 2, flash);
     DEFPRIM(flashit, 1, flashit);
     DEFPRIM(scan, 2, scan);
@@ -2526,7 +2547,7 @@ void run(char* s, lisp* envp) {
     // disable longjmp
     memset(lisp_break, 0, sizeof(lisp_break));
 
-    gc(envp);
+    gc(envp); // TODO: maybe move out!
 }
 
 // it would not be completely safe to run multiple threads of lisp at the
@@ -2726,7 +2747,7 @@ int fib(int n) {
 PRIM fibb(lisp n) { return mkint(fib(getint(n))); }
 
 // lisp implemented library functions hardcoded
-void load_library(lisp* envp) {
+void init_library(lisp* envp) {
     //SETQ(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
     //DEFINE(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
     DE((fibo (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
@@ -2969,7 +2990,7 @@ static PRIM test(lisp* e) {
 }
 
 void lisp_run(lisp* envp) {
-    load_library(envp);
+    init_library(envp);
     readeval(envp);
     return;
 }
