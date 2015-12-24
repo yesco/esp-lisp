@@ -1588,6 +1588,34 @@ static struct stack {
 
 static int level = 0;
 
+void print_detailed_stack() {
+    int l;
+    // TODO: DONE but too much: using fargs of f can use .envp to print actual arguments!
+    for(l = 0; l < level; l++) {
+        if (!stack[l].e && !stack[l].envp) break;
+        if (!l) terpri();
+        lisp f = car(stack[l].e);
+        lisp* envp = stack[l].envp;
+        lisp env = envp ? *envp : nil;
+        printf("%2d @ (", l); princ(f);
+        if (!IS(f, func) && !IS(f, thunk) && !IS(f, prim) && !IS(f, immediate)) {
+            prin1(cdr(stack[l].e));
+            printf(" ...not a function...\n");
+            break;
+        }
+        lisp e = ATTR(thunk, f, e);
+        lisp fargs = car(e);
+        while (fargs && env) {
+            putchar(' ');
+            prin1(car(env));
+            env = cdr(env);
+            fargs = cdr(fargs);
+        }
+        putchar(' '); putchar(')');
+        terpri();
+    }
+}
+
 void print_stack() {
     int l;
     lisp last = nil;
@@ -2470,13 +2498,14 @@ void help(lisp* envp) {
 jmp_buf lisp_break = {0};
 
 void error(char* msg) {
-    printf("\n%%%s\nSTACK: ", msg);
-    print_stack(); terpri();
+    if (level) { printf("\n%%%s\nSTACK: ", msg); print_stack(); terpri(); }
+    print_detailed_stack();
+    printf("\n%%%s\n", msg);
+
     jmp_buf empty = {0};
     if (memcmp(lisp_break, empty, sizeof(empty))) { // contains valid value
-        printf("\n%%%s\n", msg);
-
         // reset stack
+        level = 0;
         stack[0].e = nil;
         stack[0].envp = NULL;
 
@@ -2574,6 +2603,9 @@ int kbhit() {
         update = 1;
     }
 
+    // TODO: "bug", if there is a ungotten char that won't be read, ctrl-c ctrl-t will not be seen :-(
+    // alt 1) could dispose of characters :-(
+    // alt 2) have a "buffer" (but how long?) may be unbounded and trouble for piped strings to program
     if (!thechar) {
         thechar = nonblock_getch();
         if (thechar < 0) thechar = 0;

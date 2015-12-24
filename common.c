@@ -29,6 +29,10 @@
 
 #include "compat.h"
 
+void clear() { // vt100
+     printf("[H[2J"); fflush(stdout);
+}
+
 char* readline_int(char* prompt, int maxlen, int (*myreadchar)(char*)) {
     if (prompt) {
         printf("%s", prompt);
@@ -57,8 +61,11 @@ char* readline_int(char* prompt, int maxlen, int (*myreadchar)(char*)) {
             fflush(stdout);
             continue;
         }
-        if (ch == 4) { // ctrl-d eof
-            return NULL;
+        if (ch == 4) { // ctrl-d eof only at beginning of line
+            if (i)
+                continue;
+            else
+                return NULL;
         }
         int eol = (ch == '\n' || ch == '\r');
         if (!eol) {

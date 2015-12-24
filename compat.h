@@ -8,6 +8,8 @@ int clock_ms();
 
 int nonblock_getch();
 
+/* /\* /\\* void clear(); *\\/ *\/ */
+
 char* readline(char* prompt, int maxlen);
 char* readline_int(char* prompt, int maxlen, int (*myreadchar)(char*));
 

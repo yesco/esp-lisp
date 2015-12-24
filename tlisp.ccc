@@ -13,6 +13,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#include<signal.h>
+
 // dummies
 void gpio_enable(int pin, int state) {}
 void gpio_write(int pin, int value) {}
@@ -104,7 +106,33 @@ int nonblock_getch() {
     return r;
 }
 
+void sig_handler(int signo) {
+    clear();
+    printf("\n%received SIG%d\n", signo);
+    print_detailed_stack();
+    if (signo == 15) {
+        printf("\n\n%received SIG%d... exiting...\n", signo);
+        exit(signo);
+    }
+}
+
 int main() {
+    if (signal(SIGTERM, sig_handler) == SIG_ERR) {
+       printf("\n%%Can't define SIGTERM handler!\nignoring...\n\n");
+    }
+    if (signal(SIGINT, sig_handler) == SIG_ERR) {
+       printf("\n%%Can't define SIGINTR handler!\nignoring...\n\n");
+    }
+    if (signal(SIGQUIT, sig_handler) == SIG_ERR) {
+       printf("\n%%Can't define SIGQUIT handler!\nignoring...\n\n");
+    }
+    if (signal(SIGUSR1, sig_handler) == SIG_ERR) {
+       printf("\n%%Can't define SIGUSR1 handler!\nignoring...\n\n");
+    }
+    if (signal(SIGTSTP, sig_handler) == SIG_ERR) {
+       printf("\n%%Can't define SIGTSTP handler!\nignoring...\n\n");
+    }
+
     lastClock = clock();
     lastMem = 0;
 

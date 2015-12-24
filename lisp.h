@@ -107,6 +107,10 @@ int getprimnum(lisp p);
 void* getprimfunc(lisp p);
 
 // memory mgt
+void error(char* msg);
+void print_detailed_stack();
+void print_stack();
+
 lisp mem_usage(int count);
 void* myMalloc(int bytes, int tag);
 char* my_strndup(char* s, int len); // calls myMalloc
