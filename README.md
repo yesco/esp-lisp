@@ -42,6 +42,8 @@ Lot's of stuff is missing...
 
 The esp-lisp is interpreted, to keep the code small and simple. Compared to lua from the NodeMCU it's about 2x slower, but lua is compiled and uses lots of memory for functions. Lua uses about 600 bytes for a simple function, whereas esp-lisp about 100 bytes for a function printing hello.
 
+Comparing it to guile by running (fib 33) takes about 10s on guile, but only 5s on esp-lisp!
+
 ## advanced terminal interaction
 
 In the read-eval loop:
