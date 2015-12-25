@@ -1092,7 +1092,16 @@ PRIM mod(lisp a, lisp b) { return mkint(getint(a) % getint(b)); }
 
 // TODO: http://www.gnu.org/software/emacs/manual/html_node/elisp/Input-Functions.html#Input-Functions
 // http://www.lispworks.com/documentation/HyperSpec/Body/f_rd_rd.htm#read
-PRIM read_(lisp s) { return reads(getstring(s)); }
+PRIM read_(lisp s) {
+    if (s) {
+        return reads(getstring(s));
+    } else {
+        char* str = readline(">", READLINE_MAXLEN);
+        lisp r = str ? reads(str) : nil;
+        if (str) free(str);
+        return r;
+    }
+}
 PRIM terpri() { printf("\n"); return nil; }
 
 // TODO: consider http://picolisp.com/wiki/?ArticleQuote
@@ -1172,15 +1181,23 @@ PRIM _set_(lisp* envp, lisp name, lisp v) { return _set(envp, name, v); }
 
 PRIM de(lisp* envp, lisp namebody);
 
-PRIM define(lisp* envp, lisp name, lisp v) {
-    if (!SYMP(name) && CONSP(name)) return de(envp, cons(car(name), cons(cdr(name), cons(v, nil))));
-    lisp r = _setq(envp, name, v);
-    if (IS(r, func)) ((func*)r)->name = name;
-    return r;
+PRIM define(lisp* envp, lisp args) {
+    if (SYMP(car(args))) { // (define a 3)
+        lisp name = car(args);
+        printf("DEFINE: "); princ(name); printf(" "); princ(cdr(args)); terpri();
+        lisp r = _setq(envp, name, car(cdr(args)));
+        printf("TAG = %d, %s\n", TAG(r), tag_name[TAG(r)]);
+        if (IS(r, func)) ((func*)r)->name = name;
+        return r;
+    } else { // (define (a x) 1 2 3)
+        lisp name = car(car(args));
+        lisp fargs = cdr(car(args));
+        return de(envp, cons(name, cons(fargs, cdr(args))));
+    }
 }
 
 PRIM de(lisp* envp, lisp namebody) {
-    return define(envp, car(namebody), cons(LAMBDA, cdr(namebody)));
+    return define(envp, cons(car(namebody), cons(cons(symbol("lambda"), cdr(namebody)), nil)));
 }
 
 lisp reduce_immediate(lisp x);
@@ -1783,16 +1800,16 @@ PRIM progn(lisp* envp, lisp all) {
 }
 
 static inline lisp letevallist(lisp args, lisp* envp, lisp extend);
+static inline lisp letstarevallist(lisp args, lisp* envp, lisp extend);
 
 PRIM let(lisp* envp, lisp all) {
-    lisp vars = car(all);
-    lisp lenv = letevallist(vars, envp, *envp);
-    lisp ret = nil;
-    while (all) {
-        ret = evalGC(car(all), &lenv);
-        all = cdr(all);
-    }
-    return ret;
+    lisp lenv = letevallist(car(all), envp, *envp);
+    return progn(&lenv, cdr(all));
+}
+
+PRIM let_star(lisp* envp, lisp all) {
+    lisp lenv = letstarevallist(car(all), envp, *envp);
+    return progn(&lenv, cdr(all));
 }
 
 // use bindEvalList unless NLAMBDA
@@ -1817,9 +1834,20 @@ static inline lisp bindEvalList(lisp fargs, lisp args, lisp* envp, lisp extend) 
 static inline lisp letevallist(lisp args, lisp* envp, lisp extend) {
     while (args) {
         lisp one = car(args);
+        lisp r = eval(car(cdr(one)), envp);
         // This eval cannot be allowed to GC! (since it's part of building a cons structure
-        lisp b = cons(car(one), eval(car(cdr(one)), envp));
-        extend = cons(b, extend);
+        extend = cons(cons(car(one), r), extend);
+        args = cdr(args);
+    }
+    return extend;
+}
+
+static inline lisp letstarevallist(lisp args, lisp* envp, lisp extend) {
+    while (args) {
+        lisp one = car(args);
+        lisp r = eval(car(cdr(one)), &extend);
+        // This eval cannot be allowed to GC! (since it's part of building a cons structure
+        extend = cons(cons(car(one), r), extend);
         args = cdr(args);
     }
     return extend;
@@ -2443,6 +2471,7 @@ lisp lisp_init() {
     // DEFPRIM(list, 7, listlist);
 
     DEFPRIM(let, -7, let);
+    DEFPRIM(let*, -7, let_star);
     DEFPRIM(progn, -7, progn);
     DEFPRIM(eval, 2, _eval);
     DEFPRIM(evallist, 2, evallist);
@@ -2455,7 +2484,7 @@ lisp lisp_init() {
     DEFPRIM(setq, -2, _setq);
     DEFPRIM(setqq, -2, _setqq_);
 
-    DEFPRIM(define, -2, define);
+    DEFPRIM(define, -7, define);
     DEFPRIM(de, -7, de);
 
     DEFPRIM(quote, -1, _quote);
