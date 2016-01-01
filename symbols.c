@@ -98,7 +98,7 @@ lisp symbol_len(char *s, int len) {
     unsigned long h = larsons_hash(s, len);
     h = (h ^ (h >> 16) ^ (h << 16)) & 0xffffff; // 24 bits
     sym = (lisp)(h << 8 | 0xfff); // lower 8 bits all set! (and one 0)
-    hashsym(sym, s, len);
+    hashsym(sym, s, len, 1); // create binding
     return sym;
 }
 
@@ -207,7 +207,7 @@ typedef struct { // a "super-cons" (scons)
 // be aware this only works for !SYMP(s) && IS(s, symboll)
 char* symbol_getString(lisp s) {
     if (!HSYMP(s)) return "*NOTSYMBOL*";
-    lisp hs = hashsym(s, NULL, 0);
+    lisp hs = hashsym(s, NULL, 0, 0); // no create binding
     symbol_val* sv = GETSYM(hs);
     return (char*)&(sv->s);
 }
@@ -234,7 +234,7 @@ symbol_val** symbol_hash; // malloc to align correctly on esp8266
 
 // returns a "binding" as a "conss" (same structure, but isn't)
 // optionalString if given is used to create a new entry/check collision if not inline symbol pointer
-lisp hashsym(lisp sym, char* optionalString, int len) {
+lisp hashsym(lisp sym, char* optionalString, int len, int create_binding) {
     if (!symbol_hash) {
         symbol_hash = myMalloc(SYM_SLOTS * sizeof(symbol_val*), -1);
         memset(symbol_hash, 0, SYM_SLOTS * sizeof(symbol_val*));
@@ -256,6 +256,10 @@ lisp hashsym(lisp sym, char* optionalString, int len) {
             // (ly unprobable, but may happen, 290 words english collide out of 99171)
         }
         return MKCONS(s);
+    } else if (!create_binding) {
+        printf("%% Symbol unbound: "); princ(sym); terpri();
+        error("%% Symbol unbound"); // this will show stack and go back toplevel
+        return nil;
     } else {
         // not there, insert first
         symbol_val* nw = myMalloc(sizeof(symbol_val) + len + 1, -1);
@@ -274,6 +278,11 @@ lisp hashsym(lisp sym, char* optionalString, int len) {
     }
 }
 
+void init_symbols() {
+    // initialize symbol stuff with allocate one real symbol
+    hashsym(nil, NULL, 0, 0);
+}
+
 // quirky - piggy back on a symbol/hash_sym
 //   x: -rw-r--r-- 1 knoppix knoppix 220688 Dec 15 19:17 0x20000.bin
 //  64: -rw-r--r-- 1 knoppix knoppix 222768 Dec 15 20:41 0x20000.bin
@@ -281,7 +290,7 @@ lisp hashsym(lisp sym, char* optionalString, int len) {
 // ==> (- 222768 220688) 2080 bytes extra for 64, but saves XXXX bytes from heap!!! (- 14716 12104) = 2614 bytes!!!
 // ==> 14656 bytes extra for 128 bytes !!!
 lisp mkprim(char* name, int n, void *f) {
-    lisp s = hashsym(symbol(name), name, strlen(name));
+    lisp s = hashsym(symbol(name), name, strlen(name), 1);
     symbol_val* prim = (symbol_val*) (((unsigned int)s) & ~2); // GETCONS()
     
     prim->value = nil; // set later anyway

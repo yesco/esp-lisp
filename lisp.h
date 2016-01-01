@@ -94,7 +94,8 @@ lisp list(lisp first, ...);
 #define DEFPRIM(fname, argn, fun) _setq(envp, symbol(#fname), mkprim(#fname, argn, fun))
 
 // symbol (internalish) functions
-lisp hashsym(lisp sym, char* optionalString, int len);
+void init_symbols();
+lisp hashsym(lisp sym, char* optionalString, int len, int create_binding);
 lisp symbol_len(char* start, int len);
 void syms_mark();
 PRIM syms(lisp f);
@@ -108,7 +109,7 @@ void* getprimfunc(lisp p);
 
 // memory mgt
 void error(char* msg);
-void print_detailed_stack();
+PRIM print_detailed_stack();
 void print_stack();
 
 lisp mem_usage(int count);

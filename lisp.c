@@ -553,7 +553,7 @@ char* getstring(lisp s) {
 // CONS
 
 //#define MAX_CONS 137 // allows allocation of (list 1 2)
-#define MAX_CONS 1024
+#define MAX_CONS 2048
 //#define MAX_CONS 512
 #define CONSES_BYTES (MAX_CONS * sizeof(conss))
 
@@ -1137,17 +1137,19 @@ PRIM equal(lisp a, lisp b) {
     return t;
 }
 
-// TODO: move into symbol.c (hopefully not effect inline/performance?)
-inline lisp getBind(lisp* envp, lisp name) {
+inline lisp getBind(lisp* envp, lisp name, int create) {
     lisp bind = assoc(name, *envp);
     if (bind) return bind;
     // check "global"
-    return hashsym(name, NULL, 0);
+    return hashsym(name, NULL, 0, create); // no create
 }
 
-// like setqq but returns binding
+// like setqq but returns binding, used by setXX
+// TODO: setqq will create a binding, for scheme it "should"
+// 1. define, de - create binding in current environment
+// 2. set! only modify existing binding otherwise give error
 inline lisp _setqqbind(lisp* envp, lisp name, lisp v) {
-    lisp bind = getBind(envp, name);
+    lisp bind = getBind(envp, name, 1);
     if (!bind) {
         bind = cons(name, nil);
         *envp = cons(bind, *envp);
@@ -1184,9 +1186,7 @@ PRIM de(lisp* envp, lisp namebody);
 PRIM define(lisp* envp, lisp args) {
     if (SYMP(car(args))) { // (define a 3)
         lisp name = car(args);
-        printf("DEFINE: "); princ(name); printf(" "); princ(cdr(args)); terpri();
         lisp r = _setq(envp, name, car(cdr(args)));
-        printf("TAG = %d, %s\n", TAG(r), tag_name[TAG(r)]);
         if (IS(r, func)) ((func*)r)->name = name;
         return r;
     } else { // (define (a x) 1 2 3)
@@ -1505,11 +1505,11 @@ static void indent(int n) {
 static lisp funcapply(lisp f, lisp args, lisp* envp, int noeval);
 
 static inline lisp getvar(lisp e, lisp env) {
-    lisp v = getBind(&env, e);
+    lisp v = getBind(&env, e, 0);
     if (v) return cdr(v);
+
     printf("\n-- ERROR: Undefined symbol: "); princ(e); terpri();
-    //printf("ENV= "); princ(env); terpri();
-    // TODO: "throw error"?
+    error("%% Undefined symbol");
     return nil;
 }
 
@@ -1618,32 +1618,51 @@ static struct stack {
 
 static int level = 0;
 
-void print_detailed_stack() {
+PRIM print_detailed_stack() {
     int l;
     // TODO: DONE but too much: using fargs of f can use .envp to print actual arguments!
-    for(l = 0; l < level; l++) {
-        if (!stack[l].e && !stack[l].envp) break;
+    for(l = 0; l < level + 5; l++) {
+        //if (!stack[l].e && !stack[l].envp) break;
+
         if (!l) terpri();
+        printf("%4d : ", l);
+        prin1(stack[l].e); printf(" ==> ");
+
         lisp f = car(stack[l].e);
         lisp* envp = stack[l].envp;
-        lisp env = envp ? *envp : nil;
-        printf("%2d @ (", l); princ(f);
-        if (!IS(f, func) && !IS(f, thunk) && !IS(f, prim) && !IS(f, immediate)) {
-            prin1(cdr(stack[l].e));
-            printf(" ...not a function...\n");
+        lisp env = envp ? *envp : nil; // env before
+        while (f && IS(f, symboll) && !IS(f, func) && !IS(f, thunk) && !IS(f, prim) && !IS(f, immediate)) {
+            f = getvar(f, env); // eval?
+        }
+
+        putchar('['); princ(f);
+        if (f && IS(f, func)) {
+            // get env AFTER it has been extended... (using next expression)
+            lisp *nenvp = (l+1 < MAX_STACK) ? stack[l+1].envp : NULL;
+            lisp nenv = nenvp ? *nenvp : nil;
+
+            if (nenv) {
+                lisp def = ATTR(thunk, f, e); // get definition
+                lisp fargs = car(def);
+                //printf("\nFARGS="); princ(fargs); printf("  ENV="); princ(nenv); terpri();
+                while (fargs && nenv) {
+                    putchar(' ');
+                    prin1(car(car(nenv))); putchar('='); prin1(cdr(car(nenv)));
+                    env = cdr(nenv);
+                    fargs = cdr(fargs);
+                }
+            }
+            putchar(']');
+        } else if (f && IS(f, prim)) {
+            printf(" ... ] ");
+        } else {
+            printf(" ... ] ");
+            printf(" ...car did not evaluate to a function... (it's an %s)\n", f ? tag_name[TAG(f)] : "nil");
             break;
         }
-        lisp e = ATTR(thunk, f, e);
-        lisp fargs = car(e);
-        while (fargs && env) {
-            putchar(' ');
-            prin1(car(env));
-            env = cdr(env);
-            fargs = cdr(fargs);
-        }
-        putchar(' '); putchar(')');
         terpri();
     }
+    return nil;
 }
 
 void print_stack() {
@@ -1872,7 +1891,8 @@ static inline lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval) {
     if (tag == func_TAG) return funcapply(f, args, envp, noeval);
     if (tag == thunk_TAG) return f; // ignore args
 
-    princ(f); printf(" is not a function in: "); princ(e ? e : cons(f, args)); terpri();
+    printf("%% "); princ(f); printf(" did not evaluate to a function in: "); princ(e ? e : cons(f, args));
+    printf(" evaluated to "); princ(cons(f, args)); terpri();
     error("Not a function");
     return nil;
 }
@@ -2392,8 +2412,7 @@ PRIM fibb(lisp n);
 lisp lisp_init() {
     nil = 0;
 
-    // initialize symbol stuff with allocate one real symbol
-    hashsym(nil, NULL, 0);
+    init_symbols();
 
     // enable to observer startup sequence
     if (1) {
@@ -2509,6 +2528,7 @@ lisp lisp_init() {
     DEFPRIM(clock, 1, clock_);
     DEFPRIM(time, -1, time_);
     DEFPRIM(load, -1, load);
+    DEFPRIM(pstack, 0, print_detailed_stack); 
 
     DEFPRIM(flash, 2, flash);
     DEFPRIM(flashit, 1, flashit);
@@ -2562,7 +2582,7 @@ void help(lisp* envp) {
 jmp_buf lisp_break = {0};
 
 void error(char* msg) {
-    if (level) { printf("\n%%%s\nSTACK: ", msg); print_stack(); terpri(); }
+    if (level) { printf("\n%%%s\nBacktrace: ", msg); print_stack(); terpri(); }
     print_detailed_stack();
     printf("\n%%%s\n", msg);
 
