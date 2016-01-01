@@ -1759,7 +1759,7 @@ PRIM evalGC(lisp e, lisp* envp) {
     return r;
 }
 
-PRIM iff(lisp* envp, lisp exp, lisp thn, lisp els) {
+PRIM if_(lisp* envp, lisp exp, lisp thn, lisp els) {
     // evalGC is safe here as we don't construct any structes, yet
     // TODO: how did we get here? primapply does call evallist thus created something...
     // but we pass ENV on so it should be safe..., it'll mark it!
@@ -1773,6 +1773,18 @@ PRIM cond(lisp* envp, lisp all) {
         e = evalGC(e, envp);
         lisp thn = cdr(nxt);
         if (e) return thn ? progn(envp, thn) : e;
+        all = cdr(all);
+    }
+    return nil;
+}
+
+PRIM case_(lisp* envp, lisp all) {
+    lisp x = evalGC(car(all), envp);
+    all = cdr(all);
+    while (all) {
+        lisp ths = car(all);
+        lisp m = member(x, car(ths));
+        if (m) return progn(envp, cdr(ths));
         all = cdr(all);
     }
     return nil;
@@ -2463,8 +2475,9 @@ lisp lisp_init() {
     DEFPRIM(eq, 2, eq);
     DEFPRIM(equal, 2, equal);
     DEFPRIM(=, 2, eq);
-    DEFPRIM(if, -3, iff);
+    DEFPRIM(if, -3, if_);
     DEFPRIM(cond, -7, cond);
+    DEFPRIM(case, -7, case_);
     DEFPRIM(and, -7, and);
     DEFPRIM(or, -7, or);
     DEFPRIM(not, 1, not);
@@ -2973,7 +2986,7 @@ static PRIM test(lisp* e) {
     TEST(b, a);
        
     // if
-    lisp IF = mkprim("if", -3, iff);
+    lisp IF = mkprim("if", -3, if_);
     testee(envp, IF, IF);
     testee(envp, cons(IF, cons(mkint(7), cons(mkint(11), cons(mkint(22), nil)))), mkint(11));
     testee(envp, cons(IF, cons(nil, cons(mkint(11), cons(mkint(22), nil)))), mkint(22));
