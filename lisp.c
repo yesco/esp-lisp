@@ -1622,7 +1622,7 @@ PRIM print_detailed_stack() {
     int l;
     // TODO: DONE but too much: using fargs of f can use .envp to print actual arguments!
     for(l = 0; l < level + 5; l++) {
-        //if (!stack[l].e && !stack[l].envp) break;
+        if (!stack[l].e && !stack[l].envp) break;
 
         if (!l) terpri();
         printf("%4d : ", l);
