@@ -154,6 +154,8 @@ static inline lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval);
 void error(char* msg);
 void run(char* s, lisp* envp);
 
+lisp* global_envp = NULL;
+
 // big value ok as it's used mostly no inside evaluation but outside at toplevel
 #define READLINE_MAXLEN 1024
 
@@ -1138,18 +1140,24 @@ PRIM equal(lisp a, lisp b) {
 }
 
 inline lisp getBind(lisp* envp, lisp name, int create) {
+    //printf("GETBIND: envp=%u global_envp=%u ", (unsigned int)envp, (unsigned int)global_envp); princ(name); terpri();
+    if (create && envp == global_envp) return hashsym(name, NULL, 0, create);
+    if (create) return nil;
+
     lisp bind = assoc(name, *envp);
     if (bind) return bind;
+
     // check "global"
-    return hashsym(name, NULL, 0, create); // no create
+    return hashsym(name, NULL, 0, 0); // not create, read only
 }
 
 // like setqq but returns binding, used by setXX
 // TODO: setqq will create a binding, for scheme it "should"
 // 1. define, de - create binding in current environment
 // 2. set! only modify existing binding otherwise give error
-inline lisp _setqqbind(lisp* envp, lisp name, lisp v) {
-    lisp bind = getBind(envp, name, 1);
+// 3. setq ??? (allow to define?)
+inline lisp _setqqbind(lisp* envp, lisp name, lisp v, int create) {
+    lisp bind = getBind(envp, name, create);
     if (!bind) {
         bind = cons(name, nil);
         *envp = cons(bind, *envp);
@@ -1159,18 +1167,19 @@ inline lisp _setqqbind(lisp* envp, lisp name, lisp v) {
 }
 
 inline PRIM _setqq(lisp* envp, lisp name, lisp v) {
-    _setqqbind(envp, name, nil);
+    _setqqbind(envp, name, nil, 0);
     return v;
 }
 // next line only needed because C99 can't get pointer to inlined function?
 PRIM _setqq_(lisp* envp, lisp name, lisp v) { return _setqq(envp, name, v); }
 
 inline PRIM _setq(lisp* envp, lisp name, lisp v) {
-    lisp bind = _setqqbind(envp, name, nil);
+    lisp bind = _setqqbind(envp, name, nil, 0);
     // TODO: evalGC? probably safe as steqqbind changed an existing env
     // eval using our own named binding to enable recursion
     v = eval(v, envp);
     setcdr(bind, v);
+
     return v;
 }
 
@@ -1186,7 +1195,12 @@ PRIM de(lisp* envp, lisp namebody);
 PRIM define(lisp* envp, lisp args) {
     if (SYMP(car(args))) { // (define a 3)
         lisp name = car(args);
-        lisp r = _setq(envp, name, car(cdr(args)));
+
+        // like _setq but with create == 1
+        lisp bind = _setqqbind(envp, name, nil, 1);
+        lisp r = eval(car(cdr(args)), envp);
+        setcdr(bind, r);
+
         if (IS(r, func)) ((func*)r)->name = name;
         return r;
     } else { // (define (a x) 1 2 3)
@@ -2450,11 +2464,11 @@ lisp lisp_init() {
     gc_cons_init();
     gc(NULL);
 
-
-    LAMBDA = mkprim("lambda", -7, lambda);
-    SETQc(lambda, LAMBDA);
     t = symbol("t");
     SETQ(t, 1);
+
+    //LAMBDA = mkprim("lambda", -7, lambda);
+    DEFPRIM(lambda, -7, lambda);
 
     DEFPRIM(null?, 1, nullp);
     DEFPRIM(cons?, 1, consp);
@@ -2582,7 +2596,7 @@ void hello() {
 
 void help(lisp* envp) {
     hello();
-    printf("SYMBOLS: ");
+    printf("Global/SYMBOLS: ");
     PRINT((syms (lambda (x) (princ x) (princ " "))));
     terpri();
     printf("COMMANDS: hello/help/trace on/trace off/gc on/gc off/wifi SSID PSWD/wget SERVER URL/mem EXPR/quit/exit\n");
@@ -2634,8 +2648,6 @@ void run(char* s, lisp* envp) {
 // The system actors that are checked are:
 // - TODO: web server
 // - TODO: wget 
-
-lisp* global_envp = NULL;
 
 void maybeGC() {
     if (blockGC || !global_envp) return;
@@ -2798,8 +2810,10 @@ void readeval(lisp* envp) {
         } else if (strcmp(ln, "exit") == 0 || strcmp(ln, "quit") == 0 || strcmp(ln, "bye") == 0) {
             exit(0);
         } else if (strlen(ln) > 0) { // lisp
+            global_envp = envp; // allow idle to gc
             print_memory_info(0);
             run(ln, envp);
+            global_envp = NULL;
             //print_memory_info(1);
         }
 
