@@ -2609,11 +2609,20 @@ void help(lisp* envp) {
 jmp_buf lisp_break = {0};
 
 void error(char* msg) {
-    if (level) { printf("\n%%%s\nBacktrace: ", msg); print_stack(); terpri(); }
-    print_detailed_stack();
-    printf("\n%%%s\n", msg);
-
     jmp_buf empty = {0};
+    static error_level = 0;
+
+    if (error_level == 0) {
+        error_level++;
+        if (level) { printf("\n%%%s\nBacktrace: ", msg); print_stack(); terpri(); }
+        print_detailed_stack();
+        printf("\n%% %s\n", msg);
+        error_level--;
+    } else {
+        error_level = 0;
+        printf("\n%% error(): error inside error... recovering...\n");
+    }
+
     if (memcmp(lisp_break, empty, sizeof(empty))) { // contains valid value
         // reset stack
         level = 0;
@@ -2622,6 +2631,8 @@ void error(char* msg) {
 
         longjmp(lisp_break, 1);
         // does not continue!
+    } else {
+        printf("\n%%%% error(): didn't get here as setjmp not called, continuing... possibly bad\n");
     }
 }
 

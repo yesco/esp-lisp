@@ -27,6 +27,8 @@ cp tlisp.ccc tlisp.c && gcc -m32 -g -DUNIX=1 tlisp.c common.c httpd.c symbols.c 
 
 ###cp tlisp.ccc tlisp.c && gcc --enable-checking -v -da -Q -g -O0 -DTEST=1 tlisp.c lisp.c && ./a.out ; rm tlisp.c
 
+stty sane
+
 # -- compile for ESP8266
 echo
 echo "----------------------------------------------------------------------"
