@@ -2622,7 +2622,7 @@ jmp_buf lisp_break = {0};
 
 void error(char* msg) {
     jmp_buf empty = {0};
-    static error_level = 0;
+    static int error_level = 0;
 
     if (error_level == 0) {
         error_level++;
