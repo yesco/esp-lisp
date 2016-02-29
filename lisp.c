@@ -1566,10 +1566,12 @@ static inline lisp eval_hlp(lisp e, lisp* envp) {
 inline lisp reduce_immediate(lisp x) {
     while (x && IS(x, immediate)) {
         lisp tofree = x;
+
         if (trace) // make it visible
             x = evalGC(ATTR(thunk, x, e), &ATTR(thunk, x, env));
         else
             x = eval_hlp(ATTR(thunk, x, e), &ATTR(thunk, x, env));
+
         // immediates are immediately consumed after evaluation, so they can be free:d directly
         tofree->tag = 0;
         sfree((void*)tofree, sizeof(thunk), immediate_TAG);
@@ -1612,7 +1614,6 @@ inline int needGC() {
 }
 
 
-#define MAX_STACK 80
 // (de rec (n) (print n) (rec (+ n 1)) nil) // not tail recursive!
 // === optimized:
 // ...
@@ -1625,6 +1626,8 @@ inline int needGC() {
 // #772 0x08052d58 in readeval ()
 // #773 0x08048b57 in main ()
 
+#define MAX_STACK 80
+
 static struct stack {
     lisp e;
     lisp* envp;
@@ -1632,6 +1635,7 @@ static struct stack {
 
 static int level = 0;
 
+// TODO: because of tail call optimization, we can't tell where the error occurred as it's not relevant on the stack???
 PRIM print_detailed_stack() {
     int l;
     // TODO: DONE but too much: using fargs of f can use .envp to print actual arguments!
@@ -2073,7 +2077,7 @@ PRIM heap() {
 
 
 ////////////////////////////////////////////////////////////////////////////////
-// flash fielesystem
+// flash file access
 // 
 // - https://blog.cesanta.com/esp8266_using_flash
 // ~/GIT/Espruino-on-ESP8266/user/user_main.c 
@@ -2096,6 +2100,20 @@ int readFromFlash(char* buff, int maxlen, int offset) {
 PRIM scan(lisp s) {
     return nil;
 }
+
+// Highlevel
+
+// (save '(http boot) (lambda (x) (init-web-server)) (lambda (x) (print "Done")))
+//lisp save(lisp key, lisp data, lisp cb) {
+//}
+
+// tail-recurses on: cb(key, info, cb)
+//lisp dir(lisp matchkey, lisp cb) {
+//}
+
+// tail-recurses on: cb(key, info, data, cb, end?)
+//lisp load(lisp matchkey, lisp cb) {
+//}
 
 #else
 
@@ -2587,21 +2605,15 @@ lisp lisp_init() {
     return env;
 }
 
-void hello() {
+void help(lisp* envp) {
     printf("\n\nWelcome to esp-lisp!\n");
     printf("2015 (c) Jonas S Karlsson under MPL 2.0\n");
-    printf("Read more on https://github.com/yesco/esp-lisp/\n");
-    printf("\n");
-}
-
-void help(lisp* envp) {
-    hello();
+    printf("Read more on https://github.com/yesco/esp-lisp/\n\n");
     printf("Global/SYMBOLS: ");
     PRINT((syms (lambda (x) (princ x) (princ " "))));
-    terpri();
-    printf("COMMANDS: hello/help/trace on/trace off/gc on/gc off/wifi SSID PSWD/wget SERVER URL/mem EXPR/quit/exit\n");
-    terpri();
-    printf("CTRL-T: shows current time/load status\n");
+    printf("\nCOMMANDS: help/trace on/trace off/gc on/gc off/wifi SSID PSWD/wget SERVER URL/mem EXPR/quit/exit\n\n");
+    printf("CTRL-C: to break execution, CTRL-T: shows current time/load status, CTRL-D: to exit\n\n");
+    printf("Type 'help' to get this message again\n");
 }
 
 #include <setjmp.h>
@@ -2622,6 +2634,8 @@ void error(char* msg) {
         error_level = 0;
         printf("\n%% error(): error inside error... recovering...\n");
     }
+
+    printf("\n%%%% type 'help' to get help\n");
 
     if (memcmp(lisp_break, empty, sizeof(empty))) { // contains valid value
         // reset stack
@@ -2764,7 +2778,7 @@ int lispreadchar(char *chp) {
 }
 
 void readeval(lisp* envp) {
-    hello();
+    help(envp);
 
     while(1) {
         global_envp = envp; // allow idle to gc
@@ -2775,8 +2789,6 @@ void readeval(lisp* envp) {
             break;
         } else if (strncmp(ln, ";", 1) == 0) {
             ; // comment - ignore
-        } else if (strcmp(ln, "hello") == 0) {
-            hello();
         } else if (strcmp(ln, "help") == 0 || ln[0] == '?') {
             help(envp);
         } else if (strcmp(ln, "gc on") == 0) {

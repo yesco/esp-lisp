@@ -141,7 +141,8 @@ Optimize more for storage/simplify and avoid using malloc here are some ideas fr
 - https://github.com/obdev/v-usb
 - https://github.com/denilsonsa/atmega8-magnetometer-usb-mouse
 - http://blog.tynemouthsoftware.co.uk/2012/02/arduino-based-zx81-usb-keyboard.html
-
+- http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.109.6660&rep=rep1&type=pdf
+ 
 ## Flash based filesystems or flash database log systems
 
 - http://research.microsoft.com/en-us/um/people/moscitho/Publications/USENIX_ATC_2015.pdf
