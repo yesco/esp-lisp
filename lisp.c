@@ -19,7 +19,7 @@
 //   s=0; for i=1,100000 do s=s+i end; print(s);
 //   function tail(n, s) if n == 0 then return s else return tail(n-1, s+1); end end print(tail(100000, 0))
 
-// DEF(tail, (lambda (n s) (if (eq n 0) s (tail (- n 1) (+ s 1)))));
+// DEFINE(tail, (lambda (n s) (if (eq n 0) s (tail (- n 1) (+ s 1)))));
 // princ(evalGC(reads("(tail 100000 0)"), env));
 // -----------------------------------------------------------------
 // lisp.c (tail 1,000 0)
@@ -845,7 +845,7 @@ static void response(int req, char* method, char* path) {
 // (web 8080 (lambda (w s m p) (princ w) (princ " ") (princ s) (princ " ") (princ m) (princ " ") (princ p) (terpri) "FISH-42"))
 // ' | ./run
 
-PRIM _setq(lisp* envp, lisp name, lisp v);
+PRIM _setb(lisp* envp, lisp name, lisp v);
 
 int web_socket = 0;
 
@@ -1152,7 +1152,6 @@ inline lisp getBind(lisp* envp, lisp name, int create) {
 }
 
 // like setqq but returns binding, used by setXX
-// TODO: setqq will create a binding, for scheme it "should"
 // 1. define, de - create binding in current environment
 // 2. set! only modify existing binding otherwise give error
 // 3. setq ??? (allow to define?)
@@ -1173,7 +1172,7 @@ inline PRIM _setqq(lisp* envp, lisp name, lisp v) {
 // next line only needed because C99 can't get pointer to inlined function?
 PRIM _setqq_(lisp* envp, lisp name, lisp v) { return _setqq(envp, name, v); }
 
-inline PRIM _setq(lisp* envp, lisp name, lisp v) {
+inline PRIM _setb(lisp* envp, lisp name, lisp v) {
     lisp bind = _setqqbind(envp, name, nil, 0);
     // TODO: evalGC? probably safe as steqqbind changed an existing env
     // eval using our own named binding to enable recursion
@@ -1185,7 +1184,7 @@ inline PRIM _setq(lisp* envp, lisp name, lisp v) {
 
 inline PRIM _set(lisp* envp, lisp name, lisp v) {
     // TODO: evalGC? probably safe as steqqbind changed an existing env
-    return _setq(envp, eval(name, envp), v);
+    return _setb(envp, eval(name, envp), v);
 }
 // next line only needed because C99 can't get pointer to inlined function?
 PRIM _set_(lisp* envp, lisp name, lisp v) { return _set(envp, name, v); }
@@ -1552,7 +1551,7 @@ static inline lisp eval_hlp(lisp e, lisp* envp) {
         // "macro expansion" lol (replace with implementation)
         // TODO: not safe if found through variable (like all!)
         // TODO: keep on symbol ptr to primitive function/global, also not good?
-        // DEF(F,...) will then break many local passed variables
+        // DEFINE(F,...) will then break many local passed variables
         // maybe must search all list till find null, then can look on symbol :-(
         // but that's everytime? actually, not it's a lexical scope!
         // TODO: only replace if not found in ENV and is on an SYMBOL!
@@ -2522,8 +2521,8 @@ lisp lisp_init() {
     DEFPRIM(cons, 2, cons);
     DEFPRIM(car, 1, car_);
     DEFPRIM(cdr, 1, cdr_);
-    DEFPRIM(setcar, 2, setcar);
-    DEFPRIM(setcdr, 2, setcdr);
+    DEFPRIM(set-car!, 2, setcar);
+    DEFPRIM(set-cdr!, 2, setcdr);
 
     DEFPRIM(list, 7, _quote);
     DEFPRIM(length, 1, length);
@@ -2544,9 +2543,11 @@ lisp lisp_init() {
 
     DEFPRIM(read, 1, read_);
 
-    DEFPRIM(set, -2, _set_);
-    DEFPRIM(setq, -2, _setq);
-    DEFPRIM(setqq, -2, _setqq_);
+    // TODO: consider introducting these that will create local bindings if no global exists, hmm bad?
+    //DEFPRIM(set, -2, _set_);
+    //DEFPRIM(setq, -2, _setq);
+    //DEFPRIM(setqq, -2, _setqq_);
+    DEFPRIM(set!, -2, _setb);
 
     DEFPRIM(define, -7, define);
     DEFPRIM(de, -7, de);
@@ -2861,7 +2862,6 @@ PRIM fibb(lisp n) { return mkint(fib(getint(n))); }
 
 // lisp implemented library functions hardcoded
 void init_library(lisp* envp) {
-    //SETQ(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
     //DEFINE(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
     DE((fibo (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
 // POSSIBLE encodings to save memory:
@@ -3015,12 +3015,13 @@ static PRIM test(lisp* e) {
     TEST((number? (read "42")), t);
     
     // set, setq, setqq
-    TEST((setq a (+ 3 4)), 7);
-    TEST((setqq b a), a);
+    TEST((define a (+ 3 4)), 7);
+    //TEST((setqq b a), a);
+    TEST((set! b (quote a)));
     TEST(b, a);
-    TEST((set b 3), 3);
-    TEST(a, 3);
-    TEST(b, a);
+    //TEST((set b 3), 3);
+    //TEST(a, 3);
+    //TEST(b, a);
        
     // if
     lisp IF = mkprim("if", -3, if_);
@@ -3043,30 +3044,30 @@ static PRIM test(lisp* e) {
     TEST(((lambda (a) ((lambda (n) (+ n a)) 33)) 66), 99); // lexical scoping
 
     // recursion
-    DEF(fac, (lambda (n) (if (= n 0) 1 (* n (fac (- n 1))))));
+    DEFINE(fac, (lambda (n) (if (= n 0) 1 (* n (fac (- n 1))))));
     TEST((fac 6), 720);
     TEST((fac 21), 952369152);
 
     // tail recursion optimization test (don't blow up stack!)
-    DEF(bb, (lambda (b) (+ b 3)));
-    DEF(aa, (lambda (a) (bb a)));
+    DEFINE(bb, (lambda (b) (+ b 3)));
+    DEFINE(aa, (lambda (a) (bb a)));
     TEST((aa 7), 10);
 
-    DEF(tail, (lambda (n s) (if (eq n 0) s (tail (- n 1) (+ s 1)))));
+    DEFINE(tail, (lambda (n s) (if (eq n 0) s (tail (- n 1) (+ s 1)))));
     TEST(tail, xyz);
     testss(envp, LOOPTAIL, LOOPS);
 
     // progn, progn tail recursion
     TEST((progn 1 2 3), 3);
-    TEST((setq a nil), nil);
-    TEST((progn (setq a (cons 1 a)) (setq a (cons 2 a)) (setq a (cons 3 a))),
+    TEST((set! a nil), nil);
+    TEST((progn (set! a (cons 1 a)) (set! a (cons 2 a)) (set! a (cons 3 a))),
          (3 2 1));
 
     // implicit progn in lambda
-    DEF(f, (lambda (n) (setq n (+ n 1)) (setq n (+ n 1)) (setq n (+ n 1))));
+    DEFINE(f, (lambda (n) (set! n (+ n 1)) (set! n (+ n 1)) (set! n (+ n 1))));
     TEST((f 0), 3);
 
-//    PRINT((setq tailprogn (lambda (n) (progn 3 2 1 (if (= n 0) (quote ok) (tailprogn (- n 1)))))));
+//    PRINT((define tailprogn (lambda (n) (progn 3 2 1 (if (= n 0) (quote ok) (tailprogn (- n 1)))))));
 //    TEST(tailprogn, 3);
 //    TEST((tailprogn 10000), ok);
 
@@ -3095,7 +3096,7 @@ static PRIM test(lisp* e) {
     TEST((mapcar car (list (cons 1 2) (cons 3 4) (cons 5 6))), (1 3 5));
     TEST((mapcar cdr (list (cons 1 2) (cons 3 4) (cons 5 6))), (2 4 6));
 
-    TEST((setq a 2));
+    TEST((set! a 2));
     TEST((list 1 2 (let ((a (+ 1 a)) (b a)) (list a (+ b b))) 5 (+(+ a (+ a a))), (1 2 (3 4) 5 6)));
     TEST(a, 2);
 
