@@ -80,18 +80,17 @@ lisp list(lisp first, ...);
 #define END ((lisp) -1)
 
 // User, macros, assume a "globaL" env variable implicitly, and updates it
-#define SET(sname, val) _setq(envp, sname, val)
-#define SETQc(sname, val) _setq(envp, symbol(#sname), val)
-#define SETQ(sname, val) _setq(envp, symbol(#sname), reads(#val))
-#define SETQQ(sname, val) _setq(envp, symbol(#sname), quote(reads(#val)))
-#define DEF(fname, sbody) _setq(envp, symbol(#fname), reads(#sbody))
+#define SET(sname, val) _setb(envp, sname, val)
+#define SETQc(sname, val) _setb(envp, symbol(#sname), val)
+#define SETQ(sname, val) _setb(envp, symbol(#sname), reads(#val))
+#define SETQQ(sname, val) _setb(envp, symbol(#sname), quote(reads(#val)))
 #define DEFINE(fname, sbody) define(envp, symbol(#fname), reads(#sbody))
 #define DE(all) de(envp, reads(#all))
 #define EVAL(what) eval(reads(#what), envp)
 #define PRINT(what) ({ princ(EVAL(what)); terpri(); })
 #define SHOW(what) ({ printf(#what " => "); princ(EVAL(what)); terpri(); })
 #define TEST(what, expect) testss(envp, #what, #expect)
-#define DEFPRIM(fname, argn, fun) _setq(envp, symbol(#fname), mkprim(#fname, argn, fun))
+#define DEFPRIM(fname, argn, fun) _setb(envp, symbol(#fname), mkprim(#fname, argn, fun))
 
 // symbol (internalish) functions
 void init_symbols();
