@@ -1526,6 +1526,7 @@ static inline lisp getvar(lisp e, lisp env) {
     return nil;
 }
 
+// don't call directly, call evalGC() or eval()
 static inline lisp eval_hlp(lisp e, lisp* envp) {
     if (!e) return e;
     char tag = TAG(e);
@@ -1602,7 +1603,7 @@ PRIM _eval(lisp e, lisp env) {
 }
 
 lisp mem_usage(int count) {
-    // TODO: last nubmer conses not correct new usaga
+    // TODO: last number conses not correct new useage
     if (traceGC) printf(" [GC freed %d used=%d bytes=%d conses=%d]\n", count, used_count, used_bytes, MAX_CONS - cons_count);
     return nil;
 }
