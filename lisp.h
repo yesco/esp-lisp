@@ -70,8 +70,11 @@ lisp eval(lisp e, lisp* envp);
 lisp progn(lisp* envp, lisp all);
 
 // lisp functions
-lisp princ(lisp x);
-lisp terpri();
+PRIM prin1(lisp x);
+PRIM princ(lisp x);
+PRIM printf_(lisp *envp, lisp all);
+PRIM terpri();
+
 lisp car(lisp x);
 lisp cdr(lisp x);
 
