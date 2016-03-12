@@ -95,6 +95,8 @@
   #define LOOPTAIL "(tail 2999999 0)"
 #endif
 
+typedef unsigned int uint32;
+
 // use pointer to store some tag data, use this for exteded types
 // last bits (3 as it allocates in at least 8 bytes boundaries):
 // ----------
@@ -1173,6 +1175,7 @@ inline PRIM _setqq(lisp* envp, lisp name, lisp v) {
 PRIM _setqq_(lisp* envp, lisp name, lisp v) { return _setqq(envp, name, v); }
 
 inline PRIM _setb(lisp* envp, lisp name, lisp v) {
+    if (!symbolp(name)) { printf("set! of non symbol="); prin1(name); terpri(); error("set! of non atom: "); }
     lisp bind = _setqqbind(envp, name, nil, 0);
     // TODO: evalGC? probably safe as steqqbind changed an existing env
     // eval using our own named binding to enable recursion
@@ -2084,21 +2087,55 @@ PRIM heap() {
 
 #ifdef UNIX
 
-// TODO: simulate flash with a simple file
-int writeToFlash(char* code, int offset) {
-    return 0;
+// simulate flash in RAM! (including EOR flash overwrite)
+#define SPI_FLASH_RESULT_OK 0
+#define SPI_FLASH_ERROR -1
+
+#define FS_ADDRESS 0x60000
+#define SPI_FLASH_SEC_SIZE 128 // TODO: is this right?
+#define SPI_FLASH_BLOCK (SPI_FLASH_SEC_SIZE/4)
+
+#define SPI_FLASH_SIZE_MB (4*1024)
+
+//uint32 flash_memory[SPI_FLASH_SIZE_MB/SPI_FLASH_SEC_SIZE] = {0xffffffff};
+//uint32 flash_memory[SPI_FLASH_SIZE_MB/SPI_FLASH_SEC_SIZE] = {0xbadbeef};
+unsigned char flash_memory[SPI_FLASH_SIZE_MB * 1024] = {0xff};
+
+// TODO: store in file
+
+int sdk_spi_flash_erase_sector(int sec) {
+    int addr = sec * SPI_FLASH_SEC_SIZE;
+    addr -= FS_ADDRESS;
+    int i;
+    for(i = 0; i < SPI_FLASH_SEC_SIZE; i++) {
+        flash_memory[addr + i] = 0xff;
+        //printf(" [ERASE: %x: %x] \n", addr + i, 0xff);
+    }
+    return SPI_FLASH_RESULT_OK;
 }
 
-int findLastFlash() {
-    return 0;
+int sdk_spi_flash_write(int addr, uint32* data, int len) {
+    len = (len + 3) & ~3; // TODO: if addr !% 4 then non correct?
+    unsigned char* dst = &flash_memory[addr - FS_ADDRESS];
+    unsigned char* src = (void*)data;
+    while (len-- > 0) {
+        unsigned char s = *src, d = *dst; 
+        unsigned char v = ~(~*src++ | ~*dst); // or of 0s!
+        *dst++ = v;
+        printf(" [WRITE %x: %x ...] \n", dst - flash_memory - 1, v);
+    }
+    return SPI_FLASH_RESULT_OK;
 }
 
-int readFromFlash(char* buff, int maxlen, int offset) {
-    return 0;
-}
-
-PRIM scan(lisp s) {
-    return nil;
+int sdk_spi_flash_read(int addr, uint32* data, int len) {
+    len = (len + 3) & ~3; // TODO: if addr !% 4 then non correct?
+    unsigned char* src = &flash_memory[addr - FS_ADDRESS];
+    unsigned char* dst = (void*)data;
+    while (len-- > 0) {
+        uint32 d = *dst++ = *src++;
+        //printf(" [READ %x: %x] \n", src - flash_memory - 1, d);
+    }
+    return SPI_FLASH_RESULT_OK;
 }
 
 // Highlevel
@@ -2127,8 +2164,6 @@ PRIM scan(lisp s) {
 // how lua can compile functions to flash file and then call it
 // - http://www.esp8266.com/viewtopic.php?f=19&t=1940
 
-typedef unsigned int uint32;
-
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -2141,27 +2176,74 @@ typedef unsigned int uint32;
 #include <FreeRTOS.h>
 #include <task.h>
 
-// TODO: connect to lisp writer
-int writeToFlash(char* code, int offset) {
-    int addr = FS_ADDRESS;
+// Wrote 41984 bytes at 0x00000000 in 4.1 seconds (81.6 kbit/s)...
+// Wrote 211968 bytes at 0x00020000 in 20.9 seconds (81.0 kbit/s)...
+// 
+// spi (0-...) address:
+// 0x00000000 42 KB
+// 0x00020000 (128 KB) 211 KB start ---
+// 0x0003C000 ESP private area? (16KB)
+// 0x00054C00 end --- 211 KB
+// 0x00100000 MINE?
+// 0x00400000 end 4MB
 
+// memory mapped range:
+// 0x40200000
+// 0x40600000 4MByte
+
+/* (swrite "myfile" (list 1 2 3)) */
+/* (swrite "abc" "foobar") */
+/* (swrite "myfile" 1235) */
+
+/* (sreset "myfile") -> */
+/* (sread "myfile") -> (1 2 3) */
+/* (sread "myfile") -> 12345 */
+
+/* FLASH: */
+/* ("myfile" . (1 2 3))\0 */
+/* ("abc" . "foobar")\0 */
+/* ("myfile" . 1235)\0 */
+
+/* (point x y c) */
+/* (line x y x y c) */
+/* (circle ....) */
+/* (text ...) */
+
+/* (zap) */
+/* (ping) */
+
+#endif
+
+// TODO: connect to lisp writer
+// writes string to flash, at offset
+int writeToFlash(char* code, int offset) {
+    if (offset % 4 !=0) {
+        printf("Illegal offset %d!", offset);
+        error("Illegal offset");
+        return -1;
+    }
+    int addr = FS_ADDRESS + offset;
     int sector = addr/SPI_FLASH_SEC_SIZE;
     int to = addr + strlen(code)+1;
     int error;
     while (addr < to) {
-        if (!offset) sdk_spi_flash_erase_sector(sector); // TODO: hmmm...
-        // TODO: writes characters read from beyond end of code data!
+        // only erase if start write at boundary, otherwise erase already written stuff
+        // it will break at next sector and while loop back here and erase next one
+        if (offset % SPI_FLASH_SEC_SIZE == 0) sdk_spi_flash_erase_sector(sector);
         char buff[SPI_FLASH_SEC_SIZE] = {0xff};
         int sz = strlen(code) + 1;
-        sz = (sz + 3) & ~3;
-        if (sz > SPI_FLASH_SEC_SIZE) sz = SPI_FLASH_SEC_SIZE;
+        if (sz + offset > SPI_FLASH_SEC_SIZE) {
+            sz = SPI_FLASH_SEC_SIZE - offset;
+            offset -= SPI_FLASH_SEC_SIZE;
+        }
         memcpy(&buff[0], code, sz);
-        if (SPI_FLASH_RESULT_OK != (error = sdk_spi_flash_write(addr + offset, (uint32 *)buff, sz))) {
+        sz = (sz + 3) & ~3; // round up to 4byte boundary
+        if (SPI_FLASH_RESULT_OK != (error = sdk_spi_flash_write(addr, (uint32 *)buff, sz))) {
             printf("\nwriteToFlash error %d\n", error);
         }
         addr += sz;
         code += sz;
-        sector++; // TODO: hmmm
+        sector++;
     }
 
     // write and overwritable end marker
@@ -2175,10 +2257,12 @@ int writeToFlash(char* code, int offset) {
 
 // TODO: connect to lisp reader!
 // if called with NULL just count otherwise write
+// returns len in bytes, to read next, round offset up to 4b boundary and call again
+// see findLastFlash()
 int readFromFlash(char* buff, int maxlen, int offset) {
     int error;
 
-    char c;
+    unsigned char c;
     int i;
     for (i = 0; (i < maxlen) || !buff; i++) {
         // TODO: can it really read one char at a time?
@@ -2202,8 +2286,8 @@ int readFromFlash(char* buff, int maxlen, int offset) {
         if (!c) break;
 
         if (!buff && i > 100) {
-            printf("...INTERRUPTED!\n");
-            return 0;
+            printf("...enough...!\n");
+            return -1;
         }
                                 
     }
@@ -2259,7 +2343,7 @@ PRIM scan(lisp s) {
     int cff = 0;
     for (i = 0; i < maxlen; i++) {
         // TODO: can it really read one char at a time?
-        // suspect to cast to uint32 pointer for &(char c)
+        // suspect to cast to uint32 pointer for &(char c), probably works because alignment allows overwrite
         if (SPI_FLASH_RESULT_OK != (error = sdk_spi_flash_read(FS_ADDRESS + i, (uint32 *)&c, 1))) {
             printf("\nerror %d\n", error);
             break;
@@ -2271,45 +2355,6 @@ PRIM scan(lisp s) {
     }
     return cons(mkint(c0), mkint(cff));
 }
-
-// Wrote 41984 bytes at 0x00000000 in 4.1 seconds (81.6 kbit/s)...
-// Wrote 211968 bytes at 0x00020000 in 20.9 seconds (81.0 kbit/s)...
-// 
-// spi (0-...) address:
-// 0x00000000 42 KB
-// 0x00020000 (128 KB) 211 KB start ---
-// 0x0003C000 ESP private area? (16KB)
-// 0x00054C00 end --- 211 KB
-// 0x00100000 MINE?
-// 0x00400000 end 4MB
-
-// memory mapped range:
-// 0x40200000
-// 0x40600000 4MByte
-
-/* (swrite "myfile" (list 1 2 3)) */
-/* (swrite "abc" "foobar") */
-/* (swrite "myfile" 1235) */
-
-/* (sreset "myfile") -> */
-/* (sread "myfile") -> (1 2 3) */
-/* (sread "myfile") -> 12345 */
-
-/* FLASH: */
-/* ("myfile" . (1 2 3))\0 */
-/* ("abc" . "foobar")\0 */
-/* ("myfile" . 1235)\0 */
-
-/* (point x y c) */
-/* (line x y x y c) */
-/* (circle ....) */
-/* (text ...) */
-
-/* (zap) */
-/* (ping) */
-
-
-#endif
 
 // returns lisp pointer into buffer
 lisp serializeLisp(lisp x, lisp* buffer, int *n) {
@@ -2408,6 +2453,7 @@ PRIM flashit(lisp x) {
 }
 
 // (flash) -> read
+// (flash 30) -> read at offset 30
 // (flash "foo") -> append
 // (flash "foo" 0) -> reset + write
 PRIM flash(lisp s, lisp o) {
@@ -2416,12 +2462,13 @@ PRIM flash(lisp s, lisp o) {
         int i = 0;
         while (1) {
             int len = readFromFlash(NULL, -1, offset);
+            //printf("[LEN=%d]...\n", len);
             if (len < 0) break;
 
             char buff[len];
             readFromFlash(buff, len, offset);
             i++;
-            printf("%d :; %s\n", i , buff);
+            printf("%d :: [%d] '%s'\n", i, len, buff);
 
             offset += (len + 3) & ~3;
         }
@@ -2439,7 +2486,7 @@ PRIM flash(lisp s, lisp o) {
             readFromFlash(buff, len, offset);
             return mklenstring(buff, len);
     } else if (IS(s, string)) {
-        int offset = o ? getint(o) : findLastFlash();
+        int offset = integerp(o) ? getint(o) : findLastFlash();
         writeToFlash(getstring(s), offset);
         return mkint(findLastFlash());
     } else {
@@ -2622,6 +2669,7 @@ void help(lisp* envp) {
 
 jmp_buf lisp_break = {0};
 
+// TODO: make it take one lisp parameter?
 void error(char* msg) {
     jmp_buf empty = {0};
     static int error_level = 0;
