@@ -1202,7 +1202,7 @@ PRIM _set_(lisp* envp, lisp name, lisp v) { return _set(envp, name, v); }
 
 PRIM de(lisp* envp, lisp namebody);
 
-PRIM define(lisp* envp, lisp args) {
+PRIM _define(lisp* envp, lisp args) {
     if (SYMP(car(args))) { // (define a 3)
         lisp name = car(args);
 
@@ -1221,7 +1221,7 @@ PRIM define(lisp* envp, lisp args) {
 }
 
 PRIM de(lisp* envp, lisp namebody) {
-    return define(envp, cons(car(namebody), cons(cons(symbol("lambda"), cdr(namebody)), nil)));
+    return _define(envp, cons(car(namebody), cons(cons(symbol("lambda"), cdr(namebody)), nil)));
 }
 
 lisp reduce_immediate(lisp x);
@@ -2554,15 +2554,21 @@ PRIM fibb(lisp n);
 // returns an env with functions
 lisp lisp_init() {
     nil = 0;
+    int verbose;
 
     init_symbols();
 
     // enable to observer startup sequence
     if (1) {
-        char* f = readline("start lisp>", 1);
-        if (f) free(f);
+        char* f = readline("start lisp>", 2);
+        if (f) {
+            verbose = (f[0] != 0);
+            free(f);
+        } else {
+            verbose = 0;
+        }
     }
-    print_memory_info(2); // init by first call
+    print_memory_info( verbose ? 2 : 0 ); // init by first call
 
     lisp env = nil;
     lisp* envp = &env;
@@ -2582,9 +2588,8 @@ lisp lisp_init() {
     gc(NULL);
 
     t = symbol("t");
-    SETQ(t, 1);
+    DEFINE(t, 1);
 
-    //LAMBDA = mkprim("lambda", -7, lambda);
     DEFPRIM(lambda, -7, lambda);
 
     DEFPRIM(null?, 1, nullp);
@@ -2649,7 +2654,7 @@ lisp lisp_init() {
     //DEFPRIM(setqq, -2, _setqq_);
     DEFPRIM(set!, -2, _setb);
 
-    DEFPRIM(define, -7, define);
+    DEFPRIM(define, -7, _define);
     DEFPRIM(de, -7, de);
 
     DEFPRIM(quote, -1, _quote);
@@ -2702,7 +2707,7 @@ lisp lisp_init() {
 
     dogc = 1;
 
-    print_memory_info(2); // summary of init usage
+    print_memory_info( verbose ? 2 : 0 ); // summary of init usage
     return env;
 }
 
