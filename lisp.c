@@ -1,6 +1,6 @@
 /* Distributed under Mozilla Public Licence 2.0   */
 /* https://www.mozilla.org/en-US/MPL/2.0/         */
-/* 2015-09-22 (C) Jonas S Karlsson, jsk@yesco.org */
+/* 2016-03-15 (C) Jonas S Karlsson, jsk@yesco.org */
 /* A mini "lisp machine", main                    */
 
 // http://stackoverflow.com/questions/3482389/how-many-primitives-does-it-take-to-build-a-lisp-machine-ten-seven-or-five
@@ -2713,7 +2713,7 @@ lisp lisp_init() {
 
 void help(lisp* envp) {
     printf("\n\nWelcome to esp-lisp!\n");
-    printf("2015 (c) Jonas S Karlsson under MPL 2.0\n");
+    printf("2016 (c) Jonas S Karlsson under MPL 2.0\n");
     printf("Read more on https://github.com/yesco/esp-lisp/\n\n");
     printf("Global/SYMBOLS: ");
     PRINT((syms (lambda (x) (princ x) (princ " "))));
