@@ -12,7 +12,7 @@ Lisp is syntactically a very simple language. It has in principle just function 
     lisp> (+ 3 4)
     => 7
     
-I'll teach you lisp in 15 minutes ;-) - [teach you lisp video](https://www.youtube.com/watch?v=_X_rx9SjDfw), from my talk at Chiang Mai Makerfaire, Thailand 2016.
+I'll teach you lisp in 15 minutes ;-) - [teach you lisp video](https://www.youtube.com/watch?v=_X_rx9SjDfw), from my talk at Chiang Mai Makerfaire, Thailand 2016 [slides](https://rawgit.com/yesco/hangmai-makerfair-esp-lisp-2016/master/index.html).
 
 ## design goals
 
