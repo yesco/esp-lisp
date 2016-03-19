@@ -82,6 +82,10 @@ lisp cdr(lisp x);
 lisp list(lisp first, ...);
 #define END ((lisp) -1)
 
+PRIM _define(lisp* envp, lisp args);
+PRIM de(lisp* envp, lisp namebody);
+static PRIM reads(char *s);
+
 // User, macros, assume a "globaL" env variable implicitly, and updates it
 #define SET(sname, val) _setb(envp, sname, val)
 #define SETQc(sname, val) _setb(envp, symbol(#sname), val)

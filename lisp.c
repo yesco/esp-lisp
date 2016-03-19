@@ -95,8 +95,6 @@
   #define LOOPTAIL "(tail 2999999 0)"
 #endif
 
-typedef unsigned int uint32;
-
 // use pointer to store some tag data, use this for exteded types
 // last bits (3 as it allocates in at least 8 bytes boundaries):
 // ----------
@@ -866,7 +864,7 @@ PRIM web(lisp* envp, lisp port, lisp callback) {
 
     // store a pointer in global env to the function so it doesn't get gc:ed
     web_callback = evalGC(callback, envp);
-    SETQc(webcb, web_callback);
+    _define(envp, list(symbol("webcb"), reads("web_callback"), END));
 
     int s = httpd_init(getint(port));
     if (s < 0) { printf("ERROR.errno=%d\n", errno); return nil; }
@@ -1016,7 +1014,8 @@ PRIM mkfunc(lisp e, lisp env) {
 ////////////////////////////// GC
 
 // TODO: not correct, haha
-#define FLASHP(x) (CONSP(x) && ((conss*)next - &conses[0] >= MAX_CONS))
+//#define FLASHP(x) ((CONSP(x) && ((conss*)next - &conses[0] >= MAX_CONS)) || ((unsigned int)next >= FS_ADDRESS || ((unsigned int)next <= FS_ADDRESS + SPI_FLASH_SIZE_BYTES)))
+#define FLASHP(x) ((unsigned int)next >= (unsigned int)flash_memory && ((unsigned int)next <= (unsigned int)(flash_memory + SPI_FLASH_SIZE_BYTES - FS_ADDRESS)))
 
 void mark_deep(lisp next, int deep) {
     while (next) {
@@ -1031,8 +1030,8 @@ void mark_deep(lisp next, int deep) {
         if (PRIMP(next)) return;
 	if (CONSP(next)) {
 	    int i = (conss*)next - &conses[0];
-            if (i >= MAX_CONS) {
-                printf("mark.cons.funny i=%d    %u\n", i, (int)next);
+            if (i >= MAX_CONS) { // pointing to other RAM/FLASH not allocated to cons array
+                printf("mark.cons.badcons i=%d    %u max=%d\n", i, (int)next, MAX_CONS);
                 exit(1);
             }
             if (CONS_IS_USED(i)) return; // already checked!
@@ -1425,6 +1424,7 @@ static PRIM reads(char *s) {
 // (pprint object output-stream)
 //     ==  (write object :stream output-stream :escape t :pretty t)
 lisp princ_hlp(lisp x, int readable) {
+//    printf(" [:: %u ::] ");
     int tag = TAG(x);
     // simple one liners
     if (!tag) printf("nil");
@@ -2117,57 +2117,6 @@ PRIM heap() {
 
 #ifdef UNIX
 
-// simulate flash in RAM! (including EOR flash overwrite)
-#define SPI_FLASH_RESULT_OK 0
-#define SPI_FLASH_ERROR -1
-
-#define FS_ADDRESS 0x60000
-#define SPI_FLASH_SEC_SIZE 128 // TODO: is this right?
-#define SPI_FLASH_BLOCK (SPI_FLASH_SEC_SIZE/4)
-
-#define SPI_FLASH_SIZE_MB (4*1024)
-
-//uint32 flash_memory[SPI_FLASH_SIZE_MB/SPI_FLASH_SEC_SIZE] = {0xffffffff};
-//uint32 flash_memory[SPI_FLASH_SIZE_MB/SPI_FLASH_SEC_SIZE] = {0xbadbeef};
-unsigned char flash_memory[SPI_FLASH_SIZE_MB * 1024] = {0xff};
-
-// TODO: store in file
-
-int sdk_spi_flash_erase_sector(int sec) {
-    int addr = sec * SPI_FLASH_SEC_SIZE;
-    addr -= FS_ADDRESS;
-    int i;
-    for(i = 0; i < SPI_FLASH_SEC_SIZE; i++) {
-        flash_memory[addr + i] = 0xff;
-        //printf(" [ERASE: %x: %x] \n", addr + i, 0xff);
-    }
-    return SPI_FLASH_RESULT_OK;
-}
-
-int sdk_spi_flash_write(int addr, uint32* data, int len) {
-    len = (len + 3) & ~3; // TODO: if addr !% 4 then non correct?
-    unsigned char* dst = &flash_memory[addr - FS_ADDRESS];
-    unsigned char* src = (void*)data;
-    while (len-- > 0) {
-        unsigned char s = *src, d = *dst; 
-        unsigned char v = ~(~*src++ | ~*dst); // or of 0s!
-        *dst++ = v;
-        printf(" [WRITE %x: %x ...] \n", dst - flash_memory - 1, v);
-    }
-    return SPI_FLASH_RESULT_OK;
-}
-
-int sdk_spi_flash_read(int addr, uint32* data, int len) {
-    len = (len + 3) & ~3; // TODO: if addr !% 4 then non correct?
-    unsigned char* src = &flash_memory[addr - FS_ADDRESS];
-    unsigned char* dst = (void*)data;
-    while (len-- > 0) {
-        uint32 d = *dst++ = *src++;
-        //printf(" [READ %x: %x] \n", src - flash_memory - 1, d);
-    }
-    return SPI_FLASH_RESULT_OK;
-}
-
 // Highlevel
 
 // (save '(http boot) (lambda (x) (init-web-server)) (lambda (x) (print "Done")))
@@ -2183,13 +2132,6 @@ int sdk_spi_flash_read(int addr, uint32* data, int len) {
 //}
 
 #else
-
-// http://www.esp8266.com/wiki/doku.php?id=esp8266_memory_map
-// http://esp8266-re.foogod.com/wiki/Memory_Map
-// essentially this is after 512K ROM flash, probably safe to use from here for storage!
-#define FS_ADDRESS 0x60000
-
-// http://richard.burtons.org/2015/05/24/memory-map-limitation-for-rboot/
 
 // how lua can compile functions to flash file and then call it
 // - http://www.esp8266.com/viewtopic.php?f=19&t=1940
@@ -2348,12 +2290,15 @@ int findLastFlash() {
 }
 
 PRIM scan(lisp s) {
-    int maxlen =  4*1024*1024;
+    int maxlen =  SPI_FLASH_SIZE_BYTES - FS_ADDRESS;
     int i;
 
     if (1) {
-        uint32* a = (uint32*)0x40200000;
-        a += FS_ADDRESS/4;
+//      // includes program ROM
+//      uint32* a = (uint32*)0x40200000;
+//      a += FS_ADDRESS/4;
+
+        uint32* a = (uint32*)flash_memory;
         int s = 0;
         int c0 = 0;
         int cffffffff = 0;
@@ -2361,19 +2306,24 @@ PRIM scan(lisp s) {
         for(i = 0; i < maxlen/4; i++) {
             uint32 v = *a;
             a++;
-            if ((i % (16*1024/4) == 0)) { putchar('.'); fflush(stdout); }
+            //if ((i % (16*1024/4) == 0)) { putchar('.'); fflush(stdout); }
             s += v;
             if (v == 0xffffffff) cffffffff++;
             if (v == 0) c0++;
             //while (v && !stop) {
-            while (v) {
-                char c = v & 0xff;
-                if (c >= 32 && c <= 125) {putchar(v & 0xff); fflush(stdout); }
-                else if (0) { printf("[%d]", c); fflush(stdout); }
-//                if (v && 0xff == 0xff) stop = 1;
-                v >>= 8;
+            if (v) {
+                int j;
+                for(j = 4; j; j--) {
+                    char c = v & 0xff;
+                    if (c >= 32 && c <= 125) { putchar(v & 0xff); fflush(stdout); }
+                    else if (1) { printf("[%d]", (unsigned char)c); fflush(stdout); }
+                    // if (v && 0xff == 0xff) stop = 1;
+                    v >>= 8;
+                }
             }
+            //putchar('/');
         }
+        printf("\n");
         return cons(mkint(c0), mkint(cffffffff));
     }
 
@@ -2398,6 +2348,7 @@ PRIM scan(lisp s) {
 
 // returns lisp pointer into buffer
 lisp serializeLisp(lisp x, lisp* buffer, int *n) {
+    printf("\n------ Serializelisp "); print(x);
     if (*n <= 2) return symbol("*FULL*");
     //if (HSYMP(x)) {
         // for now just "pray" - collisions in english language are 190/99K!
@@ -2479,7 +2430,19 @@ PRIM flashArray(lisp *serialized, int len) {
     // TODO: actually copy to flash
     int offset = 0; // TODO: find free space to store
     writeBytesToFlash((char*)where, len * sizeof(lisp), offset);
+    int flashaddr = (unsigned int)flash_memory + offset;
 
+    free(where);
+    if (CONSP(*serialized)) {
+        return MKCONS(flashaddr);
+    } else {
+        // TODO: pointer stupidity, works fine for CONS, string/heap, but not symboll?
+        unsigned int us = (unsigned int)serialized;
+        return (lisp)((unsigned int)flashaddr | (us & 2)); // 2 ???
+    }
+
+    // TODO: remove
+    // return pointer to memory, first attemtp
     if (CONSP(*serialized)) return MKCONS(where);
 
     // TODO: pointer stupidity, works fine for CONS, string/heap, but not symboll?

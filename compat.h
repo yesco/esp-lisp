@@ -77,8 +77,17 @@ int httpd_next(int s, httpd_header emit_header, httpd_body emit_body, httpd_resp
 // call default printer for testing, never returns
 void httpd_loop(int s);
 
+// http://www.esp8266.com/wiki/doku.php?id=esp8266_memory_map
+// http://esp8266-re.foogod.com/wiki/Memory_Map
+// essentially this is after 512K ROM flash, probably safe to use from here for storage!
+#define FS_ADDRESS 0x60000
+// http://richard.burtons.org/2015/05/24/memory-map-limitation-for-rboot/
+
 //////////////////////////////////////////////////////////////////////
 // gpio/esp8266 hardware stuff
+
+typedef unsigned int uint32;
+
 #ifdef UNIX
   // dummy
   #define GPIO_OUTPUT 1
@@ -87,6 +96,20 @@ void httpd_loop(int s);
   void gpio_enable(int pin, int state);
   void gpio_write(int pin, int value);
   int gpio_read(int pin);
+
+  // flash simulation in RAM
+  #define SPI_FLASH_RESULT_OK 0
+  #define SPI_FLASH_ERROR -1
+
+  #define SPI_FLASH_SEC_SIZE 128 // TODO: is this right?
+  extern unsigned char flash_memory[];
+
+#else
+  unsigned char* flash_memory = (unsigned char*)(0x40200000 + FS_ADDRESS);
+
 #endif
+
+#define SPI_FLASH_SIZE_MB (4)
+#define SPI_FLASH_SIZE_BYTES (SPI_FLASH_SIZE_MB * 1024U * 1024U)
 
 #endif // COMPAT_H
