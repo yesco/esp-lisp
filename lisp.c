@@ -512,6 +512,7 @@ char* my_strndup(char* s, int len) {
 
 // make a string from POINTER (inside other string) by copying LEN bytes
 PRIM mklenstring(char* s, int len) {
+    if (!s) return nil;
     string* r = ALLOC(string);
     r->p = my_strndup(s, len); // TODO: how to deallocate?
     return (lisp)r;
@@ -522,7 +523,7 @@ PRIM mkstring(char* s) {
 }
 
 char* getstring(lisp s) {
-    return IS(s, string) ? ATTR(string, s, p) : NULL;
+    return IS(s, string) ? ATTR(string, s, p) : "";
 }
     
 // TODO:
@@ -818,12 +819,14 @@ PRIM wget_(lisp server, lisp url, lisp callback) {
 static lisp web_callback = NULL;
 
 static void header(char* buff, char* method, char* path) {
+    buff = buff ? buff : "";
     maybeGC();
 
     apply(web_callback, list(symbol("header"), mkstring(buff), symbol(method), mkstring(path), END));
 }
 
 static void body(char* buff, char* method, char* path) {
+    buff = buff ? buff : "";
     maybeGC();
 
     apply(web_callback, list(symbol("body"), mkstring(buff), symbol(method), mkstring(path), END));
@@ -1262,6 +1265,16 @@ PRIM length(lisp r) {
         r = cdr(r);
     }
     return mkint(c);
+}
+
+PRIM concat(lisp a, lisp b) {
+    int len = strlen(getstring(a)) + strlen(getstring(b)) + 1;
+    char* s = malloc(len);
+    *s = 0;
+    strcat(strcat(s, getstring(a)), getstring(b));
+    lisp r = mkstring(s);
+    free(s);
+    return r;
 }
 
 ///--------------------------------------------------------------------------------
@@ -2594,6 +2607,8 @@ lisp lisp_init() {
 
     DEFPRIM(list, 7, _quote);
     DEFPRIM(length, 1, length);
+    DEFPRIM(concat, 2, concat);
+    DEFPRIM(string-append, 2, concat); // scheme long ugly symbols...
     DEFPRIM(assoc, 2, assoc);
     DEFPRIM(member, 2, member);
     DEFPRIM(mapcar, 2, mapcar);
