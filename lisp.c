@@ -1267,6 +1267,8 @@ PRIM length(lisp r) {
     return mkint(c);
 }
 
+// scheme string functions - https://www.gnu.org/software/guile/manual/html_node/Strings.html#Strings
+// common lisp string functions - http://www.lispworks.com/documentation/HyperSpec/Body/f_stgeq_.htm
 PRIM concat(lisp a, lisp b) {
     int len = strlen(getstring(a)) + strlen(getstring(b)) + 1;
     char* s = malloc(len);
@@ -1274,6 +1276,40 @@ PRIM concat(lisp a, lisp b) {
     strcat(strcat(s, getstring(a)), getstring(b));
     lisp r = mkstring(s);
     free(s);
+    return r;
+}
+
+PRIM split(lisp s, lisp d, lisp n) {
+    int i = getint(n);
+    char* src = getstring(s);
+    char* delim = getstring(d);
+    int len = strlen(delim);
+    lisp r = nil;
+    lisp p = r;
+    lisp last = nil;
+    while (src && (i > 0 || i <= 0)) {
+        char* where = strstr(src, delim);
+        if (!where) {
+            where = src + strlen(src);
+            i = 1; // will terminate after add
+        }
+        lisp m = mklenstring(src, where - src);
+
+        p = cons(nil, nil);
+        if (!r)
+            r = p;
+        else {
+            setcdr(last, p);
+        }
+        setcar(p, m);
+
+        last = p;
+        p = cdr(p);
+
+        src = where + len;
+        i--;
+        if (!i) break;
+    }
     return r;
 }
 
@@ -1500,7 +1536,9 @@ PRIM print(lisp x) {
     return r;
 }
 
-// conforms to - http://www.gnu.org/software/emacs/manual/html_node/elisp/Formatting-Strings.html
+// format conforms to - http://www.gnu.org/software/emacs/manual/html_node/elisp/Formatting-Strings.html
+// TODO: make it return the numbers of characters printed?
+// TODO: make a sprintf, or call it "format".
 // which essentially is printf for lisp, they call it format in elisp
 PRIM printf_(lisp *envp, lisp all) {
     char* f = getstring(car(all));
@@ -2609,6 +2647,7 @@ lisp lisp_init() {
     DEFPRIM(length, 1, length);
     DEFPRIM(concat, 2, concat);
     DEFPRIM(string-append, 2, concat); // scheme long ugly symbols...
+    DEFPRIM(split, 3, split);
     DEFPRIM(assoc, 2, assoc);
     DEFPRIM(member, 2, member);
     DEFPRIM(mapcar, 2, mapcar);
