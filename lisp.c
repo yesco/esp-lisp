@@ -801,6 +801,9 @@ static void f_emit_attr(lisp callback, char* path[], char* tag, char* attr, char
     apply(callback, list(symbol(tag), symbol(attr), mkstring(value), END));
 }
 
+// TODO: http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-ref/XML-Input.html#XML-Input
+// https://www.gnu.org/software/guile/manual/html_node/Reading-and-Writing-XML.html
+// https://www.gnu.org/software/guile/manual/html_node/sxml_002dmatch.html
 PRIM wget_(lisp server, lisp url, lisp callback) {
     wget_data data;
     memset(&data, 0, sizeof(data));
@@ -1525,6 +1528,7 @@ lisp princ_hlp(lisp x, int readable) {
 PRIM princ(lisp x) {
     return princ_hlp(x, 0);
 }
+
 // print in readable format
 PRIM prin1(lisp x) {
     return princ_hlp(x, 1);
@@ -1541,6 +1545,7 @@ PRIM print(lisp x) {
 // TODO: make it return the numbers of characters printed?
 // TODO: make a sprintf, or call it "format".
 // which essentially is printf for lisp, they call it format in elisp
+// TODO: format - http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-ref/Format.html#Format
 PRIM printf_(lisp *envp, lisp all) {
     char* f = getstring(car(all));
     all = cdr(all);
@@ -2607,6 +2612,7 @@ lisp lisp_init() {
 
     DEFPRIM(lambda, -7, lambda);
 
+    // types
     DEFPRIM(null?, 1, nullp);
     DEFPRIM(cons?, 1, consp);
     DEFPRIM(atom?, 1, atomp);
@@ -2616,28 +2622,35 @@ lisp lisp_init() {
     DEFPRIM(integer?, 1, integerp);
     DEFPRIM(func?, 1, funcp);
 
-    DEFPRIM(<, 2, lessthan);
-
+    // mathy stuff
     DEFPRIM(+, 2, plus);
     DEFPRIM(-, 2, minus);
     DEFPRIM(*, 2, times);
     DEFPRIM(/, 2, divide);
     DEFPRIM(%, 2, mod);
+
     DEFPRIM(eq, 2, eq);
     DEFPRIM(equal, 2, equal);
     DEFPRIM(=, 2, eq);
+    DEFPRIM(<, 2, lessthan);
+
+    // https://www.gnu.org/software/guile/manual/html_node/Pattern-Matching.html#Pattern-Matching
     DEFPRIM(if, -3, if_);
     DEFPRIM(cond, -7, cond);
     DEFPRIM(case, -7, case_);
     DEFPRIM(and, -7, and);
     DEFPRIM(or, -7, or);
     DEFPRIM(not, 1, not);
+
+    // output
+    // TODO: write procedures? - http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-ref/Output-Procedures.html
     DEFPRIM(terpri, 0, terpri);
     DEFPRIM(princ, 1, princ);
     DEFPRIM(prin1, 1, prin1);
     DEFPRIM(print, 1, print);
     DEFPRIM(printf, 7, printf_);
 
+    // cons/list
     DEFPRIM(cons, 2, cons);
     DEFPRIM(car, 1, car_);
     DEFPRIM(cdr, 1, cdr_);
@@ -2653,7 +2666,8 @@ lisp lisp_init() {
     DEFPRIM(member, 2, member);
     DEFPRIM(mapcar, 2, mapcar);
     DEFPRIM(map, 2, map);
-    // DEFPRIM(quote, -7, quote);
+    DEFPRIM(quote, -1, _quote);
+    // DEFPRIM(quote, -7, quote); // TODO: consider it to quote list?
     // DEFPRIM(list, 7, listlist);
 
     DEFPRIM(let, -7, let);
@@ -2675,8 +2689,6 @@ lisp lisp_init() {
     DEFPRIM(define, -7, _define);
     DEFPRIM(de, -7, de);
 
-    DEFPRIM(quote, -1, _quote);
-
     // define
     // defun
     // defmacro
@@ -2697,18 +2709,27 @@ lisp lisp_init() {
     DEFPRIM(clock, 1, clock_);
     DEFPRIM(time, -1, time_);
     DEFPRIM(load, -1, load);
+
+    // debugging - http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Debugging-Aids.html 
+    // http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Command_002dLine-Debugger.html#Command_002dLine-Debugger
+    // TODO: set-trace! set-break! http://www.lilypond.org/doc/v2.19/Documentation/contributor/debugging-scheme-code
     DEFPRIM(pstack, 0, print_detailed_stack); 
 
+    // flash stuff - experimental
     DEFPRIM(flash, 2, flash);
     DEFPRIM(flashit, 1, flashit);
     DEFPRIM(scan, 2, scan);
+    // TODO: consider integrating with - https://www.gnu.org/software/guile/manual/html_node/Symbol-Props.html
+    // 2d-!!! https://groups.csail.mit.edu/mac/ftpdir/scheme-7.4/doc-html/scheme_12.html#SEC105
+    // 2d-put! 2d-remove! 2d-get 2d-get-alist-x 2d-get-alist-y
 
+    // scheduling
     DEFPRIM(at, -2, at); // TODO: eval at => #stop?!?!??!
     DEFPRIM(stop, -1, stop);
     DEFPRIM(atrun, -1, atrun);
 
 //    DEFPRIM(imacs, -1, imacs_);
-    DEFPRIM(syms, 0, syms);
+    DEFPRIM(syms, 0, syms); // TODO: rename to apropos?
     DEFPRIM(fib, 1, fibb);
 
     //DEFPRIM(readit, 0, readit);
@@ -2745,6 +2766,7 @@ void help(lisp* envp) {
 jmp_buf lisp_break = {0};
 
 // TODO: make it take one lisp parameter?
+// TODO: https://groups.csail.mit.edu/mac/ftpdir/scheme-7.4/doc-html/scheme_17.html#SEC153
 void error(char* msg) {
     jmp_buf empty = {0};
     static int error_level = 0;
