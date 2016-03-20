@@ -1296,12 +1296,12 @@ PRIM split(lisp s, lisp d, lisp n) {
         }
         lisp m = mklenstring(src, where - src);
 
+        // add conscell at end and add value
         p = cons(nil, nil);
         if (!r)
             r = p;
-        else {
+        else
             setcdr(last, p);
-        }
         setcar(p, m);
 
         last = p;
