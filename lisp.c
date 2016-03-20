@@ -1017,10 +1017,24 @@ PRIM mkfunc(lisp e, lisp env) {
     return (lisp)r;
 }
 
+PRIM fundef(lisp f) {
+    if (IS(f, func)) return ((func*)f)->e;
+    return nil;
+}
+
+PRIM funenv(lisp f) {
+    if (IS(f, func)) return ((func*)f)->env;
+    return nil;
+}
+
+PRIM funame(lisp f) { // fun-name lol (6 char) => funame
+    if (IS(f, func)) return ((func*)f)->name;
+    if (IS(f, prim)) return *(lisp*)GETPRIM(f);
+    return nil;
+}
+
 ////////////////////////////// GC
 
-// TODO: not correct, haha
-//#define FLASHP(x) ((CONSP(x) && ((conss*)next - &conses[0] >= MAX_CONS)) || ((unsigned int)next >= FS_ADDRESS || ((unsigned int)next <= FS_ADDRESS + SPI_FLASH_SIZE_BYTES)))
 #define FLASHP(x) ((unsigned int)next >= (unsigned int)flash_memory && ((unsigned int)next <= (unsigned int)(flash_memory + SPI_FLASH_SIZE_BYTES - FS_ADDRESS)))
 
 void mark_deep(lisp next, int deep) {
@@ -1576,6 +1590,63 @@ PRIM printf_(lisp *envp, lisp all) {
         }
     }
     return nil;
+}
+
+lisp pp_hlp(lisp e, int indent) {
+    void nl() { terpri(); int i = indent*3; while(i--) putchar(' '); };
+    void print_list(lisp e) {
+        indent++; nl();
+        while (e) {
+            pp_hlp(car(e), indent+1);
+            e = cdr(e);
+        }
+        putchar(')');
+        indent--; nl();
+    }
+
+    if (!e) return prin1(e);
+    if (!consp(e)) return prin1(e);
+    lisp a1 = car(e), l2 = cdr(e),
+        a2 = car(l2), l3 = cdr(l2),
+        a3 = car(l3), l4 = cdr(l3),
+        a4 = car(l4);
+    if (symbolp(a1)) {
+        if (a1 == symbol("if")) {
+            printf("(if "); indent++; pp_hlp(a2, indent+1); nl();
+            pp_hlp(a3, indent+2); indent--;
+            if (l4) { nl(); pp_hlp(a4, indent+1); putchar(')'); }
+        //} else if (a1 == symbol("lambda")) {
+        } else if (a1 == symbol("cond")) {
+            printf("(cond ");
+            print_list(l3);
+        } else if (a1 == symbol("case")) {
+            printf("(case "); pp_hlp(a2, indent+1);
+            print_list(l3);
+        } else if (a1 == symbol("define")) {
+            prin1(a2);
+            print_list(l3);
+        } else if (a1 == symbol("de")) {
+            printf("(de "); prin1(a2); putchar(' '); prin1(a3);
+            print_list(l4);
+        } else {
+            prin1(e);
+        }
+    } else if (consp(a1)) {
+        putchar('('); pp_hlp(a1, indent+2);
+        print_list(l2);
+    } else {
+        // TODO: try figure out complexity of list and if to do print_list on it...
+        // use length and "estimated" chars for output (recursive length?)
+        prin1(e); nl();
+    }
+    return nil;
+}
+
+PRIM pp(lisp e) {
+    if (funcp(e))
+        e = cons(symbol("de"), cons(funame(e), fundef(e)));
+    pp_hlp(e, 0);
+    return symbol("");
 }
 
 static void indent(int n) {
@@ -2649,6 +2720,7 @@ lisp lisp_init() {
     DEFPRIM(prin1, 1, prin1);
     DEFPRIM(print, 1, print);
     DEFPRIM(printf, 7, printf_);
+    DEFPRIM(pp, 1, pp); // TODO: pprint?
 
     // cons/list
     DEFPRIM(cons, 2, cons);
@@ -2688,6 +2760,10 @@ lisp lisp_init() {
 
     DEFPRIM(define, -7, _define);
     DEFPRIM(de, -7, de);
+
+    DEFPRIM(fundef, 1, fundef);
+    DEFPRIM(funenv, 1, funenv);
+    DEFPRIM(funame, 1, funame);
 
     // define
     // defun
@@ -2805,6 +2881,10 @@ void run(char* s, lisp* envp) {
         // mark(r); // keep history?
     } else {
         // escaped w ctrl-c (longjmp)
+
+        // enableGC and kill stack
+        blockGC = 0;
+        level = 0;
     }
     // disable longjmp
     memset(lisp_break, 0, sizeof(lisp_break));
