@@ -1279,6 +1279,7 @@ PRIM concat(lisp a, lisp b) {
     return r;
 }
 
+// optional n, number of entries to return (1..x), 0, <0, nil, non-number => all
 PRIM split(lisp s, lisp d, lisp n) {
     int i = getint(n);
     char* src = getstring(s);
