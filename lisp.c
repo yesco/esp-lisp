@@ -396,7 +396,7 @@ static void* salloc(int bytes) {
 // call this malloc using ALLOC(typename) macro
 // if tag < 0 no GC on these (don't keep pointer around)
 void* myMalloc(int bytes, int tag) {
-    ///printf("MALLOC: %d %s\n", tag, tag_name[tag]);
+    ///printf("MALLOC: %d %d %s\n", bytes, tag, tag_name[tag]);
 
     if (1) { // 830ms -> 770ms 5% faster if removed, depends on the week!?
         if (tag > 0) {
@@ -1385,7 +1385,7 @@ static lisp readString() {
         if (c == '\\') c = next();
         c = next();
     }
-    
+    if (!c) error("string.not_terminated");
     int len = input - start - 1;
     lisp r = mklenstring(start, len);
     // remove '\', this may waste a byte or two if any
