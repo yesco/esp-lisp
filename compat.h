@@ -105,7 +105,7 @@ typedef unsigned int uint32;
   extern unsigned char flash_memory[];
 
 #else
-  unsigned char* flash_memory = (unsigned char*)(0x40200000 + FS_ADDRESS);
+  #define flash_memory ((unsigned char*)(0x40200000 + FS_ADDRESS))
 
 #endif
 

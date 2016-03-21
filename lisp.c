@@ -511,10 +511,15 @@ char* my_strndup(char* s, int len) {
 }
 
 // make a string from POINTER (inside other string) by copying LEN bytes
+// if len < 0 then it's already malloced elsewhere
 PRIM mklenstring(char* s, int len) {
     if (!s) return nil;
     string* r = ALLOC(string);
-    r->p = my_strndup(s, len); // TODO: how to deallocate?
+    if (len >= 0) {
+        r->p = my_strndup(s, len); // TODO: how to deallocate?
+    } else {
+        r->p = s;
+    }
     return (lisp)r;
 }
 
@@ -1094,8 +1099,6 @@ inline void mark(lisp x) {
     mark_deep(x, 1);
 }
 
-static lisp reads(char *s);
-
 ///--------------------------------------------------------------------------------
 // Primitives
 // naming convention:
@@ -1286,14 +1289,34 @@ PRIM length(lisp r) {
 
 // scheme string functions - https://www.gnu.org/software/guile/manual/html_node/Strings.html#Strings
 // common lisp string functions - http://www.lispworks.com/documentation/HyperSpec/Body/f_stgeq_.htm
-PRIM concat(lisp a, lisp b) {
-    int len = strlen(getstring(a)) + strlen(getstring(b)) + 1;
-    char* s = malloc(len);
+PRIM concat(lisp* envp, lisp x) {
+    int len = 1;
+    lisp i = x;
+    while (i) {
+        len += strlen(getstring(car(i)));
+        i = cdr(i);
+    }
+    char* s = malloc(len), *p = s;;
     *s = 0;
-    strcat(strcat(s, getstring(a)), getstring(b));
-    lisp r = mkstring(s);
-    free(s);
+    i = x;
+    while (i) {
+        p = strcat(p, getstring(car(i)));
+        i = cdr(i);
+    }
+    lisp r = mklenstring(s, -len);
     return r;
+}
+
+PRIM char_(lisp i) {
+    if (IS(i, string)) {
+        return mkint(getstring(i)[0]);
+    } else if (IS(i, intint)) {
+        char s[2] = {0};
+        s[0] = getint(i);
+        return mkstring(s);
+    } else 
+        error("char.unsupported type");
+    return nil;
 }
 
 // optional n, number of entries to return (1..x), 0, <0, nil, non-number => all
@@ -1468,11 +1491,79 @@ static lisp readx() {
     return readSymbol(c, 0);
 }
 
-static PRIM reads(char *s) {
+PRIM reads(char *s) {
     input = s;
     nextChar = 0;
     return readx();
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// output, with capturing
+typedef int putcf(int c);
+putcf *writeputc, *origputc;
+
+PRIM with_putc(lisp* envp, lisp args) {
+    lisp fn = car(args);
+    putcf *old = writeputc;
+
+    int recurse = 0;
+    int myputc(int c) {
+        recurse++;
+        if (recurse > 1) error("with-putc called with function that calls putc - prohibited!");
+        lisp r= callfunc(fn, cons(mkint(c), nil), envp, nil, 1);
+        recurse--;
+        return getint(r);
+    }
+
+    lisp r = nil;
+    writeputc = myputc; {
+        // need catch errors and restore... (setjmp/error?)
+        r = progn(envp, cdr(args));
+
+    } writeputc = old;
+    return r;
+}
+
+int writec(int c) {
+    if (!writeputc) origputc = writeputc = &putchar;
+    return writeputc(c);
+} 
+
+int writes(char* s) {
+    int n = 0;
+    while (*s && ++n) writec(*s++);
+    return n;
+} 
+
+int writef(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    int len;
+
+    if (writeputc == &putchar) { // more efficient
+        len = vprintf(fmt, args);
+    } else {
+        // capture output of printf by first faking it, just counting
+        // then, write to buffer, then call writec...
+        char* tst = NULL;
+        len = vsnprintf(tst, 0, fmt, args) + 1;
+        char out[len]; // TODO: this may not be safe...
+        memset(out, 0, len);
+        vsnprintf(out, len, fmt, args);
+        writes(out);
+    }
+
+    va_end(args);
+    return len;
+}
+
+#undef putchar
+#undef printf
+#undef puts
+
+#define printf writef
+#define putchar writec
+#define puts writes
 
 // TODO: prin1, princ, print, pprint/pp by calling
 //    (write o output-stream= base= escape= level= circle= lines= pretty= readably=)
@@ -1498,8 +1589,8 @@ lisp princ_hlp(lisp x, int readable) {
     else if (tag == intint_TAG) printf("%d", getint(x));
     else if (tag == prim_TAG) { putchar('#'); princ_hlp(*(lisp*)GETPRIM(x), readable); }
     // for now we have two "symbolls" one inline in pointer and another heap allocated
-    else if (HSYMP(x)) printf("%s", symbol_getString(x));
-    else if (SYMP(x)) { char s[7] = {0}; sym2str(x, s); printf("%s", s); }
+    else if (HSYMP(x)) writes(symbol_getString(x));
+    else if (SYMP(x)) { char s[7] = {0}; sym2str(x, s); writes(s); }
     // can't be made reable really unless "reveal" internal pointer
     else if (tag == thunk_TAG) { printf("#thunk["); princ_hlp(ATTR(thunk, x, e), readable); putchar(']'); }
     else if (tag == immediate_TAG) { printf("#immediate["); princ_hlp(ATTR(thunk, x, e), readable); putchar(']'); }
@@ -2721,6 +2812,7 @@ lisp lisp_init() {
     DEFPRIM(print, 1, print);
     DEFPRIM(printf, 7, printf_);
     DEFPRIM(pp, 1, pp); // TODO: pprint?
+    DEFPRIM(with-putc, -7, with_putc);
 
     // cons/list
     DEFPRIM(cons, 2, cons);
@@ -2731,9 +2823,9 @@ lisp lisp_init() {
 
     DEFPRIM(list, 7, _quote);
     DEFPRIM(length, 1, length);
-    DEFPRIM(concat, 2, concat);
-    DEFPRIM(string-append, 2, concat); // scheme long ugly symbols...
-    DEFPRIM(split, 3, split);
+    DEFPRIM(concat, 7, concat); // scheme: string-append/string-concatenate
+    DEFPRIM(char, 1, char_); // scheme: integer->char
+    DEFPRIM(split, 3, split); // scheme: string-split
     DEFPRIM(assoc, 2, assoc);
     DEFPRIM(member, 2, member);
     DEFPRIM(mapcar, 2, mapcar);
@@ -2846,6 +2938,9 @@ jmp_buf lisp_break = {0};
 void error(char* msg) {
     jmp_buf empty = {0};
     static int error_level = 0;
+
+    // restore output to stdout, if error inside print function we're screwed otherwise!
+    writeputc = origputc;
 
     if (error_level == 0) {
         error_level++;

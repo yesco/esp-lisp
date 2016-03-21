@@ -84,7 +84,7 @@ lisp list(lisp first, ...);
 
 PRIM _define(lisp* envp, lisp args);
 PRIM de(lisp* envp, lisp namebody);
-static PRIM reads(char *s);
+PRIM reads(char *s);
 
 // User, macros, assume a "globaL" env variable implicitly, and updates it
 #define SET(sname, val) _setb(envp, sname, val)
