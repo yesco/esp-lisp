@@ -843,17 +843,19 @@ static void body(char* buff, char* method, char* path) {
 static void response(int req, char* method, char* path) {
     maybeGC();
 
-    lisp ret = apply(web_callback, list(nil, symbol(method), mkstring(path), END));
+    lisp ret = apply(web_callback, list(nil, mkint(req), symbol(method), mkstring(path), END));
     printf("RET="); princ(ret); terpri();
 
+    // TODO: instead redirect output to write!!! 
     char* s = getstring(ret);
+    // TODO: loop until all of the string written?
     write(req, s, strlen(s));
 
     maybeGC();
 }
 
 // echo '
-// (web 8080 (lambda (w s m p) (princ w) (princ " ") (princ s) (princ " ") (princ m) (princ " ") (princ p) (terpri) "FISH-42"))
+// (web 8080 (lambda (r w s m p) (princ w) (princ " ") (princ s) (princ " ") (princ m) (princ " ") (princ p) (terpri) "FISH-42"))
 // ' | ./run
 
 PRIM _setb(lisp* envp, lisp name, lisp v);
@@ -1410,11 +1412,14 @@ static lisp readString() {
     }
     if (!c) error("string.not_terminated");
     int len = input - start - 1;
+
+   // we modify the copied string as the string above may be constant
     lisp r = mklenstring(start, len);
     // remove '\', this may waste a byte or two if any
     char* from = getstring(r);
     char* to = from;
     while (*from) {
+        // TODO: \n \t ...
         if (*from == '\\') from++;
         *to = *from; // !
         from++; to++;
@@ -1502,6 +1507,11 @@ PRIM reads(char *s) {
 typedef int putcf(int c);
 putcf *writeputc, *origputc;
 
+// TODO: more efficient...
+//typedef int writef(char* s, int len);
+//putcf *writewrite;
+
+
 PRIM with_putc(lisp* envp, lisp args) {
     lisp fn = car(args);
     putcf *old = writeputc;
@@ -1521,6 +1531,31 @@ PRIM with_putc(lisp* envp, lisp args) {
         r = progn(envp, cdr(args));
 
     } writeputc = old;
+    return r;
+}
+
+// http://lisptips.com/post/11056870932/redirecting-output
+// http://stackoverflow.com/questions/35333715/lisp-capture-stdout-and-stderr-store-it-in-separate-variables
+// (define f2 (open-output-string))
+// (write-string "lorem ipsum" f2)
+// (get-output-string f2)
+PRIM with_fd(lisp* envp, lisp args) {
+    printf("\nWITH_FD[");
+    princ(args);
+    int fd = getint(eval(car(args), envp));
+    putcf *old = writeputc;
+
+    int myputc(int c) {
+        char cc = c;
+        return write(fd, &cc, 1);
+    }
+
+    lisp r = nil;
+    writeputc = myputc; {
+        // need catch errors and restore... (setjmp/error?)
+        r = reduce_immediate(progn(envp, cdr(args)));
+    } writeputc = old;
+    printf("]WITH_FD\n");
     return r;
 }
 
@@ -2813,6 +2848,7 @@ lisp lisp_init() {
     DEFPRIM(printf, 7, printf_);
     DEFPRIM(pp, 1, pp); // TODO: pprint?
     DEFPRIM(with-putc, -7, with_putc);
+    DEFPRIM(with-fd, -7, with_fd);
 
     // cons/list
     DEFPRIM(cons, 2, cons);
