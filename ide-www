@@ -1,6 +1,6 @@
 (echo '' ; \
  echo '(define cbn 0)' ; \
- echo '(define (cb w r s m p) (set! cbn (+ cbn 1)) (if w nil (cb-pp r fibo)) (print (list "---" w r s m p)) "fie"))' ; \
+ echo '(define (cb w r s m p) (set! cbn (+ cbn 1)) (if w nil (cb-pp r fibo)) (print (list "---" w r s m p)) ""))' ; \
  echo '(define (cb-pp r f) (with-fd r (princ "jsonp(") (princ (char 39))) (with-fd-json r (pp f)) (with-fd r (princ (char 39)) (princ ");") (terpri)))' ; \
  echo '(web 8080 cb)' ; \
  cat - ) \
