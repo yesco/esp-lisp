@@ -1,0 +1,52 @@
+<html>
+<header>
+<title>ESP8266 lisp IDE</title>
+</header>
+
+<script>
+function jsonp(data) {
+  var t = document.getElementById('foo');
+  t.innerText = data;
+}
+
+function update(url) {
+  var s = document.createElement('script');
+  s.src = url;
+  document.head.appendChild(s);
+  s.onload = function() { s.remove(); };
+  s.onerror = function() { s.remove(); console.log("FAIL: " + url); };
+}
+</script>
+
+<body>
+
+<style>
+.term {
+  //word-wrap: break-word;
+  display: inline-block;
+  border: 2px solid black;
+  padding: 5px;
+  border-radius: 5px;
+  //background: black;
+  //color: #8AFF4F;
+  background: yellow;
+  font-weight: bold;
+}
+</style>
+
+<h1>ESP8266 lisp IDE</h1>
+
+<pre id='foo' class='term' contentEditable='true'>
+Data here...
+</pre>
+
+<br><button onclick='doit();'>load</button>
+
+<script>
+function doit() {
+  update("http://localhost:8080/pp/foo");
+}
+</script>
+
+</body>
+</html>

@@ -1138,7 +1138,6 @@ PRIM read_(lisp s) {
         return r;
     }
 }
-PRIM terpri() { printf("\n"); return nil; }
 
 // TODO: consider http://picolisp.com/wiki/?ArticleQuote
 PRIM _quote(lisp* envp, lisp x) { return x; }
@@ -1534,13 +1533,7 @@ PRIM with_putc(lisp* envp, lisp args) {
     return r;
 }
 
-// http://lisptips.com/post/11056870932/redirecting-output
-// http://stackoverflow.com/questions/35333715/lisp-capture-stdout-and-stderr-store-it-in-separate-variables
-// (define f2 (open-output-string))
-// (write-string "lorem ipsum" f2)
-// (get-output-string f2)
 PRIM with_fd(lisp* envp, lisp args) {
-    printf("\nWITH_FD[");
     princ(args);
     int fd = getint(eval(car(args), envp));
     putcf *old = writeputc;
@@ -1548,6 +1541,34 @@ PRIM with_fd(lisp* envp, lisp args) {
     int myputc(int c) {
         char cc = c;
         return write(fd, &cc, 1);
+    }
+
+    lisp r = nil;
+    writeputc = myputc; {
+        // need catch errors and restore... (setjmp/error?)
+        r = reduce_immediate(progn(envp, cdr(args)));
+    } writeputc = old;
+    return r;
+}
+
+// TODO: move out to an ide.c file? consider with ide-www
+
+PRIM with_fd_json(lisp* envp, lisp args) {
+    princ(args);
+    int fd = getint(eval(car(args), envp));
+    putcf *old = writeputc;
+
+    int myputc(int c) {
+        char cc = c;
+        // TODO: specific for jsonp?
+        if (c == '\n' || c == '\r')
+            return write(fd, "\\n", 2);
+        else if (c == '"')
+            return write(fd, "\\\"", 2);
+        else if (c == '\'')
+            return write(fd, "\\\'", 2);
+        else
+            return write(fd, &cc, 1);
     }
 
     lisp r = nil;
@@ -1680,6 +1701,8 @@ PRIM print(lisp x) {
     putchar(' ');
     return r;
 }
+
+PRIM terpri() { putchar('\n'); return nil; }
 
 // format conforms to - http://www.gnu.org/software/emacs/manual/html_node/elisp/Formatting-Strings.html
 // TODO: make it return the numbers of characters printed?
@@ -2841,6 +2864,7 @@ lisp lisp_init() {
 
     // output
     // TODO: write procedures? - http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-ref/Output-Procedures.html
+    // TODO: make these take a "fd" or output stream?
     DEFPRIM(terpri, 0, terpri);
     DEFPRIM(princ, 1, princ);
     DEFPRIM(prin1, 1, prin1);
@@ -2849,6 +2873,7 @@ lisp lisp_init() {
     DEFPRIM(pp, 1, pp); // TODO: pprint?
     DEFPRIM(with-putc, -7, with_putc);
     DEFPRIM(with-fd, -7, with_fd);
+    DEFPRIM(with-fd-json, -7, with_fd_json);
 
     // cons/list
     DEFPRIM(cons, 2, cons);
