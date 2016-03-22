@@ -4,8 +4,16 @@
 </header>
 
 <script>
-function jsonp(data) {
-  var t = document.getElementById('foo');
+function jsonp_pp(data) {
+  var t = document.getElementById('pp');
+  t.innerText = data;
+}
+function jsonp_list(data) {
+  var t = document.getElementById('list');
+  t.innerHTML = data.split(/\n/).sort().map(function(f){ return f ? ("<li>" + f + "</li>") : ""; }).join("\n");;
+}
+function jsonp_eval(data) {
+  var t = document.getElementById('eval');
   t.innerText = data;
 }
 
@@ -36,15 +44,24 @@ function update(url) {
 
 <h1>ESP8266 lisp IDE</h1>
 
-<pre id='foo' class='term' contentEditable='true'>
+<ul id='list'>
+</ul>
+<br><button onclick='ide("list");'>load</button><br>
+
+<pre id='pp' class='term' contentEditable='true'>
 Data here...
 </pre>
+<br><button onclick='ide("pp?fibo");'>load</button><br>
 
-<br><button onclick='doit();'>load</button>
+<input id='einput'>
+<pre id='eval' class='term'>
+Data here...
+</pre>
+<br><button onclick='ide("eval?" + document.getElementById("einput").value);'>load</button><br>
 
 <script>
-function doit() {
-  update("http://localhost:8080/pp/foo");
+function ide(path) {
+  update("http://localhost:8080/ide/" + path);
 }
 </script>
 

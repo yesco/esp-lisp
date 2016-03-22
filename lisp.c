@@ -1534,7 +1534,6 @@ PRIM with_putc(lisp* envp, lisp args) {
 }
 
 PRIM with_fd(lisp* envp, lisp args) {
-    princ(args);
     int fd = getint(eval(car(args), envp));
     putcf *old = writeputc;
 
@@ -1554,7 +1553,6 @@ PRIM with_fd(lisp* envp, lisp args) {
 // TODO: move out to an ide.c file? consider with ide-www
 
 PRIM with_fd_json(lisp* envp, lisp args) {
-    princ(args);
     int fd = getint(eval(car(args), envp));
     putcf *old = writeputc;
 
@@ -1576,7 +1574,6 @@ PRIM with_fd_json(lisp* envp, lisp args) {
         // need catch errors and restore... (setjmp/error?)
         r = reduce_immediate(progn(envp, cdr(args)));
     } writeputc = old;
-    printf("]WITH_FD\n");
     return r;
 }
 
@@ -1744,8 +1741,9 @@ PRIM printf_(lisp *envp, lisp all) {
 lisp pp_hlp(lisp e, int indent) {
     void nl() { terpri(); int i = indent*3; while(i--) putchar(' '); };
     void print_list(lisp e) {
-        indent++; nl();
+        indent++;
         while (e) {
+            nl();
             pp_hlp(car(e), indent+1);
             e = cdr(e);
         }
@@ -1759,11 +1757,13 @@ lisp pp_hlp(lisp e, int indent) {
         a2 = car(l2), l3 = cdr(l2),
         a3 = car(l3), l4 = cdr(l3),
         a4 = car(l4);
+    if (funame(a1)) a1 = funame(a1); // decompile! haha
     if (symbolp(a1)) {
         if (a1 == symbol("if")) {
             printf("(if "); indent++; pp_hlp(a2, indent+1); nl();
             pp_hlp(a3, indent+2); indent--;
-            if (l4) { nl(); pp_hlp(a4, indent+1); putchar(')'); }
+            if (l4) { nl(); pp_hlp(a4, indent+1); }
+            putchar(')');
         //} else if (a1 == symbol("lambda")) {
         } else if (a1 == symbol("cond")) {
             printf("(cond ");
@@ -1778,12 +1778,20 @@ lisp pp_hlp(lisp e, int indent) {
             printf("(de "); prin1(a2); putchar(' '); prin1(a3);
             print_list(l4);
         } else {
-            prin1(e);
+            printf("(");
+            pp_hlp(a1, indent+1);
+            lisp r = l2;
+            while (r) {
+                putchar(' ');
+                pp_hlp(car(r), indent+1);
+                r = cdr(r);
+            }
+            printf(")");
         }
-    } else if (consp(a1)) {
+    } else if (consp(a1)) { // list of list
         putchar('('); pp_hlp(a1, indent+2);
         print_list(l2);
-    } else {
+    } else { // a list of some kind
         // TODO: try figure out complexity of list and if to do print_list on it...
         // use length and "estimated" chars for output (recursive length?)
         prin1(e); nl();
