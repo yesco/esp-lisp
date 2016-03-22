@@ -46,7 +46,7 @@ function update(url) {
 
 <ul id='list'>
 </ul>
-<br><button onclick='ide("list");'>load</button><br>
+<br><button onclick='ide("list");'>list</button><br>
 
 <pre id='pp' class='term' contentEditable='true'>
 Data here...
@@ -57,11 +57,11 @@ Data here...
 <pre id='eval' class='term'>
 Data here...
 </pre>
-<br><button onclick='ide("eval?" + document.getElementById("einput").value);'>load</button><br>
+<br><button onclick='ide("eval?" + document.getElementById("einput").value);'>eval</button><br>
 
 <script>
 function ide(path) {
-  update("http://localhost:8080/ide/" + path);
+  update("http://localhost:8080/ide/" + path + "??" + (new Date()).valueOf());
 }
 </script>
 

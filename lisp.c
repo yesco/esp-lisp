@@ -1558,6 +1558,7 @@ PRIM with_fd_json(lisp* envp, lisp args) {
 
     int myputc(int c) {
         char cc = c;
+        origputc(c);
         // TODO: specific for jsonp?
         if (c == '\n' || c == '\r')
             return write(fd, "\\n", 2);
@@ -1852,7 +1853,8 @@ static inline lisp eval_hlp(lisp e, lisp* envp) {
         // maybe must search all list till find null, then can look on symbol :-(
         // but that's everytime? actually, not it's a lexical scope!
         // TODO: only replace if not found in ENV and is on an SYMBOL!
-        setcar(e, f);
+        if (symbolp(orig) && eq(funame(f), orig))
+            setcar(e, f);
     }
 
     return r;
