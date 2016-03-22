@@ -8,10 +8,16 @@ function jsonp_pp(data) {
   var t = document.getElementById('pp');
   t.innerText = data;
 }
+
+function mkeditlink(f) {
+  return "<a onclick=\"ide('pp?" + f + "');\" style='background:lime;'>" + f + "</a>";
+}
+
 function jsonp_list(data) {
   var t = document.getElementById('list');
-  t.innerHTML = data.split(/\n/).sort().map(function(f){ return f ? ("<li>" + f + "</li>") : ""; }).join("\n");;
+  t.innerHTML = data.split(/\n/).sort().map(function(f){ return f ? ("<li>" + mkeditlink(f) + "</li>") : ""; }).join("\n");;
 }
+
 function jsonp_eval(data) {
   var t = document.getElementById('eval');
   t.innerText = data;
