@@ -4,13 +4,13 @@
 </header>
 
 <script>
-function jsonp_pp(data) {
-  var t = document.getElementById('pp');
+function jsonp_pp(data, name) {
+  var t = document.getElementById('def-' + name);
   t.innerText = data;
 }
 
 function mkeditlink(f) {
-  return "<a onclick=\"ide('pp?" + f + "');\" style='background:lightgrey; padding:0px;'>" + f + "</a>";
+  return "<a onclick=\"pp('" + f + "', this);\" class='func-name'>" + f + "</a>";
 }
 
 function jsonp_list(data) {
@@ -18,9 +18,15 @@ function jsonp_list(data) {
   t.innerHTML = data.split(/\n/).sort().map(function(f){ return f ? ("<span>" + mkeditlink(f) + "</span>") : ""; }).join("\n");;
 }
 
-function jsonp_eval(data) {
+function jsonp_eval(data, exp) {
   var t = document.getElementById('eval');
-  t.innerText = data;
+  //t.innerText = data;
+  var d = document.createElement('div');
+  d.innerText = data;
+  // TODO: encode exp!
+  exp = exp || document.getElementById("einput").value;
+  d.insertAdjacentHTML('afterBegin', "lisp&gt; " + exp + "<br>");
+  t.insertAdjacentElement('afterBegin', d);
 }
 
 function update(url) {
@@ -32,7 +38,7 @@ function update(url) {
 }
 </script>
 
-<body>
+<body spellcheck="false">
 
 <style>
 .term {
@@ -46,29 +52,60 @@ function update(url) {
   background: yellow;
   font-weight: bold;
 }
+.func-name {
+  display: block;
+  background: gray;
+  color: white;
+  font-weight: bold;
+  padding: 3px;
+  margin: 2px;
+  padding-left: 10px;
+  position: relative;
+  width: 110%;
+  left: -10px;
+}
 </style>
 
 <h1>ESP8266 lisp IDE</h1>
 
-<h2>List of user defined functions</h2>
 <div id='list'>
 </div>
 <br><button onclick='ide("list");'>list</button><br>
 
-<h2>One function</h2>
-<pre id='pp' class='term' contentEditable='true'>
-Data here...
-</pre>
-<br><button onclick='ide("pp?fibo");'>load</button><br>
-
 <h2>Eval</h2>
-<input id='einput'>
-<pre id='eval' class='term'>
-Data here...
+<input id='einput' length=60 columns=60 onkeydown="if (event.keyCode == 13 || event.keyCode == 10) doeval();">
+<button onclick='doeval();'>eval</button><br>
+<pre id='eval' class='term' style='background: white; display: block;'>
 </pre>
-<br><button onclick='ide("eval?" + document.getElementById("einput").value);'>eval</button><br>
 
 <script>
+function doeval() {
+  ide("eval?" + document.getElementById("einput").value);
+}
+
+function edit(elt) {
+  elt.onclick = undefined;
+  // TODO: doesn't work! http://stackoverflow.com/questions/5601431/spellcheck-false-on-contenteditable-elements
+  elt.contentEditable = 'true';
+  elt.spellcheck = 'false'; elt.focus(); elt.blur();
+  elt.style.background = 'pink';
+  var h = elt.previousSibling;
+  h.style.color = 'lime';
+}
+
+function pp(name, elt) {
+  var t = document.getElementById('def-' + name);
+  if (t) {
+    t.style.display = t.style.display == "none" ? "block" : "none";
+    return;
+  }
+  elt.insertAdjacentHTML("afterEnd", "<pre id='def-" + name +"' class='term' onclick='edit(this);'>FISH</pre>");
+  elt.style.background = 'black';
+  ide("pp?" + name);
+  // TODO: but first need to decode in lisp!!!
+  //ide("pp?" + encodeURIComponent(name));
+}
+
 function ide(path) {
   update("http://localhost:8080/ide/" + path + "??" + (new Date()).valueOf());
 }

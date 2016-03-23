@@ -9,7 +9,7 @@
  echo '(define (cb-dispatch path) (print "----------------") (print (eval (read (dir path)) (env))))' ; \
  echo '(define cbn 0)' ; \
  echo '(define (cb w r method path) (print (list "====" w r method path)) (set! cbn (+ cbn 1)) (if w nil ((cb-dispatch path) r (replace (param path) "%20" " ")) "")' ; \
- echo '(define (/ide/pp r f) (with-fd r (princ "jsonp_pp(") (princ (char 39))) (with-fd-json r (pp (eval (read f) (env)))) (with-fd r (princ (char 39)) (princ ");") (terpri)))' ; \
+ echo '(define (/ide/pp r f) (with-fd r (princ "jsonp_pp(") (princ (char 39))) (with-fd-json r (pp (eval (read f) (env)))) (with-fd r (princ (char 39)) (princ ",") (princ (char 39)) (princ f) (princ (char 39)) (princ ");") (terpri)))' ; \
  echo '(define (/ide/list r) (with-fd r (princ "jsonp_list(") (princ (char 39))) (with-fd-json r (print-lambdas)) (with-fd r (princ (char 39)) (princ ");") (terpri)))' ; \
  echo '(define (/ide/eval r s) (with-fd r (princ "jsonp_eval(") (princ (char 39))) (with-fd-json r (princ (eval (read s) (env)))) (with-fd r (princ (char 39)) (princ ");") (terpri)))' ; \
  echo '(web 8080 cb)' ; \
