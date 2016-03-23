@@ -29,6 +29,8 @@ I'll teach you lisp in 15 minutes ;-) - [teach you lisp video](https://www.youtu
 
 You can learn some about this lisp internals in my talk and the discussion at [Hackware: Holiday 2015 Special](https://engineers.sg/video/esp-lisp-hackware--467), which took place in Singapore end of last year.
 
+A more detailed presentation takes place/took place in Hong Kong Functional Programming meetup at HKU. [slides](http://1drv.ms/1RiVNzq).
+
 ## status
 
 The core is about 1000 lines of code. Total less than 3000 with xml/web server support.
