@@ -50,15 +50,18 @@ function update(url) {
 
 <h1>ESP8266 lisp IDE</h1>
 
+<h2>List of user defined functions</h2>
 <div id='list'>
 </div>
 <br><button onclick='ide("list");'>list</button><br>
 
+<h2>One function</h2>
 <pre id='pp' class='term' contentEditable='true'>
 Data here...
 </pre>
 <br><button onclick='ide("pp?fibo");'>load</button><br>
 
+<h2>Eval</h2>
 <input id='einput'>
 <pre id='eval' class='term'>
 Data here...
