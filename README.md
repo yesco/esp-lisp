@@ -23,7 +23,7 @@ I'll teach you lisp in 15 minutes ;-) - [teach you lisp video](https://www.youtu
 - interactive development instead of compile/upload/run - OK
 - readline or better terminal interface - DONE
 - easy to add functions by registering, good FFI - DONE
-- no macros use NLAMBDA concept instead - "OK"
+- no macros use NLAMBDA concept instead - "OK" 
 
 ## internals presentations
 
