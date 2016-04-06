@@ -95,8 +95,6 @@
   #define LOOPTAIL "(tail 2999999 0)"
 #endif
 
-typedef unsigned int uint32;
-
 // use pointer to store some tag data, use this for exteded types
 // last bits (3 as it allocates in at least 8 bytes boundaries):
 // ----------
