@@ -82,12 +82,16 @@ lisp cdr(lisp x);
 lisp list(lisp first, ...);
 #define END ((lisp) -1)
 
+PRIM _define(lisp* envp, lisp args);
+PRIM de(lisp* envp, lisp namebody);
+PRIM reads(char *s);
+
 // User, macros, assume a "globaL" env variable implicitly, and updates it
 #define SET(sname, val) _setb(envp, sname, val)
 #define SETQc(sname, val) _setb(envp, symbol(#sname), val)
 #define SETQ(sname, val) _setb(envp, symbol(#sname), reads(#val))
 #define SETQQ(sname, val) _setb(envp, symbol(#sname), quote(reads(#val)))
-#define DEFINE(fname, sbody) define(envp, symbol(#fname), reads(#sbody))
+#define DEFINE(fname, sbody) _define(envp, cons(symbol(#fname), cons(reads(#sbody), nil)))
 #define DE(all) de(envp, reads(#all))
 #define EVAL(what) eval(reads(#what), envp)
 #define PRINT(what) ({ princ(EVAL(what)); terpri(); })

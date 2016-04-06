@@ -5,6 +5,15 @@ BETA: A small fast lisp interpeter for a ESP8266 as alternative to lua on the no
 
 Who doesn't need a lisp? I always wanted my own "lispmachine" anyway ;) It's ideally small and interactive for experimentation, very little typing, compared to lua for example, easy to extend with FFI to add new functions.
 
+## what is lisp?
+
+Lisp is syntactically a very simple language. It has in principle just function calls:
+
+    lisp> (+ 3 4)
+    => 7
+    
+I'll teach you lisp in 15 minutes ;-) - [teach you lisp video](https://www.youtube.com/watch?v=_X_rx9SjDfw), from my talk at Chiang Mai Makerfaire, Thailand 2016 [slides](https://rawgit.com/yesco/hangmai-makerfair-esp-lisp-2016/master/index.html).
+
 ## design goals
 
 - embedded small lisp - OK
@@ -14,7 +23,13 @@ Who doesn't need a lisp? I always wanted my own "lispmachine" anyway ;) It's ide
 - interactive development instead of compile/upload/run - OK
 - readline or better terminal interface - DONE
 - easy to add functions by registering, good FFI - DONE
-- no macros use NLAMBDA concept instead - "OK"
+- no macros use NLAMBDA concept instead - "OK" 
+
+## internals presentations
+
+You can learn some about this lisp internals in my talk and the discussion at [Hackware: Holiday 2015 Special](https://engineers.sg/video/esp-lisp-hackware--467), which took place in Singapore end of last year.
+
+A more detailed presentation takes place/took place in Hong Kong Functional Programming meetup at HKU. [slides](http://1drv.ms/1RiVNzq), [video](https://www.youtube.com/watch?v=jtrkCbiQVjM&feature=youtu.be)
 
 ## status
 

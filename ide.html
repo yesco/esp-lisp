@@ -1,0 +1,115 @@
+<html>
+<header>
+<title>ESP8266 lisp IDE</title>
+</header>
+
+<script>
+function jsonp_pp(data, name) {
+  var t = document.getElementById('def-' + name);
+  t.innerText = data;
+}
+
+function mkeditlink(f) {
+  return "<a onclick=\"pp('" + f + "', this);\" class='func-name'>" + f + "</a>";
+}
+
+function jsonp_list(data) {
+  var t = document.getElementById('list');
+  t.innerHTML = data.split(/\n/).sort().map(function(f){ return f ? ("<span>" + mkeditlink(f) + "</span>") : ""; }).join("\n");;
+}
+
+function jsonp_eval(data, exp) {
+  var t = document.getElementById('eval');
+  //t.innerText = data;
+  var d = document.createElement('div');
+  d.innerText = data;
+  // TODO: encode exp!
+  exp = exp || document.getElementById("einput").value;
+  d.insertAdjacentHTML('afterBegin', "lisp&gt; " + exp + "<br>");
+  t.insertAdjacentElement('afterBegin', d);
+}
+
+function update(url) {
+  var s = document.createElement('script');
+  s.src = url;
+  document.head.appendChild(s);
+  s.onload = function() { s.remove(); };
+  s.onerror = function() { s.remove(); console.log("FAIL: " + url); };
+}
+</script>
+
+<body spellcheck="false">
+
+<style>
+.term {
+  //word-wrap: break-word;
+  display: inline-block;
+  border: 2px solid black;
+  padding: 5px;
+  border-radius: 5px;
+  //background: black;
+  //color: #8AFF4F;
+  background: yellow;
+  font-weight: bold;
+}
+.func-name {
+  display: block;
+  background: gray;
+  color: white;
+  font-weight: bold;
+  padding: 3px;
+  margin: 2px;
+  padding-left: 10px;
+  position: relative;
+  width: 110%;
+  left: -10px;
+}
+</style>
+
+<h1>ESP8266 lisp IDE</h1>
+
+<div id='list'>
+</div>
+<br><button onclick='ide("list");'>list</button><br>
+
+<h2>Eval</h2>
+<input id='einput' length=60 columns=60 onkeydown="if (event.keyCode == 13 || event.keyCode == 10) doeval();">
+<button onclick='doeval();'>eval</button><br>
+<pre id='eval' class='term' style='background: white; display: block;'>
+</pre>
+
+<script>
+function doeval() {
+  ide("eval?" + document.getElementById("einput").value);
+}
+
+function edit(elt) {
+  elt.onclick = undefined;
+  // TODO: doesn't work! http://stackoverflow.com/questions/5601431/spellcheck-false-on-contenteditable-elements
+  elt.contentEditable = 'true';
+  elt.spellcheck = 'false'; elt.focus(); elt.blur();
+  elt.style.background = 'pink';
+  var h = elt.previousSibling;
+  h.style.color = 'lime';
+}
+
+function pp(name, elt) {
+  var t = document.getElementById('def-' + name);
+  if (t) {
+    t.style.display = t.style.display == "none" ? "block" : "none";
+    return;
+  }
+  elt.insertAdjacentHTML("afterEnd", "<pre id='def-" + name +"' class='term' onclick='edit(this);'>FISH</pre>");
+  elt.style.background = 'black';
+  ide("pp?" + name);
+  // TODO: but first need to decode in lisp!!!
+  //ide("pp?" + encodeURIComponent(name));
+}
+
+function ide(path) {
+  update("http://localhost:8080/ide/" + path + "??" + (new Date()).valueOf());
+}
+</script>
+
+</body>
+</html>

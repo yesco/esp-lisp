@@ -162,6 +162,54 @@ int process_file(char* filename, process_input process) {
     return 0;
 }
 
+//////////////////////////////////////////////////////////////////////
+// simulate flash in RAM! (including EOR flash overwrite)
+// TODO: verify "correctness" compared to esp8266 truth, but works othewise
+
+//uint32 flash_memory[SPI_FLASH_SIZE_MB/SPI_FLASH_SEC_SIZE] = {0xffffffff};
+//uint32 flash_memory[SPI_FLASH_SIZE_MB/SPI_FLASH_SEC_SIZE] = {0xbadbeef};
+// easier to implement using char*! but maybe it should be uint32 to be more correct
+unsigned char flash_memory[SPI_FLASH_SIZE_BYTES - FS_ADDRESS] = {0xff};
+
+// TODO: store in file
+
+int sdk_spi_flash_erase_sector(int sec) {
+    int addr = sec * SPI_FLASH_SEC_SIZE;
+    addr -= FS_ADDRESS;
+    int i;
+    for(i = 0; i < SPI_FLASH_SEC_SIZE; i++) {
+        flash_memory[addr + i] = 0xff;
+        //printf(" [ERASE: %x: %x] \n", addr + i, 0xff);
+    }
+    return SPI_FLASH_RESULT_OK;
+}
+
+int sdk_spi_flash_write(int addr, uint32* data, int len) {
+    len = (len + 3) & ~3; // TODO: if addr !% 4 then non correct?
+    unsigned char* dst = &flash_memory[addr - FS_ADDRESS];
+    unsigned char* src = (void*)data;
+    while (len-- > 0) {
+        unsigned char s = *src, d = *dst; 
+        unsigned char v = ~(~*src++ | ~*dst); // or of 0s!
+        *dst++ = v;
+        printf(" [WRITE %x: %x ...] \n", dst - flash_memory - 1, v);
+    }
+    return SPI_FLASH_RESULT_OK;
+}
+
+int sdk_spi_flash_read(int addr, uint32* data, int len) {
+    len = (len + 3) & ~3; // TODO: if addr !% 4 then non correct?
+    unsigned char* src = &flash_memory[addr - FS_ADDRESS];
+    unsigned char* dst = (void*)data;
+    while (len-- > 0) {
+        uint32 d = *dst++ = *src++;
+        //printf(" [READ %x: %x] \n", src - flash_memory - 1, d);
+    }
+    return SPI_FLASH_RESULT_OK;
+}
+
+//////////////////////////////////////////////////////////////////////
+
 void sig_handler(int signo) {
     clear();
     printf("\n%received SIG%d\n", signo);

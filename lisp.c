@@ -1,6 +1,6 @@
 /* Distributed under Mozilla Public Licence 2.0   */
 /* https://www.mozilla.org/en-US/MPL/2.0/         */
-/* 2015-09-22 (C) Jonas S Karlsson, jsk@yesco.org */
+/* 2016-03-15 (C) Jonas S Karlsson, jsk@yesco.org */
 /* A mini "lisp machine", main                    */
 
 // http://stackoverflow.com/questions/3482389/how-many-primitives-does-it-take-to-build-a-lisp-machine-ten-seven-or-five
@@ -398,7 +398,7 @@ static void* salloc(int bytes) {
 // call this malloc using ALLOC(typename) macro
 // if tag < 0 no GC on these (don't keep pointer around)
 void* myMalloc(int bytes, int tag) {
-    ///printf("MALLOC: %d %s\n", tag, tag_name[tag]);
+    ///printf("MALLOC: %d %d %s\n", bytes, tag, tag_name[tag]);
 
     if (1) { // 830ms -> 770ms 5% faster if removed, depends on the week!?
         if (tag > 0) {
@@ -513,9 +513,15 @@ char* my_strndup(char* s, int len) {
 }
 
 // make a string from POINTER (inside other string) by copying LEN bytes
+// if len < 0 then it's already malloced elsewhere
 PRIM mklenstring(char* s, int len) {
+    if (!s) return nil;
     string* r = ALLOC(string);
-    r->p = my_strndup(s, len); // TODO: how to deallocate?
+    if (len >= 0) {
+        r->p = my_strndup(s, len); // TODO: how to deallocate?
+    } else {
+        r->p = s;
+    }
     return (lisp)r;
 }
 
@@ -524,7 +530,7 @@ PRIM mkstring(char* s) {
 }
 
 char* getstring(lisp s) {
-    return IS(s, string) ? ATTR(string, s, p) : NULL;
+    return IS(s, string) ? ATTR(string, s, p) : "";
 }
     
 // TODO:
@@ -802,6 +808,9 @@ static void f_emit_attr(lisp callback, char* path[], char* tag, char* attr, char
     apply(callback, list(symbol(tag), symbol(attr), mkstring(value), END));
 }
 
+// TODO: http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-ref/XML-Input.html#XML-Input
+// https://www.gnu.org/software/guile/manual/html_node/Reading-and-Writing-XML.html
+// https://www.gnu.org/software/guile/manual/html_node/sxml_002dmatch.html
 PRIM wget_(lisp server, lisp url, lisp callback) {
     wget_data data;
     memset(&data, 0, sizeof(data));
@@ -820,12 +829,14 @@ PRIM wget_(lisp server, lisp url, lisp callback) {
 static lisp web_callback = NULL;
 
 static void header(char* buff, char* method, char* path) {
+    buff = buff ? buff : "";
     maybeGC();
 
     apply(web_callback, list(symbol("header"), mkstring(buff), symbol(method), mkstring(path), END));
 }
 
 static void body(char* buff, char* method, char* path) {
+    buff = buff ? buff : "";
     maybeGC();
 
     apply(web_callback, list(symbol("body"), mkstring(buff), symbol(method), mkstring(path), END));
@@ -834,17 +845,19 @@ static void body(char* buff, char* method, char* path) {
 static void response(int req, char* method, char* path) {
     maybeGC();
 
-    lisp ret = apply(web_callback, list(nil, symbol(method), mkstring(path), END));
+    lisp ret = apply(web_callback, list(nil, mkint(req), symbol(method), mkstring(path), END));
     printf("RET="); princ(ret); terpri();
 
+    // TODO: instead redirect output to write!!! 
     char* s = getstring(ret);
+    // TODO: loop until all of the string written?
     write(req, s, strlen(s));
 
     maybeGC();
 }
 
 // echo '
-// (web 8080 (lambda (w s m p) (princ w) (princ " ") (princ s) (princ " ") (princ m) (princ " ") (princ p) (terpri) "FISH-42"))
+// (web 8080 (lambda (r w s m p) (princ w) (princ " ") (princ s) (princ " ") (princ m) (princ " ") (princ p) (terpri) "FISH-42"))
 // ' | ./run
 
 PRIM _setb(lisp* envp, lisp name, lisp v);
@@ -866,7 +879,7 @@ PRIM web(lisp* envp, lisp port, lisp callback) {
 
     // store a pointer in global env to the function so it doesn't get gc:ed
     web_callback = evalGC(callback, envp);
-    SETQc(webcb, web_callback);
+    _define(envp, list(symbol("webcb"), reads("web_callback"), END));
 
     int s = httpd_init(getint(port));
     if (s < 0) { printf("ERROR.errno=%d\n", errno); return nil; }
@@ -1013,10 +1026,25 @@ PRIM mkfunc(lisp e, lisp env) {
     return (lisp)r;
 }
 
+PRIM fundef(lisp f) {
+    if (IS(f, func)) return ((func*)f)->e;
+    return nil;
+}
+
+PRIM funenv(lisp f) {
+    if (IS(f, func)) return ((func*)f)->env;
+    return nil;
+}
+
+PRIM funame(lisp f) { // fun-name lol (6 char) => funame
+    if (IS(f, func)) return ((func*)f)->name;
+    if (IS(f, prim)) return *(lisp*)GETPRIM(f);
+    return nil;
+}
+
 ////////////////////////////// GC
 
-// TODO: not correct, haha
-#define FLASHP(x) (CONSP(x) && ((conss*)next - &conses[0] >= MAX_CONS))
+#define FLASHP(x) ((unsigned int)next >= (unsigned int)flash_memory && ((unsigned int)next <= (unsigned int)(flash_memory + SPI_FLASH_SIZE_BYTES - FS_ADDRESS)))
 
 void mark_deep(lisp next, int deep) {
     while (next) {
@@ -1031,8 +1059,8 @@ void mark_deep(lisp next, int deep) {
         if (PRIMP(next)) return;
 	if (CONSP(next)) {
 	    int i = (conss*)next - &conses[0];
-            if (i >= MAX_CONS) {
-                printf("mark.cons.funny i=%d    %u\n", i, (int)next);
+            if (i >= MAX_CONS) { // pointing to other RAM/FLASH not allocated to cons array
+                printf("mark.cons.badcons i=%d    %u max=%d\n", i, (int)next, MAX_CONS);
                 exit(1);
             }
             if (CONS_IS_USED(i)) return; // already checked!
@@ -1075,8 +1103,6 @@ inline void mark(lisp x) {
     mark_deep(x, 1);
 }
 
-static lisp reads(char *s);
-
 ///--------------------------------------------------------------------------------
 // Primitives
 // naming convention:
@@ -1114,7 +1140,6 @@ PRIM read_(lisp s) {
         return r;
     }
 }
-PRIM terpri() { printf("\n"); return nil; }
 
 // TODO: consider http://picolisp.com/wiki/?ArticleQuote
 PRIM _quote(lisp* envp, lisp x) { return x; }
@@ -1202,7 +1227,7 @@ PRIM _set_(lisp* envp, lisp name, lisp v) { return _set(envp, name, v); }
 
 PRIM de(lisp* envp, lisp namebody);
 
-PRIM define(lisp* envp, lisp args) {
+PRIM _define(lisp* envp, lisp args) {
     if (SYMP(car(args))) { // (define a 3)
         lisp name = car(args);
 
@@ -1221,7 +1246,7 @@ PRIM define(lisp* envp, lisp args) {
 }
 
 PRIM de(lisp* envp, lisp namebody) {
-    return define(envp, cons(car(namebody), cons(cons(symbol("lambda"), cdr(namebody)), nil)));
+    return _define(envp, cons(car(namebody), cons(cons(symbol("lambda"), cdr(namebody)), nil)));
 }
 
 lisp reduce_immediate(lisp x);
@@ -1263,6 +1288,73 @@ PRIM length(lisp r) {
         r = cdr(r);
     }
     return mkint(c);
+}
+
+// scheme string functions - https://www.gnu.org/software/guile/manual/html_node/Strings.html#Strings
+// common lisp string functions - http://www.lispworks.com/documentation/HyperSpec/Body/f_stgeq_.htm
+PRIM concat(lisp* envp, lisp x) {
+    int len = 1;
+    lisp i = x;
+    while (i) {
+        len += strlen(getstring(car(i)));
+        i = cdr(i);
+    }
+    char* s = malloc(len), *p = s;;
+    *s = 0;
+    i = x;
+    while (i) {
+        p = strcat(p, getstring(car(i)));
+        i = cdr(i);
+    }
+    lisp r = mklenstring(s, -len);
+    return r;
+}
+
+PRIM char_(lisp i) {
+    if (IS(i, string)) {
+        return mkint(getstring(i)[0]);
+    } else if (IS(i, intint)) {
+        char s[2] = {0};
+        s[0] = getint(i);
+        return mkstring(s);
+    } else 
+        error("char.unsupported type");
+    return nil;
+}
+
+// optional n, number of entries to return (1..x), 0, <0, nil, non-number => all
+PRIM split(lisp s, lisp d, lisp n) {
+    int i = getint(n);
+    char* src = getstring(s);
+    char* delim = getstring(d);
+    int len = strlen(delim);
+    lisp r = nil;
+    lisp p = r;
+    lisp last = nil;
+    while (src && (i > 0 || i <= 0)) {
+        char* where = strstr(src, delim);
+        if (!where) {
+            where = src + strlen(src);
+            i = 1; // will terminate after add
+        }
+        lisp m = mklenstring(src, where - src);
+
+        // add conscell at end and add value
+        p = cons(nil, nil);
+        if (!r)
+            r = p;
+        else
+            setcdr(last, p);
+        setcar(p, m);
+
+        last = p;
+        p = cdr(p);
+
+        src = where + len;
+        i--;
+        if (!i) break;
+    }
+    return r;
 }
 
 ///--------------------------------------------------------------------------------
@@ -1319,13 +1411,16 @@ static lisp readString() {
         if (c == '\\') c = next();
         c = next();
     }
-    
+    if (!c) error("string.not_terminated");
     int len = input - start - 1;
+
+   // we modify the copied string as the string above may be constant
     lisp r = mklenstring(start, len);
     // remove '\', this may waste a byte or two if any
     char* from = getstring(r);
     char* to = from;
     while (*from) {
+        // TODO: \n \t ...
         if (*from == '\\') from++;
         *to = *from; // !
         from++; to++;
@@ -1402,11 +1497,129 @@ static lisp readx() {
     return readSymbol(c, 0);
 }
 
-static PRIM reads(char *s) {
+PRIM reads(char *s) {
     input = s;
     nextChar = 0;
     return readx();
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// output, with capturing
+typedef int putcf(int c);
+putcf *writeputc, *origputc;
+
+// TODO: more efficient...
+//typedef int writef(char* s, int len);
+//putcf *writewrite;
+
+
+PRIM with_putc(lisp* envp, lisp args) {
+    lisp fn = car(args);
+    putcf *old = writeputc;
+
+    int recurse = 0;
+    int myputc(int c) {
+        recurse++;
+        if (recurse > 1) error("with-putc called with function that calls putc - prohibited!");
+        lisp r= callfunc(fn, cons(mkint(c), nil), envp, nil, 1);
+        recurse--;
+        return getint(r);
+    }
+
+    lisp r = nil;
+    writeputc = myputc; {
+        // need catch errors and restore... (setjmp/error?)
+        r = progn(envp, cdr(args));
+
+    } writeputc = old;
+    return r;
+}
+
+PRIM with_fd(lisp* envp, lisp args) {
+    int fd = getint(eval(car(args), envp));
+    putcf *old = writeputc;
+
+    int myputc(int c) {
+        char cc = c;
+        return write(fd, &cc, 1);
+    }
+
+    lisp r = nil;
+    writeputc = myputc; {
+        // need catch errors and restore... (setjmp/error?)
+        r = reduce_immediate(progn(envp, cdr(args)));
+    } writeputc = old;
+    return r;
+}
+
+// TODO: move out to an ide.c file? consider with ide-www
+
+PRIM with_fd_json(lisp* envp, lisp args) {
+    int fd = getint(eval(car(args), envp));
+    putcf *old = writeputc;
+
+    int myputc(int c) {
+        char cc = c;
+        origputc(c);
+        // TODO: specific for jsonp?
+        if (c == '\n' || c == '\r')
+            return write(fd, "\\n", 2);
+        else if (c == '"')
+            return write(fd, "\\\"", 2);
+        else if (c == '\'')
+            return write(fd, "\\\'", 2);
+        else
+            return write(fd, &cc, 1);
+    }
+
+    lisp r = nil;
+    writeputc = myputc; {
+        // need catch errors and restore... (setjmp/error?)
+        r = reduce_immediate(progn(envp, cdr(args)));
+    } writeputc = old;
+    return r;
+}
+
+int writec(int c) {
+    if (!writeputc) origputc = writeputc = &putchar;
+    return writeputc(c);
+} 
+
+int writes(char* s) {
+    int n = 0;
+    while (*s && ++n) writec(*s++);
+    return n;
+} 
+
+int writef(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    int len;
+
+    if (writeputc == &putchar) { // more efficient
+        len = vprintf(fmt, args);
+    } else {
+        // capture output of printf by first faking it, just counting
+        // then, write to buffer, then call writec...
+        char* tst = NULL;
+        len = vsnprintf(tst, 0, fmt, args) + 1;
+        char out[len]; // TODO: this may not be safe...
+        memset(out, 0, len);
+        vsnprintf(out, len, fmt, args);
+        writes(out);
+    }
+
+    va_end(args);
+    return len;
+}
+
+#undef putchar
+#undef printf
+#undef puts
+
+#define printf writef
+#define putchar writec
+#define puts writes
 
 // TODO: prin1, princ, print, pprint/pp by calling
 //    (write o output-stream= base= escape= level= circle= lines= pretty= readably=)
@@ -1425,14 +1638,15 @@ static PRIM reads(char *s) {
 // (pprint object output-stream)
 //     ==  (write object :stream output-stream :escape t :pretty t)
 lisp princ_hlp(lisp x, int readable) {
+//    printf(" [:: %u ::] ");
     int tag = TAG(x);
     // simple one liners
     if (!tag) printf("nil");
     else if (tag == intint_TAG) printf("%d", getint(x));
     else if (tag == prim_TAG) { putchar('#'); princ_hlp(*(lisp*)GETPRIM(x), readable); }
     // for now we have two "symbolls" one inline in pointer and another heap allocated
-    else if (HSYMP(x)) printf("%s", symbol_getString(x));
-    else if (SYMP(x)) { char s[7] = {0}; sym2str(x, s); printf("%s", s); }
+    else if (HSYMP(x)) writes(symbol_getString(x));
+    else if (SYMP(x)) { char s[7] = {0}; sym2str(x, s); writes(s); }
     // can't be made reable really unless "reveal" internal pointer
     else if (tag == thunk_TAG) { printf("#thunk["); princ_hlp(ATTR(thunk, x, e), readable); putchar(']'); }
     else if (tag == immediate_TAG) { printf("#immediate["); princ_hlp(ATTR(thunk, x, e), readable); putchar(']'); }
@@ -1475,6 +1689,7 @@ lisp princ_hlp(lisp x, int readable) {
 PRIM princ(lisp x) {
     return princ_hlp(x, 0);
 }
+
 // print in readable format
 PRIM prin1(lisp x) {
     return princ_hlp(x, 1);
@@ -1487,8 +1702,13 @@ PRIM print(lisp x) {
     return r;
 }
 
-// conforms to - http://www.gnu.org/software/emacs/manual/html_node/elisp/Formatting-Strings.html
+PRIM terpri() { putchar('\n'); return nil; }
+
+// format conforms to - http://www.gnu.org/software/emacs/manual/html_node/elisp/Formatting-Strings.html
+// TODO: make it return the numbers of characters printed?
+// TODO: make a sprintf, or call it "format".
 // which essentially is printf for lisp, they call it format in elisp
+// TODO: format - http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-ref/Format.html#Format
 PRIM printf_(lisp *envp, lisp all) {
     char* f = getstring(car(all));
     all = cdr(all);
@@ -1519,6 +1739,74 @@ PRIM printf_(lisp *envp, lisp all) {
         }
     }
     return nil;
+}
+
+lisp pp_hlp(lisp e, int indent) {
+    void nl() { terpri(); int i = indent*3; while(i--) putchar(' '); };
+    void print_list(lisp e) {
+        indent++;
+        while (e) {
+            nl();
+            pp_hlp(car(e), indent+1);
+            e = cdr(e);
+        }
+        putchar(')');
+        indent--; nl();
+    }
+
+    if (!e) return prin1(e);
+    if (!consp(e)) return prin1(e);
+    lisp a1 = car(e), l2 = cdr(e),
+        a2 = car(l2), l3 = cdr(l2),
+        a3 = car(l3), l4 = cdr(l3),
+        a4 = car(l4);
+    if (funame(a1)) a1 = funame(a1); // decompile! haha
+    if (symbolp(a1)) {
+        if (a1 == symbol("if")) {
+            printf("(if "); indent++; pp_hlp(a2, indent+1); nl();
+            pp_hlp(a3, indent+2); indent--;
+            if (l4) { nl(); pp_hlp(a4, indent+1); }
+            putchar(')');
+        //} else if (a1 == symbol("lambda")) {
+        } else if (a1 == symbol("cond")) {
+            printf("(cond ");
+            print_list(l3);
+        } else if (a1 == symbol("case")) {
+            printf("(case "); pp_hlp(a2, indent+1);
+            print_list(l3);
+        } else if (a1 == symbol("define")) {
+            prin1(a2);
+            print_list(l3);
+        } else if (a1 == symbol("de")) {
+            printf("(de "); prin1(a2); putchar(' '); prin1(a3);
+            print_list(l4);
+        } else {
+            printf("(");
+            pp_hlp(a1, indent+1);
+            lisp r = l2;
+            while (r) {
+                putchar(' ');
+                pp_hlp(car(r), indent+1);
+                r = cdr(r);
+            }
+            printf(")");
+        }
+    } else if (consp(a1)) { // list of list
+        putchar('('); pp_hlp(a1, indent+2);
+        print_list(l2);
+    } else { // a list of some kind
+        // TODO: try figure out complexity of list and if to do print_list on it...
+        // use length and "estimated" chars for output (recursive length?)
+        prin1(e); nl();
+    }
+    return nil;
+}
+
+PRIM pp(lisp e) {
+    if (funcp(e))
+        e = cons(symbol("de"), cons(funame(e), fundef(e)));
+    pp_hlp(e, 0);
+    return symbol("");
 }
 
 static void indent(int n) {
@@ -1567,7 +1855,8 @@ static inline lisp eval_hlp(lisp e, lisp* envp) {
         // maybe must search all list till find null, then can look on symbol :-(
         // but that's everytime? actually, not it's a lexical scope!
         // TODO: only replace if not found in ENV and is on an SYMBOL!
-        setcar(e, f);
+        if (symbolp(orig) && eq(funame(f), orig))
+            setcar(e, f);
     }
 
     return r;
@@ -2117,57 +2406,6 @@ PRIM heap() {
 
 #ifdef UNIX
 
-// simulate flash in RAM! (including EOR flash overwrite)
-#define SPI_FLASH_RESULT_OK 0
-#define SPI_FLASH_ERROR -1
-
-#define FS_ADDRESS 0x60000
-#define SPI_FLASH_SEC_SIZE 128 // TODO: is this right?
-#define SPI_FLASH_BLOCK (SPI_FLASH_SEC_SIZE/4)
-
-#define SPI_FLASH_SIZE_MB (4*1024)
-
-//uint32 flash_memory[SPI_FLASH_SIZE_MB/SPI_FLASH_SEC_SIZE] = {0xffffffff};
-//uint32 flash_memory[SPI_FLASH_SIZE_MB/SPI_FLASH_SEC_SIZE] = {0xbadbeef};
-unsigned char flash_memory[SPI_FLASH_SIZE_MB * 1024] = {0xff};
-
-// TODO: store in file
-
-int sdk_spi_flash_erase_sector(int sec) {
-    int addr = sec * SPI_FLASH_SEC_SIZE;
-    addr -= FS_ADDRESS;
-    int i;
-    for(i = 0; i < SPI_FLASH_SEC_SIZE; i++) {
-        flash_memory[addr + i] = 0xff;
-        //printf(" [ERASE: %x: %x] \n", addr + i, 0xff);
-    }
-    return SPI_FLASH_RESULT_OK;
-}
-
-int sdk_spi_flash_write(int addr, uint32* data, int len) {
-    len = (len + 3) & ~3; // TODO: if addr !% 4 then non correct?
-    unsigned char* dst = &flash_memory[addr - FS_ADDRESS];
-    unsigned char* src = (void*)data;
-    while (len-- > 0) {
-        unsigned char s = *src, d = *dst; 
-        unsigned char v = ~(~*src++ | ~*dst); // or of 0s!
-        *dst++ = v;
-        printf(" [WRITE %x: %x ...] \n", dst - flash_memory - 1, v);
-    }
-    return SPI_FLASH_RESULT_OK;
-}
-
-int sdk_spi_flash_read(int addr, uint32* data, int len) {
-    len = (len + 3) & ~3; // TODO: if addr !% 4 then non correct?
-    unsigned char* src = &flash_memory[addr - FS_ADDRESS];
-    unsigned char* dst = (void*)data;
-    while (len-- > 0) {
-        uint32 d = *dst++ = *src++;
-        //printf(" [READ %x: %x] \n", src - flash_memory - 1, d);
-    }
-    return SPI_FLASH_RESULT_OK;
-}
-
 // Highlevel
 
 // (save '(http boot) (lambda (x) (init-web-server)) (lambda (x) (print "Done")))
@@ -2183,13 +2421,6 @@ int sdk_spi_flash_read(int addr, uint32* data, int len) {
 //}
 
 #else
-
-// http://www.esp8266.com/wiki/doku.php?id=esp8266_memory_map
-// http://esp8266-re.foogod.com/wiki/Memory_Map
-// essentially this is after 512K ROM flash, probably safe to use from here for storage!
-#define FS_ADDRESS 0x60000
-
-// http://richard.burtons.org/2015/05/24/memory-map-limitation-for-rboot/
 
 // how lua can compile functions to flash file and then call it
 // - http://www.esp8266.com/viewtopic.php?f=19&t=1940
@@ -2348,12 +2579,15 @@ int findLastFlash() {
 }
 
 PRIM scan(lisp s) {
-    int maxlen =  4*1024*1024;
+    int maxlen =  SPI_FLASH_SIZE_BYTES - FS_ADDRESS;
     int i;
 
     if (1) {
-        uint32* a = (uint32*)0x40200000;
-        a += FS_ADDRESS/4;
+//      // includes program ROM
+//      uint32* a = (uint32*)0x40200000;
+//      a += FS_ADDRESS/4;
+
+        uint32* a = (uint32*)flash_memory;
         int s = 0;
         int c0 = 0;
         int cffffffff = 0;
@@ -2361,19 +2595,24 @@ PRIM scan(lisp s) {
         for(i = 0; i < maxlen/4; i++) {
             uint32 v = *a;
             a++;
-            if ((i % (16*1024/4) == 0)) { putchar('.'); fflush(stdout); }
+            //if ((i % (16*1024/4) == 0)) { putchar('.'); fflush(stdout); }
             s += v;
             if (v == 0xffffffff) cffffffff++;
             if (v == 0) c0++;
             //while (v && !stop) {
-            while (v) {
-                char c = v & 0xff;
-                if (c >= 32 && c <= 125) {putchar(v & 0xff); fflush(stdout); }
-                else if (0) { printf("[%d]", c); fflush(stdout); }
-//                if (v && 0xff == 0xff) stop = 1;
-                v >>= 8;
+            if (v) {
+                int j;
+                for(j = 4; j; j--) {
+                    char c = v & 0xff;
+                    if (c >= 32 && c <= 125) { putchar(v & 0xff); fflush(stdout); }
+                    else if (1) { printf("[%d]", (unsigned char)c); fflush(stdout); }
+                    // if (v && 0xff == 0xff) stop = 1;
+                    v >>= 8;
+                }
             }
+            //putchar('/');
         }
+        printf("\n");
         return cons(mkint(c0), mkint(cffffffff));
     }
 
@@ -2398,6 +2637,7 @@ PRIM scan(lisp s) {
 
 // returns lisp pointer into buffer
 lisp serializeLisp(lisp x, lisp* buffer, int *n) {
+    printf("\n------ Serializelisp "); print(x);
     if (*n <= 2) return symbol("*FULL*");
     //if (HSYMP(x)) {
         // for now just "pray" - collisions in english language are 190/99K!
@@ -2479,7 +2719,19 @@ PRIM flashArray(lisp *serialized, int len) {
     // TODO: actually copy to flash
     int offset = 0; // TODO: find free space to store
     writeBytesToFlash((char*)where, len * sizeof(lisp), offset);
+    int flashaddr = (unsigned int)flash_memory + offset;
 
+    free(where);
+    if (CONSP(*serialized)) {
+        return MKCONS(flashaddr);
+    } else {
+        // TODO: pointer stupidity, works fine for CONS, string/heap, but not symboll?
+        unsigned int us = (unsigned int)serialized;
+        return (lisp)((unsigned int)flashaddr | (us & 2)); // 2 ???
+    }
+
+    // TODO: remove
+    // return pointer to memory, first attemtp
     if (CONSP(*serialized)) return MKCONS(where);
 
     // TODO: pointer stupidity, works fine for CONS, string/heap, but not symboll?
@@ -2554,15 +2806,21 @@ PRIM fibb(lisp n);
 // returns an env with functions
 lisp lisp_init() {
     nil = 0;
+    int verbose;
 
     init_symbols();
 
     // enable to observer startup sequence
     if (1) {
-        char* f = readline("start lisp>", 1);
-        if (f) free(f);
+        char* f = readline("start lisp>", 2);
+        if (f) {
+            verbose = (f[0] != 0);
+            free(f);
+        } else {
+            verbose = 0;
+        }
     }
-    print_memory_info(2); // init by first call
+    print_memory_info( verbose ? 2 : 0 ); // init by first call
 
     lisp env = nil;
     lisp* envp = &env;
@@ -2582,11 +2840,11 @@ lisp lisp_init() {
     gc(NULL);
 
     t = symbol("t");
-    SETQ(t, 1);
+    DEFINE(t, 1);
 
-    //LAMBDA = mkprim("lambda", -7, lambda);
     DEFPRIM(lambda, -7, lambda);
 
+    // types
     DEFPRIM(null?, 1, nullp);
     DEFPRIM(cons?, 1, consp);
     DEFPRIM(atom?, 1, atomp);
@@ -2596,28 +2854,40 @@ lisp lisp_init() {
     DEFPRIM(integer?, 1, integerp);
     DEFPRIM(func?, 1, funcp);
 
-    DEFPRIM(<, 2, lessthan);
-
+    // mathy stuff
     DEFPRIM(+, 2, plus);
     DEFPRIM(-, 2, minus);
     DEFPRIM(*, 2, times);
     DEFPRIM(/, 2, divide);
     DEFPRIM(%, 2, mod);
+
     DEFPRIM(eq, 2, eq);
     DEFPRIM(equal, 2, equal);
     DEFPRIM(=, 2, eq);
+    DEFPRIM(<, 2, lessthan);
+
+    // https://www.gnu.org/software/guile/manual/html_node/Pattern-Matching.html#Pattern-Matching
     DEFPRIM(if, -3, if_);
     DEFPRIM(cond, -7, cond);
     DEFPRIM(case, -7, case_);
     DEFPRIM(and, -7, and);
     DEFPRIM(or, -7, or);
     DEFPRIM(not, 1, not);
+
+    // output
+    // TODO: write procedures? - http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-ref/Output-Procedures.html
+    // TODO: make these take a "fd" or output stream?
     DEFPRIM(terpri, 0, terpri);
     DEFPRIM(princ, 1, princ);
     DEFPRIM(prin1, 1, prin1);
     DEFPRIM(print, 1, print);
     DEFPRIM(printf, 7, printf_);
+    DEFPRIM(pp, 1, pp); // TODO: pprint?
+    DEFPRIM(with-putc, -7, with_putc);
+    DEFPRIM(with-fd, -7, with_fd);
+    DEFPRIM(with-fd-json, -7, with_fd_json);
 
+    // cons/list
     DEFPRIM(cons, 2, cons);
     DEFPRIM(car, 1, car_);
     DEFPRIM(cdr, 1, cdr_);
@@ -2626,11 +2896,15 @@ lisp lisp_init() {
 
     DEFPRIM(list, 7, _quote);
     DEFPRIM(length, 1, length);
+    DEFPRIM(concat, 7, concat); // scheme: string-append/string-concatenate
+    DEFPRIM(char, 1, char_); // scheme: integer->char
+    DEFPRIM(split, 3, split); // scheme: string-split
     DEFPRIM(assoc, 2, assoc);
     DEFPRIM(member, 2, member);
     DEFPRIM(mapcar, 2, mapcar);
     DEFPRIM(map, 2, map);
-    // DEFPRIM(quote, -7, quote);
+    DEFPRIM(quote, -1, _quote);
+    // DEFPRIM(quote, -7, quote); // TODO: consider it to quote list?
     // DEFPRIM(list, 7, listlist);
 
     DEFPRIM(let, -7, let);
@@ -2649,10 +2923,12 @@ lisp lisp_init() {
     //DEFPRIM(setqq, -2, _setqq_);
     DEFPRIM(set!, -2, _setb);
 
-    DEFPRIM(define, -7, define);
+    DEFPRIM(define, -7, _define);
     DEFPRIM(de, -7, de);
 
-    DEFPRIM(quote, -1, _quote);
+    DEFPRIM(fundef, 1, fundef);
+    DEFPRIM(funenv, 1, funenv);
+    DEFPRIM(funame, 1, funame);
 
     // define
     // defun
@@ -2674,18 +2950,27 @@ lisp lisp_init() {
     DEFPRIM(clock, 1, clock_);
     DEFPRIM(time, -1, time_);
     DEFPRIM(load, -1, load);
+
+    // debugging - http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Debugging-Aids.html 
+    // http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Command_002dLine-Debugger.html#Command_002dLine-Debugger
+    // TODO: set-trace! set-break! http://www.lilypond.org/doc/v2.19/Documentation/contributor/debugging-scheme-code
     DEFPRIM(pstack, 0, print_detailed_stack); 
 
+    // flash stuff - experimental
     DEFPRIM(flash, 2, flash);
     DEFPRIM(flashit, 1, flashit);
     DEFPRIM(scan, 2, scan);
+    // TODO: consider integrating with - https://www.gnu.org/software/guile/manual/html_node/Symbol-Props.html
+    // 2d-!!! https://groups.csail.mit.edu/mac/ftpdir/scheme-7.4/doc-html/scheme_12.html#SEC105
+    // 2d-put! 2d-remove! 2d-get 2d-get-alist-x 2d-get-alist-y
 
+    // scheduling
     DEFPRIM(at, -2, at); // TODO: eval at => #stop?!?!??!
     DEFPRIM(stop, -1, stop);
     DEFPRIM(atrun, -1, atrun);
 
 //    DEFPRIM(imacs, -1, imacs_);
-    DEFPRIM(syms, 0, syms);
+    DEFPRIM(syms, 0, syms); // TODO: rename to apropos?
     DEFPRIM(fib, 1, fibb);
 
     //DEFPRIM(readit, 0, readit);
@@ -2702,13 +2987,13 @@ lisp lisp_init() {
 
     dogc = 1;
 
-    print_memory_info(2); // summary of init usage
+    print_memory_info( verbose ? 2 : 0 ); // summary of init usage
     return env;
 }
 
 void help(lisp* envp) {
     printf("\n\nWelcome to esp-lisp!\n");
-    printf("2015 (c) Jonas S Karlsson under MPL 2.0\n");
+    printf("2016 (c) Jonas S Karlsson under MPL 2.0\n");
     printf("Read more on https://github.com/yesco/esp-lisp/\n\n");
     printf("Global/SYMBOLS: ");
     PRINT((syms (lambda (x) (princ x) (princ " "))));
@@ -2722,9 +3007,13 @@ void help(lisp* envp) {
 jmp_buf lisp_break = {0};
 
 // TODO: make it take one lisp parameter?
+// TODO: https://groups.csail.mit.edu/mac/ftpdir/scheme-7.4/doc-html/scheme_17.html#SEC153
 void error(char* msg) {
     jmp_buf empty = {0};
     static int error_level = 0;
+
+    // restore output to stdout, if error inside print function we're screwed otherwise!
+    writeputc = origputc;
 
     if (error_level == 0) {
         error_level++;
@@ -2760,6 +3049,10 @@ void run(char* s, lisp* envp) {
         // mark(r); // keep history?
     } else {
         // escaped w ctrl-c (longjmp)
+
+        // enableGC and kill stack
+        blockGC = 0;
+        level = 0;
     }
     // disable longjmp
     memset(lisp_break, 0, sizeof(lisp_break));

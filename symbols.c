@@ -326,6 +326,9 @@ void syms_mark() {
 }
 
 // print the slots
+// TODO: maybe call it apropos? http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Debugging-Aids.html
+// TODO: https://groups.csail.mit.edu/mac/ftpdir/scheme-7.4/doc-html/scheme_11.html#SEC97
+// symbol? symbol->string intern inter-soft string->symbol symbol-append symbol-hash symbol-hash-mod symbol<?
 PRIM syms(lisp f) {
     int n = 0;
     int i;

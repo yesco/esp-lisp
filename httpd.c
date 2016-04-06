@@ -147,6 +147,7 @@ static void body(char* buff, char* method, char* path) {
 
 static void response(int req, char* method, char* path) {
     static char* hello = "HELLO DUDE!\n";
+    // TODO: loop until all of the string written?
     write(req, hello, strlen(hello));
     printf("------------------------------ %s %s\n\n", method, path);
 }
