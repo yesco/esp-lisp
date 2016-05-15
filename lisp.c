@@ -1201,16 +1201,18 @@ inline lisp _setqqbind(lisp* envp, lisp name, lisp v, int create) {
 inline PRIM _setqq(lisp* envp, lisp name, lisp v) {
     _setqqbind(envp, name, nil, 0);
 
-    // NOTE - this code has been added to fully support scheduled tasks
-    lisp bind = assoc(name, *envp);
+    // NOTE - this code has been added to fully support scheduled tasks    
+    if (eq (symbol("*at*"), name) ) {
+        lisp bind = assoc(name, *envp);
 
-    if (!bind) {
-      bind = cons(name, nil);
+        if (!bind) {
+          bind = cons(name, nil);
 
-      *envp = cons(bind, *envp);
+          *envp = cons(bind, *envp);
+        }
+
+        setcdr(bind, v);
     }
-
-    setcdr(bind, v);
 
     return v;
 }
