@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <netdb.h>
+#include <unistd.h>
 
 #ifndef UNIX
  #include "FreeRTOS.h"

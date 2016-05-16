@@ -848,8 +848,12 @@ static void response(int req, char* method, char* path) {
 
     // TODO: instead redirect output to write!!! 
     char* s = getstring(ret);
-    // TODO: loop until all of the string written?
-    write(req, s, strlen(s));
+
+    do {
+        int r = write(req, s, strlen(s));
+        if (r < 0) { printf("%%Error on writing response, errno=%d\n", errno); break; }
+        s += r;
+    } while (*s);
 
     maybeGC();
 }
@@ -1183,6 +1187,7 @@ inline lisp getBind(lisp* envp, lisp name, int create) {
     // check "global"
     return hashsym(name, NULL, 0, 0); // not create, read only
 }
+lisp getBind(lisp* envp, lisp name, int create);
 
 // like setqq but returns binding, used by setXX
 // 1. define, de - create binding in current environment
@@ -1197,11 +1202,16 @@ inline lisp _setqqbind(lisp* envp, lisp name, lisp v, int create) {
     setcdr(bind, v);
     return bind;
 }
-
+// magic, this "instantiates" an inline function!
+lisp _setqqbind(lisp* envp, lisp name, lisp v, int create);
+    
 inline PRIM _setqq(lisp* envp, lisp name, lisp v) {
     _setqqbind(envp, name, nil, 0);
     return v;
 }
+// magic, this "instantiates" an inline function!
+PRIM _setqq(lisp* envp, lisp name, lisp v); 
+
 // next line only needed because C99 can't get pointer to inlined function?
 PRIM _setqq_(lisp* envp, lisp name, lisp v) { return _setqq(envp, name, v); }
 
@@ -1220,8 +1230,8 @@ inline PRIM _set(lisp* envp, lisp name, lisp v) {
     // TODO: evalGC? probably safe as steqqbind changed an existing env
     return _setb(envp, eval(name, envp), v);
 }
-// next line only needed because C99 can't get pointer to inlined function?
-PRIM _set_(lisp* envp, lisp name, lisp v) { return _set(envp, name, v); }
+// magic, this "instantiates" an inline function!
+PRIM _set(lisp* envp, lisp name, lisp v);
 
 PRIM de(lisp* envp, lisp namebody);
 
@@ -1910,6 +1920,8 @@ inline int needGC() {
     if (cons_count < MAX_CONS * 0.2) return 1;
     return (allocs_count < MAX_ALLOCS * 0.8) ? 0 : 1;
 }
+// magic, this "instantiates" an inline function!
+int needGC();
 
 
 // (de rec (n) (print n) (rec (+ n 1)) nil) // not tail recursive!

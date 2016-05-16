@@ -8,7 +8,7 @@ int clock_ms();
 
 int nonblock_getch();
 
-/* /\* /\\* void clear(); *\\/ *\/ */
+void clear();
 
 char* readline(char* prompt, int maxlen);
 char* readline_int(char* prompt, int maxlen, int (*myreadchar)(char*));
@@ -103,6 +103,10 @@ typedef unsigned int uint32;
 
   #define SPI_FLASH_SEC_SIZE 128 // TODO: is this right?
   extern unsigned char flash_memory[];
+
+  int sdk_spi_flash_erase_sector(int sec);
+  int sdk_spi_flash_write(int addr, uint32* data, int len);
+  int sdk_spi_flash_read(int addr, uint32* data, int len);
 
 #else
   #define flash_memory ((unsigned char*)(0x40200000 + FS_ADDRESS))

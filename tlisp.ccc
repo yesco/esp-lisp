@@ -7,13 +7,14 @@
 #include <stdio.h>
 #include <time.h>
 
-#include "lisp.h"
-#include "compat.h"
-
 #include <unistd.h>
 #include <fcntl.h>
 
-#include<signal.h>
+#include <signal.h>
+#include <ctype.h>
+
+#include "lisp.h"
+#include "compat.h"
 
 // dummies
 void gpio_enable(int pin, int state) {}
@@ -212,10 +213,10 @@ int sdk_spi_flash_read(int addr, uint32* data, int len) {
 
 void sig_handler(int signo) {
     clear();
-    printf("\n%received SIG%d\n", signo);
+    printf("\n%%received SIG%d\n", signo);
     print_detailed_stack();
     if (signo == 15 || signo == SIGINT) {
-        printf("\n\n%received SIG%d... exiting...\n", signo);
+        printf("\n\n%%received SIG%d... exiting...\n", signo);
         exit(signo);
     }
 }
