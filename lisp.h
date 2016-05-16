@@ -56,6 +56,7 @@ lisp nil;
 lisp t;
 lisp LAMBDA;
 lisp _FREE_;
+lisp ATSYMBOL;
 
 // misc mgt
 void report_allocs(int verbose);
@@ -78,6 +79,9 @@ PRIM terpri();
 lisp car(lisp x);
 lisp cdr(lisp x);
 
+PRIM setcar(lisp x, lisp v);
+PRIM setcdr(lisp x, lisp v);
+
 // list(mkint(1), mkint(2), END);
 lisp list(lisp first, ...);
 #define END ((lisp) -1)
@@ -87,17 +91,17 @@ PRIM de(lisp* envp, lisp namebody);
 PRIM reads(char *s);
 
 // User, macros, assume a "globaL" env variable implicitly, and updates it
-#define SET(sname, val) _setb(envp, sname, val)
-#define SETQc(sname, val) _setb(envp, symbol(#sname), val)
-#define SETQ(sname, val) _setb(envp, symbol(#sname), reads(#val))
-#define SETQQ(sname, val) _setb(envp, symbol(#sname), quote(reads(#val)))
+#define SET(sname, val) _setbang(envp, sname, val)
+#define SETQc(sname, val) _setbang(envp, symbol(#sname), val)
+#define SETQ(sname, val) _setbang(envp, symbol(#sname), reads(#val))
+#define SETQQ(sname, val) _setbang(envp, symbol(#sname), quote(reads(#val)))
 #define DEFINE(fname, sbody) _define(envp, cons(symbol(#fname), cons(reads(#sbody), nil)))
 #define DE(all) de(envp, reads(#all))
 #define EVAL(what) eval(reads(#what), envp)
 #define PRINT(what) ({ princ(EVAL(what)); terpri(); })
 #define SHOW(what) ({ printf(#what " => "); princ(EVAL(what)); terpri(); })
 #define TEST(what, expect) testss(envp, #what, #expect)
-#define DEFPRIM(fname, argn, fun) _setb(envp, symbol(#fname), mkprim(#fname, argn, fun))
+#define DEFPRIM(fname, argn, fun) _setbang(envp, symbol(#fname), mkprim(#fname, argn, fun))
 
 // symbol (internalish) functions
 void init_symbols();
