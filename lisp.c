@@ -80,6 +80,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
+#include <setjmp.h>
 
 #ifndef UNIX
   #include "FreeRTOS.h"
@@ -163,6 +164,9 @@ lisp* global_envp = NULL;
 // adding real debugging - http://software-lab.de/doc/tut.html#dbg
 static int traceGC = 0;
 static int trace = 0;
+
+// handle errors, break
+jmp_buf lisp_break = {0};
 
 // use for list(mkint(1), symbol("foo"), mkint(3), END);
 
@@ -866,8 +870,16 @@ PRIM _setbang(lisp* envp, lisp name, lisp v);
 int web_socket = 0;
 
 int web_one() {
+    int r = -1;
     if (!web_socket) return 0;
-    return httpd_next(web_socket, header, body, response);
+    if (setjmp(lisp_break) == 0) {
+        r = httpd_next(web_socket, header, body, response);
+    } else {
+        printf("\n%%web_one.error... recovering...\n");
+    }
+    // disable longjmp
+    memset(lisp_break, 0, sizeof(lisp_break));
+    return r;
 }
 
 PRIM web(lisp* envp, lisp port, lisp callback) {
@@ -1907,7 +1919,8 @@ lisp eval(lisp e, lisp* envp) {
 
 PRIM _eval(lisp e, lisp env) {
     // taking pointer creates a new "scrope"
-    return evalGC(e, &env);
+    // if no env given, use the global env (so define will be on top level)
+    return evalGC(e, env ? &env : global_envp);
 }
 
 lisp mem_usage(int count) {
@@ -3008,10 +3021,6 @@ void help(lisp* envp) {
     printf("CTRL-C: to break execution, CTRL-T: shows current time/load status, CTRL-D: to exit\n\n");
     printf("Type 'help' to get this message again\n");
 }
-
-#include <setjmp.h>
-
-jmp_buf lisp_break = {0};
 
 // TODO: make it take one lisp parameter?
 // TODO: https://groups.csail.mit.edu/mac/ftpdir/scheme-7.4/doc-html/scheme_17.html#SEC153

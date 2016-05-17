@@ -1,17 +1,17 @@
 (echo '' ; \
- echo '(define (lambda? name) (fundef (eval name (env))))' ; \
+ echo '(define (lambda? name) (fundef (eval name)))' ; \
  echo '(define (print-lambdas) (syms (lambda (n) (if (lambda? n) (progn (princ n) (terpri))))))' ; \
  echo '(define (nth n l) (if (= n 0) (car l) (nth (- n 1) (cdr l))))' ; \
  echo '(define (join using l) (cond ((null? l) "") ((null? (cdr l)) (car l)) (t (concat (car l) using (join using (cdr l))))))' ; \
  echo '(define (replace in what with) (join with (split in what)))' ; \
  echo '(define (param path) (car (cdr (split path "?"))))' ; \
  echo '(define (dir path) (car (split path "?")))' ; \
- echo '(define (cb-dispatch path) (print "----------------") (print (eval (read (dir path)) (env))))' ; \
+ echo '(define (cb-dispatch path) (print "----------------") (print (eval (read (dir path)))))' ; \
  echo '(define cbn 0)' ; \
  echo '(define (cb w r method path) (print (list "====" w r method path)) (set! cbn (+ cbn 1)) (if w nil ((cb-dispatch path) r (replace (param path) "%20" " ")) "")' ; \
- echo '(define (/ide/pp r f) (with-fd r (princ "jsonp_pp(") (princ (char 39))) (with-fd-json r (pp (eval (read f) (env)))) (with-fd r (princ (char 39)) (princ ",") (princ (char 39)) (princ f) (princ (char 39)) (princ ");") (terpri)))' ; \
+ echo '(define (/ide/pp r f) (with-fd r (princ "jsonp_pp(") (princ (char 39))) (with-fd-json r (pp (eval (read f)))) (with-fd r (princ (char 39)) (princ ",") (princ (char 39)) (princ f) (princ (char 39)) (princ ");") (terpri)))' ; \
  echo '(define (/ide/list r) (with-fd r (princ "jsonp_list(") (princ (char 39))) (with-fd-json r (print-lambdas)) (with-fd r (princ (char 39)) (princ ");") (terpri)))' ; \
- echo '(define (/ide/eval r s) (with-fd r (princ "jsonp_eval(") (princ (char 39))) (with-fd-json r (princ (eval (read s) (env)))) (with-fd r (princ (char 39)) (princ ");") (terpri)))' ; \
+ echo '(define (/ide/eval r s) (with-fd r (princ "jsonp_eval(") (princ (char 39))) (with-fd-json r (princ (eval (read s)))) (with-fd r (princ (char 39)) (princ ");") (terpri)))' ; \
  echo '(web 8080 cb)' ; \
  cat - ) \
 | ./run
