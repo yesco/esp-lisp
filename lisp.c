@@ -2938,7 +2938,7 @@ lisp lisp_init() {
     DEFPRIM(read, 1, read_);
 
     // TODO: consider introducting these that will create local bindings if no global exists, hmm bad?
-    //DEFPRIM(set, -2, _set_);
+    DEFPRIM(set, -2, _set);
     //DEFPRIM(setq, -2, _setq);
     //DEFPRIM(setqq, -2, _setqq_);
     DEFPRIM(set!, -2, _setbang);
