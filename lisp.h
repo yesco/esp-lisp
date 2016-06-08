@@ -73,6 +73,7 @@ lisp progn(lisp* envp, lisp all);
 // lisp functions
 PRIM prin1(lisp x);
 PRIM princ(lisp x);
+PRIM print(lisp x);
 PRIM printf_(lisp *envp, lisp all);
 PRIM terpri();
 
