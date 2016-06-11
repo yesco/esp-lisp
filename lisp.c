@@ -784,7 +784,114 @@ PRIM in(lisp pin) {
     return mkint(gpio_read(getint(pin)));
 }
 
-//    gpio_set_interrupt(gpio, int_type);
+PRIM interrupt(lisp pin, lisp changeType) {
+	int pins[16] = {0};
+
+	pins[getint(pin)] = 1;
+
+	interrupt_init(pins, getint(changeType));
+
+    return pin;
+}
+
+// pin group is hard-coded for now
+PRIM interruptGroup(lisp changeType) {
+	int pins[16] = {0};
+
+	pins[0] = 1;
+	pins[2] = 1;
+	pins[4] = 1;
+
+	interrupt_init(pins, getint(changeType));
+
+    return changeType;
+}
+
+PRIM _setbang(lisp* envp, lisp name, lisp v);
+
+// flags and counts declared in interrupt.c
+extern int buttonCountChanged[];
+extern int buttonClickCount  [];
+
+const char symbolNameLen = 25;
+
+void createSymbolName(
+		char symbolName[symbolNameLen],
+		char *pSymbolNameStub,
+		int pinNum) {
+
+	int len = strlen(pSymbolNameStub);
+
+	char numChar = 0;
+	char asciiOffset = 0;
+
+	memset(symbolName, '\0', symbolNameLen);
+
+	strcpy(symbolName, pSymbolNameStub);
+
+	if (pinNum >= 10) {
+	    asciiOffset = 10;
+
+		symbolName[len-1] = '1';
+	}
+
+	numChar = '0' + (pinNum - asciiOffset);
+
+	symbolName[len] = numChar;
+	symbolName[len + 1] = '*';
+}
+
+void setButtonClickSymbolValue(lisp* envp, int pin, lisp count) {
+	char  symbolName[symbolNameLen];
+
+	createSymbolName(symbolName, "*bc0", pin);
+	_setbang(envp, symbol(symbolName), count);
+}
+
+void updateButtonClickCount(lisp* envp, int pin) {
+  lisp count = mkint(buttonClickCount[pin]);
+
+  setButtonClickSymbolValue(envp, pin, count);
+}
+
+// NOTE this has the side effect of resetting
+// 		the C var for buttonclickcount to zero
+PRIM resetButtonClickCount(lisp* envp, lisp pin) {
+//	printf("raw pin %u ", pin);
+  int  pinNum = getint(eval(pin, envp));
+//	printf ("pin %d ", pinNum);
+//	printf("PIN"); princ(pin);
+  lisp zero = mkint(0);
+
+  setButtonClickSymbolValue(envp, pinNum, zero);
+
+  buttonClickCount[pinNum] = 0;
+
+  return zero;
+}
+
+PRIM print(lisp x);
+
+// changes lisp var only
+PRIM intChange(lisp* envp, lisp pin, lisp v) {
+	// printf("raw pin %u raw v %u ", pin, v);
+		  int pinNum = getint(eval(pin, envp));
+	// int val = getint(v);
+	//printf ("pin %d val %d ", pinNum, val);
+
+//	printf("PIN"); princ(pin);
+//	printf("v"); print(v);
+
+	char  symbolName[symbolNameLen];
+
+	createSymbolName(symbolName, "*ie0", pinNum);
+
+//	printf("ic - sym name %s", symbolName);
+
+	_setbang(envp, symbol(symbolName), v);
+
+	return v;
+}
 
 // wget functions...
 // echo '
@@ -864,8 +971,6 @@ static void response(int req, char* method, char* path) {
 // echo '
 // (web 8080 (lambda (r w s m p) (princ w) (princ " ") (princ s) (princ " ") (princ m) (princ " ") (princ p) (terpri) "FISH-42"))
 // ' | ./run
-
-PRIM _setbang(lisp* envp, lisp name, lisp v);
 
 int web_socket = 0;
 
@@ -2962,6 +3067,12 @@ lisp lisp_init() {
     DEFPRIM(out, 2, out);
     DEFPRIM(in, 1, in);
 
+    // interrupts support
+    DEFPRIM(interrupt, 2, interrupt);
+    DEFPRIM(interruptGroup, 1, interruptGroup);
+    DEFPRIM(resetClicks, -1, resetButtonClickCount);
+    DEFPRIM(intChange, -2, intChange);
+
     // system stuff
     DEFPRIM(gc, -1, gc);
     DEFPRIM(test, -7, test);
@@ -3090,6 +3201,35 @@ void maybeGC() {
     if (needGC()) gc(global_envp);
 }
 
+extern int gpioPinCount;
+void checkInterruptQueue();
+
+// lisp vars exist at global level, so passing C global env ptr
+// (like idle does with atrun)
+void updateButtonEnvVars(int buttonNum, int buttonCountChanged) {
+
+	updateButtonClickCount(global_envp, buttonNum);
+
+	lisp pin = mkint(buttonNum);
+	lisp val = mkint(buttonCountChanged);
+
+	intChange(global_envp, pin, val);
+}
+
+void handleButtonEvents() {
+
+	checkInterruptQueue();
+
+	int pin;
+	for (pin = 0; pin < gpioPinCount; pin++) {
+
+		if (buttonCountChanged[pin] != 0) {
+			updateButtonEnvVars(pin, buttonCountChanged[pin]);
+			buttonCountChanged[pin] = 0;
+		}
+	}
+}
+
 PRIM atrun(lisp* envp);
 
 PRIM idle(int lticks) {
@@ -3099,6 +3239,9 @@ PRIM idle(int lticks) {
     // polling tasks, invoking callbacks
     web_one();
     atrun(global_envp);
+
+    // if flag for interrupt event is set, update env symbol values
+    handleButtonEvents();
 
     // gc
     maybeGC(); // TODO: backoff, can't do all the time???
@@ -3274,6 +3417,61 @@ PRIM fibb(lisp n) { return mkint(fib(getint(n))); }
 void init_library(lisp* envp) {
     //DEFINE(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
     DE((fibo (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
+
+    // define interrupt-related vars and
+    // start up RTOS interrupt functionality
+    //
+    // NOTE *ie0x* vars are interrupt event flags
+    //      *bc0x* vars are button click counts
+    DEFINE(setupInterrupt,
+  		  (lambda ()
+  			(cond ((eq *bc00* nil)
+  				   (list (define *bc00* 0)
+  						 (define *bc02* 0)
+  						 (define *bc04* 0)
+  						 (define *ie00* 0)
+  						 (define *ie02* 0)
+  						 (define *ie04* 0)
+  						 (interrupt 4 3)
+  				   )
+  				  )
+  			)
+  	      )
+  	    );
+
+    DEFINE(setupIntGroup,
+  		  (lambda ()
+  			(cond ((eq *bc00* nil)
+  				   (list (define *bc00* 0)
+  						 (define *bc02* 0)
+  						 (define *bc04* 0)
+  						 (define *ie00* 0)
+  						 (define *ie02* 0)
+  						 (define *ie04* 0)
+  						 (interruptGroup)
+  				   )
+  				  )
+  			)
+  	      )
+  	    );
+
+  // initialises interrupt-related vars
+  // (list (set! *bc00* 0) (set! *bc02* 0) (set! *bc04* 0) (set! *ie00* 0) (set! *ie02* 0) (set! *ie04* 0))
+
+  // defines four support functions for interrupt vars
+  // ies and bcs show the values for all vars
+  // ie and clks show the value for a specific var
+  // (list (define ies (lambda () (list *ie00* *ie02* *ie04*))) (define bcs  (lambda ()  (list *bc00* *bc02* *bc04*))) (define ie   (lambda (n) (cond ((eq n 0) *ie00*) ((eq n 2) *ie02*) (t *ie04*)))) (define clks (lambda (n) (cond ((eq n 0) *bc00*) ((eq n 2) *bc02*) (t *bc04*)))))
+
+  // wrapper defs for PRIMs
+  // for brevity only, helps other defs to be shorter
+  // (define ic (lambda (m n) (intChange m n)))
+  // (define rc (lambda (n)   (resetClicks n)))
+
+  // example use of interrupt behaviour
+  // (define testInt (lambda (n) (cond ((not(eq (ie n) 0)) (list (print (clks n)) (ic n 0))))))
+  // (at -10000 (lambda () (testInt 4)))
+
 // POSSIBLE encodings to save memory:
     // symbol: fibo
     // "fibo" 
