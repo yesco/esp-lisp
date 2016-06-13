@@ -785,8 +785,14 @@ PRIM in(lisp pin) {
 }
 
 PRIM interrupt(lisp pin, lisp changeType) {
-    interrupt_init(getint(pin), getint(changeType));
-    return pin;
+    if (!pin && !changeType) return nil;
+    int ct = getint(changeType);
+    if (changeType && ct >= 0) {
+        interrupt_init(getint(pin), ct);
+        return pin;
+    } else {
+        return mkint(getCount(getint(pin), changeType ? ct : 0));
+    }
 }
 
 // pin group is hard-coded for now
@@ -800,10 +806,6 @@ PRIM interruptGroup(lisp changeType) {
 
 PRIM _setbang(lisp* envp, lisp name, lisp v);
 
-// flags and counts declared in interrupt.c
-extern int button_clicked[];
-extern int button_count[];
-
 void setButtonClickSymbolValue(lisp* envp, lisp pin, lisp count) {
     char name[10];
 
@@ -814,12 +816,12 @@ void setButtonClickSymbolValue(lisp* envp, lisp pin, lisp count) {
 // NOTE this has the side effect of resetting
 // the C var for buttonclickcount to zero
 PRIM resetClicks(lisp* envp, lisp pin) {
-    int pinNum = getint(pin);
     // printf ("pin %d ", pinNum);
     // printf("PIN"); princ(pin);
     lisp zero = mkint(0);
     setButtonClickSymbolValue(envp, pin, zero);
-    button_count[pinNum] = 0;
+    // TODO: cleanup
+    //button_count[pinNum] = 0;
     return zero;
 }
 
@@ -3145,7 +3147,7 @@ void maybeGC() {
 }
 
 void handleButtonEvents() {
-    void checkpin(uint32_t pin, uint32_t count, uint32_t last) {
+    void checkpin(int pin, uint32_t clicked, uint32_t count, uint32_t last) {
         printf("BUTTON: %d count %d last %d\n", pin, count, last);
         setButtonClickSymbolValue(global_envp, mkint(pin), mkint(count));
         intChange(global_envp, mkint(pin), mkint(count));
