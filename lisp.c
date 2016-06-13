@@ -784,7 +784,43 @@ PRIM in(lisp pin) {
     return mkint(gpio_read(getint(pin)));
 }
 
-//    gpio_set_interrupt(gpio, int_type);
+// CONTROL INTERRUPTS:
+// -------------------
+// (interrupt PIN 0)  : disable
+// (interrupt PIN 1)  : EDGE_POS
+// (interrupt PIN 2)  : EDGE_NEG
+// (interrupt PIN 3)  : EDGE_ANY
+// (interrupt PIN 4)  : LOW
+// (interrupt PIN 5)  : HIGH
+//
+// TODO: this has 200 ms, "ignore" if happen within 200ms, maybe add as parameter?
+//
+// CALLBACK API:
+// -------------
+// If any interrupt is enabled it'll call intXX where XX=pin if the symbol exists.
+// This is called from the IDLE loop, no clicks counts will be lost, clicks is the
+// new clicks since last invokation/clear. It will only be invoked once if any was
+// missed, and only the last time in ms is retained.
+//
+//   (define (int00 pin clicks count ms)
+//     (printf " [button %d new clicks=%d total=%d last at %d ms] " pin clicks count ms))
+// 
+// POLLING API:
+// ------------
+// (interrupt PIN)    : get count
+// (interrupt PIN -1) : get +count if new, or -count if no new
+// (interrupt PIN -2) : get +count if new, or 0 otherwise
+// (interrupt PIN -3) : get ms of last click
+PRIM interrupt(lisp pin, lisp changeType) {
+    if (!pin && !changeType) return nil;
+    int ct = getint(changeType);
+    if (changeType && ct >= 0) {
+        interrupt_init(getint(pin), ct);
+        return pin;
+    } else {
+        return mkint(getInterruptCount(getint(pin), changeType ? ct : 0));
+    }
+}
 
 // wget functions...
 // echo '
@@ -864,8 +900,6 @@ static void response(int req, char* method, char* path) {
 // echo '
 // (web 8080 (lambda (r w s m p) (princ w) (princ " ") (princ s) (princ " ") (princ m) (princ " ") (princ p) (terpri) "FISH-42"))
 // ' | ./run
-
-PRIM _setbang(lisp* envp, lisp name, lisp v);
 
 int web_socket = 0;
 
@@ -2959,8 +2993,11 @@ lisp lisp_init() {
     // network
     DEFPRIM(wget, 3, wget_);
     DEFPRIM(web, -2, web);
+
+    // hardware
     DEFPRIM(out, 2, out);
     DEFPRIM(in, 1, in);
+    DEFPRIM(interrupt, 2, interrupt);
 
     // system stuff
     DEFPRIM(gc, -1, gc);
@@ -3090,6 +3127,22 @@ void maybeGC() {
     if (needGC()) gc(global_envp);
 }
 
+void handleInterrupts() {
+    // TODO: maybe cache the symbols? not matter in idle, but if called elsewhere
+    int checkpin(int pin, uint32_t clicked, uint32_t count, uint32_t last) {
+        char name[16] = {0};
+        snprintf(name, sizeof(name), "int%02d", pin);
+        // this will define the symbol, but only for interrupts enabled
+        lisp handler = getvar(symbol(name), *global_envp);
+        if (!handler) return -666;
+        //printf("BUTTON: %d count %d last %d\n", pin, count, last);
+        lisp r = apply(handler, list(mkint(pin), mkint(clicked), mkint(count), mkint(last), END));
+        return getint(r);
+    }
+                  
+    checkInterrupts(checkpin);
+}
+
 PRIM atrun(lisp* envp);
 
 PRIM idle(int lticks) {
@@ -3099,6 +3152,7 @@ PRIM idle(int lticks) {
     // polling tasks, invoking callbacks
     web_one();
     atrun(global_envp);
+    handleInterrupts();
 
     // gc
     maybeGC(); // TODO: backoff, can't do all the time???
@@ -3272,8 +3326,9 @@ PRIM fibb(lisp n) { return mkint(fib(getint(n))); }
 
 // lisp implemented library functions hardcoded
 void init_library(lisp* envp) {
-    //DEFINE(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
-    DE((fibo (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
+  //DEFINE(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
+  DE((fibo (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
+
 // POSSIBLE encodings to save memory:
     // symbol: fibo
     // "fibo" 
