@@ -818,7 +818,7 @@ PRIM interrupt(lisp pin, lisp changeType) {
         interrupt_init(getint(pin), ct);
         return pin;
     } else {
-        return mkint(getCount(getint(pin), changeType ? ct : 0));
+        return mkint(getInterruptCount(getint(pin), changeType ? ct : 0));
     }
 }
 
@@ -3133,7 +3133,7 @@ void handleInterrupts() {
         char name[16] = {0};
         snprintf(name, sizeof(name), "int%02d", pin);
         // this will define the symbol, but only for interrupts enabled
-        lisp handler = getvar(symbol(name), global_envp);
+        lisp handler = getvar(symbol(name), *global_envp);
         if (!handler) return -666;
         //printf("BUTTON: %d count %d last %d\n", pin, count, last);
         lisp r = apply(handler, list(mkint(pin), mkint(clicked), mkint(count), mkint(last), END));

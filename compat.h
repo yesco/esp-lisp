@@ -1,6 +1,9 @@
 #ifndef COMPAT_H
 #define COMPAT_H
 
+typedef unsigned int uint32;
+typedef unsigned int uint32_t;
+
 int clock_ms();
 
 //////////////////////////////////////////////////////////////////////
@@ -66,6 +69,8 @@ int wget(wget_data* data, char* url, char* server);
 //////////////////////////////////////////////////////////////////////
 // interrupt stuff
 void interrupt_init (int pin, int changeType);
+int getInterruptCount(int pin, int mode);
+void checkInterrupts(int (*cb)(int pin, uint32 clicked, uint32 count, uint32 last));
 
 //////////////////////////////////////////////////////////////////////
 // web stuff
@@ -89,8 +94,6 @@ void httpd_loop(int s);
 
 //////////////////////////////////////////////////////////////////////
 // gpio/esp8266 hardware stuff
-
-typedef unsigned int uint32;
 
 #ifdef UNIX
   // dummy

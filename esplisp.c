@@ -45,7 +45,7 @@ void lispTask(void *pvParameters)
 
     xQueueHandle *queue = (xQueueHandle *)pvParameters;
     printf("Hello from lispTask!\r\n");
-    uint32_t count = 0;
+    uint32 count = 0;
     while(1) {
         //vTaskDelay(300); // 3s
 
@@ -61,7 +61,7 @@ void recvTask(void *pvParameters)
     printf("Hello from recvTask!\r\n");
     xQueueHandle *queue = (xQueueHandle *)pvParameters;
     while(1) {
-        uint32_t count;
+        uint32 count;
         if(xQueueReceive(*queue, &count, 1000)) {
             //printf("Got %u\n", count);
             //putchar('.');
@@ -260,7 +260,7 @@ static int button_last[GPIO_PINS] = {0};    // last click in ms
 static int button_count[GPIO_PINS] = {0};   // total clicks
 
 // call cb for every interrupt that has any clicks, clear them if handled
-void checkInterrupts(int (*cb)(int pin, uint32_t clicked, uint32_t count, uint32_t last)) {
+void checkInterrupts(int (*cb)(int pin, uint32 clicked, uint32 count, uint32 last)) {
 	int pin;
 	for (pin = 0; pin < GPIO_PINS; pin++) {
 		if (button_clicked[pin]) {
@@ -271,15 +271,15 @@ void checkInterrupts(int (*cb)(int pin, uint32_t clicked, uint32_t count, uint32
 	}
 }
 
-// general getCount api
+// general getInterruptCount api
 // if clear ==  0 COUNT: just return current click count
 // if clear == -1 STATUS: if clicked since last clear, +clicks, otherwise negative: -clicks
 // if clear == -2 DELTA: return +clicks since last call with clear == -2
 // if clear == -3 MS: return last ms time when clicked
 // don't mix clear == -1 and -2 calls to same pin
-uint32_t getCount(int pin, int mode) {
+int getInterruptCount(int pin, int mode) {
     if (pin < 0 || pin >= GPIO_PINS) return -1;
-    uint32_t r = button_count[pin];
+    int r = button_count[pin];
     if (mode == -1) {
         if (!button_clicked[pin]) r = -r;
         button_clicked[pin] = 0;
@@ -299,14 +299,14 @@ void interrupt_init(int pin, int changeType) {
 
 // generic interrupt handler called for all interrupt
 void gpio_interrupt_handler() {
-    uint32_t status_reg = GPIO.STATUS;
+    uint32 status_reg = GPIO.STATUS;
     GPIO.STATUS_CLEAR = status_reg;
     uint8_t pin;
     while ((pin = __builtin_ffs(status_reg))) {
         pin--;
         status_reg &= ~BIT(pin);
         if (FIELD2VAL(GPIO_CONF_INTTYPE, GPIO.CONF[pin])) {
-            uint32_t ms = xTaskGetTickCountFromISR() * portTICK_RATE_MS;
+            uint32 ms = xTaskGetTickCountFromISR() * portTICK_RATE_MS;
             // debounce check (from button.c example code)
             //printf(" [interrupt %d] ", pin); fflush(stdout);
             if (button_last[pin] < ms - 200) {

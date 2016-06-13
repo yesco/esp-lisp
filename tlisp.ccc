@@ -17,17 +17,16 @@
 #include "compat.h"
 
 // dummies
+
 void gpio_enable(int pin, int state) {}
 void gpio_write(int pin, int value) {}
 int gpio_read(int pin) { return 0; }
 
-void interrupt_init(int pin, int changeType) {}
-void checkInterruptQueue() {}
+void interrupt_init (int pin, int changeType) {}
+int getInterruptCount(int pin, int mode) { return -1; }
+void checkInterrupts(int (*cb)(int pin, uint32 clicked, uint32 count, uint32 last)) {}
 
-const int gpioPinCount = 16;
-
-int buttonCountChanged[16] = {0};
-int buttonClickCount  [16] = {0};
+// memory profiling stuff
 
 unsigned int lastClock = 0;
 int lastMem = 0;
