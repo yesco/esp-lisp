@@ -18,15 +18,13 @@ int button_clicked[GPIO_PINS] = {0}; // TODO: use bitmask, or keep old count val
 int button_last[GPIO_PINS] = {0};
 int button_count[GPIO_PINS] = {0};
 
-// call cb for each pin that gotten interrupts since last time
-void checkInterrupts(void (*cb)(int pin, uint32_t clicked, uint32_t count, uint32_t last)) {
-	return;
+void checkInterrupts(int (*cb)(int pin, uint32_t clicked, uint32_t count, uint32_t last)) {
 	int pin;
 	for (pin = 0; pin < GPIO_PINS; pin++) {
 		if (button_clicked[pin]) {
-			// TODO: check race conditions?
-			button_clicked[pin] = 0;
-			cb(pin, button_clicked[pin], button_count[pin], button_last[pin]);
+			int mode = cb(pin, button_clicked[pin], button_count[pin], button_last[pin]);
+			// if no handler, then don't clear
+			if (mode != -666) button_clicked[pin] = 0;
 		}
 	}
 }

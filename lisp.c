@@ -784,6 +784,33 @@ PRIM in(lisp pin) {
     return mkint(gpio_read(getint(pin)));
 }
 
+// CONTROL INTERRUPTS:
+// -------------------
+// (interrupt PIN 0)  : disable
+// (interrupt PIN 1)  : EDGE_POS
+// (interrupt PIN 2)  : EDGE_NEG
+// (interrupt PIN 3)  : EDGE_ANY
+// (interrupt PIN 4)  : LOW
+// (interrupt PIN 5)  : HIGH
+//
+// TODO: this has 200 ms, "ignore" if happen within 200ms, maybe add as parameter?
+//
+// CALLBACK API:
+// -------------
+// If any interrupt is enabled it'll call intXX where XX=pin if the symbol exists.
+// This is called from the IDLE loop, no clicks counts will be lost, clicks is the
+// new clicks since last invokation/clear. It will only be invoked once if any was
+// missed, and only the last time in ms is retained.
+//
+//   (define (int00 pin clicks count ms)
+//     (printf " [button %d new clicks=%d total=%d last at %d ms] " pin clicks ms))
+// 
+// POLLING API:
+// ------------
+// (interrupt PIN)    : get count
+// (interrupt PIN -1) : get +count if new, or -count if no new
+// (interrupt PIN -2) : get +count if new, or 0 otherwise
+// (interrupt PIN -3) : get ms of last click
 PRIM interrupt(lisp pin, lisp changeType) {
     if (!pin && !changeType) return nil;
     int ct = getint(changeType);
@@ -793,49 +820,6 @@ PRIM interrupt(lisp pin, lisp changeType) {
     } else {
         return mkint(getCount(getint(pin), changeType ? ct : 0));
     }
-}
-
-// pin group is hard-coded for now
-PRIM interruptGroup(lisp changeType) {
-    int t = getint(changeType);
-    interrupt_init(0, t);
-    interrupt_init(2, t);
-    interrupt_init(4, t);
-    return changeType;
-}
-
-PRIM _setbang(lisp* envp, lisp name, lisp v);
-
-void setButtonClickSymbolValue(lisp* envp, lisp pin, lisp count) {
-    char name[10];
-
-    snprintf(name, sizeof(name), "*bc%02d*", getint(pin));
-    _setbang(envp, symbol(name), count);
-}
-
-// NOTE this has the side effect of resetting
-// the C var for buttonclickcount to zero
-PRIM resetClicks(lisp* envp, lisp pin) {
-    // printf ("pin %d ", pinNum);
-    // printf("PIN"); princ(pin);
-    lisp zero = mkint(0);
-    setButtonClickSymbolValue(envp, pin, zero);
-    // TODO: cleanup
-    //button_count[pinNum] = 0;
-    return zero;
-}
-
-// changes lisp var only
-PRIM intChange(lisp* envp, lisp pin, lisp v) {
-    //	printf("PIN"); princ(pin);
-    //	printf("v"); print(v);
-    int pinNum = getint(eval(pin, envp));
-
-    char name[10];
-    snprintf(name, sizeof(name), "*ie%02d*", pinNum);
-    _setbang(envp, symbol(name), v);
-    
-    return v;
 }
 
 // wget functions...
@@ -3009,14 +2993,11 @@ lisp lisp_init() {
     // network
     DEFPRIM(wget, 3, wget_);
     DEFPRIM(web, -2, web);
+
+    // hardware
     DEFPRIM(out, 2, out);
     DEFPRIM(in, 1, in);
-
-    // interrupts support
     DEFPRIM(interrupt, 2, interrupt);
-    DEFPRIM(interruptGroup, 1, interruptGroup);
-    DEFPRIM(resetClicks, -1, resetClicks);
-    DEFPRIM(intChange, -2, intChange);
 
     // system stuff
     DEFPRIM(gc, -1, gc);
@@ -3146,11 +3127,17 @@ void maybeGC() {
     if (needGC()) gc(global_envp);
 }
 
-void handleButtonEvents() {
-    void checkpin(int pin, uint32_t clicked, uint32_t count, uint32_t last) {
-        printf("BUTTON: %d count %d last %d\n", pin, count, last);
-        setButtonClickSymbolValue(global_envp, mkint(pin), mkint(count));
-        intChange(global_envp, mkint(pin), mkint(count));
+void handleInterrupts() {
+    // TODO: maybe cache the symbols? not matter in idle, but if called elsewhere
+    int checkpin(int pin, uint32_t clicked, uint32_t count, uint32_t last) {
+        char name[16] = {0};
+        snprintf(name, sizeof(name), "int%02d", pin);
+        // this will define the symbol, but only for interrupts enabled
+        lisp handler = getvar(symbol(name), global_envp);
+        if (!handler) return -666;
+        //printf("BUTTON: %d count %d last %d\n", pin, count, last);
+        lisp r = apply(handler, list(mkint(pin), mkint(clicked), mkint(count), mkint(last), END));
+        return getint(r);
     }
                   
     checkInterrupts(checkpin);
@@ -3165,9 +3152,7 @@ PRIM idle(int lticks) {
     // polling tasks, invoking callbacks
     web_one();
     atrun(global_envp);
-
-    // polling tasks
-    handleButtonEvents();
+    handleInterrupts();
 
     // gc
     maybeGC(); // TODO: backoff, can't do all the time???
@@ -3341,45 +3326,8 @@ PRIM fibb(lisp n) { return mkint(fib(getint(n))); }
 
 // lisp implemented library functions hardcoded
 void init_library(lisp* envp) {
-    //DEFINE(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
-    DE((fibo (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
-
-    // define interrupt-related vars and
-    // start up RTOS interrupt functionality
-    //
-    // NOTE *ie0x* vars are interrupt event flags
-    //      *bc0x* vars are button click counts
-    DEFINE(setupInterrupt,
-  		  (lambda ()
-  			(cond ((eq *bc00* nil)
-  				   (list (define *bc00* 0)
-  						 (define *bc02* 0)
-  						 (define *bc04* 0)
-  						 (define *ie00* 0)
-  						 (define *ie02* 0)
-  						 (define *ie04* 0)
-  						 (interrupt 4 3)
-  				   )
-  				  )
-  			)
-  	      )
-  	    );
-
-    DEFINE(setupIntGroup,
-  		  (lambda ()
-  			(cond ((eq *bc00* nil)
-  				   (list (define *bc00* 0)
-  						 (define *bc02* 0)
-  						 (define *bc04* 0)
-  						 (define *ie00* 0)
-  						 (define *ie02* 0)
-  						 (define *ie04* 0)
-  						 (interruptGroup)
-  				   )
-  				  )
-  			)
-  	      )
-  	    );
+  //DEFINE(fibo, (lambda (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
+  DE((fibo (n) (if (< n 2) 1 (+ (fibo (- n 1)) (fibo (- n 2))))));
 
   // initialises interrupt-related vars
   // (list (set! *bc00* 0) (set! *bc02* 0) (set! *bc04* 0) (set! *ie00* 0) (set! *ie02* 0) (set! *ie04* 0))

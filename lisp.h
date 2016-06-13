@@ -80,6 +80,8 @@ PRIM terpri();
 lisp car(lisp x);
 lisp cdr(lisp x);
 
+PRIM _setbang(lisp* envp, lisp name, lisp v);
+
 PRIM setcar(lisp x, lisp v);
 PRIM setcdr(lisp x, lisp v);
 
