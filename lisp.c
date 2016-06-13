@@ -804,35 +804,11 @@ PRIM _setbang(lisp* envp, lisp name, lisp v);
 extern int button_clicked[];
 extern int button_count[];
 
-const char symbolNameLen = 25;
-
-void createSymbolName(char symbolName[symbolNameLen],
-                      char *pSymbolNameStub,
-                      int pinNum) {
-    int len = strlen(pSymbolNameStub);
-
-    char numChar = 0;
-    char asciiOffset = 0;
-
-    memset(symbolName, '\0', symbolNameLen);
-
-    strcpy(symbolName, pSymbolNameStub);
-
-    if (pinNum >= 10) {
-        asciiOffset = 10;
-        symbolName[len-1] = '1';
-    }
-
-    numChar = '0' + (pinNum - asciiOffset);
-    symbolName[len] = numChar;
-    symbolName[len + 1] = '*';
-}
-
 void setButtonClickSymbolValue(lisp* envp, int pin, lisp count) {
-    char  symbolName[symbolNameLen];
+    char name[10];
 
-    createSymbolName(symbolName, "*bc0", pin);
-    _setbang(envp, symbol(symbolName), count);
+    snprintf(name, sizeof(name), "*bc%02d*", pin);
+    _setbang(envp, symbol(name), count);
 }
 
 void updateButtonClickCount(lisp* envp, int pin) {
@@ -858,15 +834,13 @@ PRIM print(lisp x);
 
 // changes lisp var only
 PRIM intChange(lisp* envp, lisp pin, lisp v) {
-    int pinNum = getint(eval(pin, envp));
     //	printf("PIN"); princ(pin);
     //	printf("v"); print(v);
+    int pinNum = getint(eval(pin, envp));
 
-    char symbolName[symbolNameLen];
-    createSymbolName(symbolName, "*ie0", pinNum);
-
-    //	printf("ic - sym name %s", symbolName);
-    _setbang(envp, symbol(symbolName), v);
+    char name[10];
+    snprintf(name, sizeof(name), "*ie%02d*", pinNum);
+    _setbang(envp, symbol(name), v);
     
     return v;
 }
