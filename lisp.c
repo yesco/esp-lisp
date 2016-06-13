@@ -804,33 +804,24 @@ PRIM _setbang(lisp* envp, lisp name, lisp v);
 extern int button_clicked[];
 extern int button_count[];
 
-void setButtonClickSymbolValue(lisp* envp, int pin, lisp count) {
+void setButtonClickSymbolValue(lisp* envp, lisp pin, lisp count) {
     char name[10];
 
-    snprintf(name, sizeof(name), "*bc%02d*", pin);
+    snprintf(name, sizeof(name), "*bc%02d*", getint(pin));
     _setbang(envp, symbol(name), count);
 }
 
-void updateButtonClickCount(lisp* envp, int pin) {
-  lisp count = mkint(button_count[pin]);
-
-  setButtonClickSymbolValue(envp, pin, count);
-}
-
 // NOTE this has the side effect of resetting
-// 		the C var for buttonclickcount to zero
-// TODO: don't do that! lol
+// the C var for buttonclickcount to zero
 PRIM resetClicks(lisp* envp, lisp pin) {
-    int  pinNum = getint(pin);
+    int pinNum = getint(pin);
     // printf ("pin %d ", pinNum);
     // printf("PIN"); princ(pin);
     lisp zero = mkint(0);
-    setButtonClickSymbolValue(envp, pinNum, zero);
+    setButtonClickSymbolValue(envp, pin, zero);
     button_count[pinNum] = 0;
     return zero;
 }
-
-PRIM print(lisp x);
 
 // changes lisp var only
 PRIM intChange(lisp* envp, lisp pin, lisp v) {
@@ -3153,31 +3144,14 @@ void maybeGC() {
     if (needGC()) gc(global_envp);
 }
 
-// TODO: remove, or do include, probably move interupt to esplisp.[ch]
-extern int gpioPinCount; 
-void checkInterruptQueue();
-
-// lisp vars exist at global level, so passing C global env ptr
-// (like idle does with atrun)
-void updateButtonEnvVars(int buttonNum, int count) {
-	updateButtonClickCount(global_envp, buttonNum);
-
-	lisp pin = mkint(buttonNum);
-	lisp val = mkint(count);
-
-	intChange(global_envp, pin, val);
-}
-
 void handleButtonEvents() {
-    checkInterruptQueue();
-
-    int pin;
-    for (pin = 0; pin < gpioPinCount; pin++) {
-        if (button_clicked[pin] != 0) {
-            updateButtonEnvVars(pin, button_count[pin]);
-            button_clicked[pin] = 0;
-        }
+    void checkpin(uint32_t pin, uint32_t count, uint32_t last) {
+        printf("BUTTON: %d count %d last %d\n", pin, count, last);
+        setButtonClickSymbolValue(global_envp, mkint(pin), mkint(count));
+        intChange(global_envp, mkint(pin), mkint(count));
     }
+                  
+    checkInterrupts(checkpin);
 }
 
 PRIM atrun(lisp* envp);

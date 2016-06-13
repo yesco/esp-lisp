@@ -21,8 +21,7 @@ void gpio_enable(int pin, int state) {}
 void gpio_write(int pin, int value) {}
 int gpio_read(int pin) { return 0; }
 
-void interrupt_init(int pins[], int changeType) {}
-
+void interrupt_init(int pin, int changeType) {}
 void checkInterruptQueue() {}
 
 const int gpioPinCount = 16;
