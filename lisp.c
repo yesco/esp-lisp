@@ -785,112 +785,90 @@ PRIM in(lisp pin) {
 }
 
 PRIM interrupt(lisp pin, lisp changeType) {
-	int pins[16] = {0};
-
-	pins[getint(pin)] = 1;
-
-	interrupt_init(pins, getint(changeType));
-
+    interrupt_init(getint(pin), getint(changeType));
     return pin;
 }
 
 // pin group is hard-coded for now
 PRIM interruptGroup(lisp changeType) {
-	int pins[16] = {0};
-
-	pins[0] = 1;
-	pins[2] = 1;
-	pins[4] = 1;
-
-	interrupt_init(pins, getint(changeType));
-
+    int t = getint(changeType);
+    interrupt_init(0, t);
+    interrupt_init(2, t);
+    interrupt_init(4, t);
     return changeType;
 }
 
 PRIM _setbang(lisp* envp, lisp name, lisp v);
 
 // flags and counts declared in interrupt.c
-extern int buttonCountChanged[];
-extern int buttonClickCount  [];
+extern int button_clicked[];
+extern int button_count[];
 
 const char symbolNameLen = 25;
 
-void createSymbolName(
-		char symbolName[symbolNameLen],
-		char *pSymbolNameStub,
-		int pinNum) {
+void createSymbolName(char symbolName[symbolNameLen],
+                      char *pSymbolNameStub,
+                      int pinNum) {
+    int len = strlen(pSymbolNameStub);
 
-	int len = strlen(pSymbolNameStub);
+    char numChar = 0;
+    char asciiOffset = 0;
 
-	char numChar = 0;
-	char asciiOffset = 0;
+    memset(symbolName, '\0', symbolNameLen);
 
-	memset(symbolName, '\0', symbolNameLen);
+    strcpy(symbolName, pSymbolNameStub);
 
-	strcpy(symbolName, pSymbolNameStub);
+    if (pinNum >= 10) {
+        asciiOffset = 10;
+        symbolName[len-1] = '1';
+    }
 
-	if (pinNum >= 10) {
-	    asciiOffset = 10;
-
-		symbolName[len-1] = '1';
-	}
-
-	numChar = '0' + (pinNum - asciiOffset);
-
-	symbolName[len] = numChar;
-	symbolName[len + 1] = '*';
+    numChar = '0' + (pinNum - asciiOffset);
+    symbolName[len] = numChar;
+    symbolName[len + 1] = '*';
 }
 
 void setButtonClickSymbolValue(lisp* envp, int pin, lisp count) {
-	char  symbolName[symbolNameLen];
+    char  symbolName[symbolNameLen];
 
-	createSymbolName(symbolName, "*bc0", pin);
-	_setbang(envp, symbol(symbolName), count);
+    createSymbolName(symbolName, "*bc0", pin);
+    _setbang(envp, symbol(symbolName), count);
 }
 
 void updateButtonClickCount(lisp* envp, int pin) {
-  lisp count = mkint(buttonClickCount[pin]);
+  lisp count = mkint(button_count[pin]);
 
   setButtonClickSymbolValue(envp, pin, count);
 }
 
 // NOTE this has the side effect of resetting
 // 		the C var for buttonclickcount to zero
-PRIM resetButtonClickCount(lisp* envp, lisp pin) {
-//	printf("raw pin %u ", pin);
-  int  pinNum = getint(eval(pin, envp));
-//	printf ("pin %d ", pinNum);
-//	printf("PIN"); princ(pin);
-  lisp zero = mkint(0);
-
-  setButtonClickSymbolValue(envp, pinNum, zero);
-
-  buttonClickCount[pinNum] = 0;
-
-  return zero;
+// TODO: don't do that! lol
+PRIM resetClicks(lisp* envp, lisp pin) {
+    int  pinNum = getint(pin);
+    // printf ("pin %d ", pinNum);
+    // printf("PIN"); princ(pin);
+    lisp zero = mkint(0);
+    setButtonClickSymbolValue(envp, pinNum, zero);
+    button_count[pinNum] = 0;
+    return zero;
 }
 
 PRIM print(lisp x);
 
 // changes lisp var only
 PRIM intChange(lisp* envp, lisp pin, lisp v) {
-	// printf("raw pin %u raw v %u ", pin, v);
-		  int pinNum = getint(eval(pin, envp));
-	// int val = getint(v);
-	//printf ("pin %d val %d ", pinNum, val);
+    int pinNum = getint(eval(pin, envp));
+    //	printf("PIN"); princ(pin);
+    //	printf("v"); print(v);
 
-//	printf("PIN"); princ(pin);
-//	printf("v"); print(v);
+    char symbolName[symbolNameLen];
+    createSymbolName(symbolName, "*ie0", pinNum);
 
-	char  symbolName[symbolNameLen];
-
-	createSymbolName(symbolName, "*ie0", pinNum);
-
-//	printf("ic - sym name %s", symbolName);
-
-	_setbang(envp, symbol(symbolName), v);
-
-	return v;
+    //	printf("ic - sym name %s", symbolName);
+    _setbang(envp, symbol(symbolName), v);
+    
+    return v;
 }
 
 // wget functions...
@@ -3070,7 +3048,7 @@ lisp lisp_init() {
     // interrupts support
     DEFPRIM(interrupt, 2, interrupt);
     DEFPRIM(interruptGroup, 1, interruptGroup);
-    DEFPRIM(resetClicks, -1, resetButtonClickCount);
+    DEFPRIM(resetClicks, -1, resetClicks);
     DEFPRIM(intChange, -2, intChange);
 
     // system stuff
@@ -3201,33 +3179,31 @@ void maybeGC() {
     if (needGC()) gc(global_envp);
 }
 
-extern int gpioPinCount;
+// TODO: remove, or do include, probably move interupt to esplisp.[ch]
+extern int gpioPinCount; 
 void checkInterruptQueue();
 
 // lisp vars exist at global level, so passing C global env ptr
 // (like idle does with atrun)
-void updateButtonEnvVars(int buttonNum, int buttonCountChanged) {
-
+void updateButtonEnvVars(int buttonNum, int count) {
 	updateButtonClickCount(global_envp, buttonNum);
 
 	lisp pin = mkint(buttonNum);
-	lisp val = mkint(buttonCountChanged);
+	lisp val = mkint(count);
 
 	intChange(global_envp, pin, val);
 }
 
 void handleButtonEvents() {
+    checkInterruptQueue();
 
-	checkInterruptQueue();
-
-	int pin;
-	for (pin = 0; pin < gpioPinCount; pin++) {
-
-		if (buttonCountChanged[pin] != 0) {
-			updateButtonEnvVars(pin, buttonCountChanged[pin]);
-			buttonCountChanged[pin] = 0;
-		}
-	}
+    int pin;
+    for (pin = 0; pin < gpioPinCount; pin++) {
+        if (button_clicked[pin] != 0) {
+            updateButtonEnvVars(pin, button_count[pin]);
+            button_clicked[pin] = 0;
+        }
+    }
 }
 
 PRIM atrun(lisp* envp);
@@ -3240,7 +3216,7 @@ PRIM idle(int lticks) {
     web_one();
     atrun(global_envp);
 
-    // if flag for interrupt event is set, update env symbol values
+    // polling tasks
     handleButtonEvents();
 
     // gc

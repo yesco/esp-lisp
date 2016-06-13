@@ -29,9 +29,22 @@
 
 #include "compat.h"
 
+//typedef enum {
+//	GPIO_INTTYPE_NONE       = 0,
+//	GPIO_INTTYPE_EDGE_POS   = 1,
+//	GPIO_INTTYPE_EDGE_NEG   = 2,
+//	GPIO_INTTYPE_EDGE_ANY   = 3,
+//	GPIO_INTTYPE_LEVEL_LOW  = 4,
+//	GPIO_INTTYPE_LEVEL_HIGH = 5,
+//} gpio_inttype_t;
+
 // constant copied from RTOS button interrupt example -
 // could include esp/gpio_regs.h instead
-const gpio_inttype_t int_type = GPIO_INTTYPE_EDGE_NEG; // GPIO_INTTYPE_LEVEL_LOW; // GPIO_INTTYPE_EDGE_NEG;
+//const gpio_inttype_t int_type = GPIO_INTTYPE_EDGE_NEG; // GPIO_INTTYPE_LEVEL_LOW; // GPIO_INTTYPE_EDGE_NEG;
+//const gpio_inttype_t int_type = GPIO_INTTYPE_LEVEL_LOW;
+const gpio_inttype_t int_type = GPIO_INTTYPE_LEVEL_LOW;
+
+
 // copied from projdefs.h
 typedef void (*pdTASK_CODE)( void * );
 
@@ -57,78 +70,60 @@ const int gpioPinCount = 16;
 static xQueueHandle tsqueue = NULL;
 
 // flags for count change, reset when lisp env var is updated
-int buttonCountChanged[16] = {0};
-int buttonClickCount  [16] = {0};
+int button_clicked[16] = {0}; // TODO: use bitmask, or keep old count value last "seen"
+int button_last[16] = {0};
+int button_count[16] = {0};
 
 struct ButtonMessage {           
         uint32_t now;            
         uint32_t buttonNumber;   
 };
 
-static int checkCount = 0;
-static uint32_t last = 0;
-
 void checkInterruptQueue()
 {
-	uint32_t button_ts;
+	if (tsqueue == NULL) return;
 
-	struct ButtonMessage btnMsg;
-
-	if (tsqueue == NULL) {
-		return;
-	}
-
-	 if (xQueueReceive(tsqueue, &btnMsg, 0)) {
-		 checkCount = 0;
-
-		button_ts = btnMsg.now;
-		button_ts *= portTICK_RATE_MS;
+	struct ButtonMessage msg;
+	if (xQueueReceive(tsqueue, &msg, 0)) {
+		uint32_t ms = msg.now * portTICK_RATE_MS;
+		int pin = msg.buttonNumber;
 
 		// debounce check (from button.c example code)
-		if(last < button_ts-200) {
-			//printf("interrupt %d fired at %dms\r\n", btnMsg.buttonNumber, button_ts);
-			last = button_ts;
-
-			buttonCountChanged[btnMsg.buttonNumber] = 1;
-
-			buttonClickCount[btnMsg.buttonNumber]   =
-				buttonClickCount[btnMsg.buttonNumber] + 1;
+		// TODO: need a last per button!
+		// TODO: generalize, add button abstraction on top!
+		if (button_last[pin] < ms - 200) {
+			printf(" [button %d pressed at %dms\r\n", pin, ms);
+			button_clicked[pin] = 1;
+			button_last[pin] = ms;
+			button_count[pin]++;
 		}
 	 }
 }
 
-void interrupt_init(int pins[gpioPinCount], int changeType)
+void interrupt_init(int pin, int changeType)
 {
-	// in effect, this is a no-op - the default cannot be changed,
-    // but may expand on this code later
-	if (changeType == 2) {
-		// int_type = GPIO_INTTYPE_EDGE_NEG;
-	}
+	gpio_enable(pin, GPIO_INPUT);
+	gpio_set_interrupt(pin, changeType);
 
-	for (int pin = 0; pin < gpioPinCount; pin++) {
-		if (pins[pin] != 0) {
-			gpio_enable(pin, GPIO_INPUT);
-			gpio_set_interrupt(pin, int_type);
-		}
-	}
-
-    if (tsqueue == NULL ) {
-    	// queue size of 2 items is arbitrary,
-    	// but has been adequate so far
-	    tsqueue = xQueueCreate(2, sizeof(struct ButtonMessage));
+	if (tsqueue == NULL ) {
+		// queue size of 2 items is arbitrary, but has been adequate so far
+		tsqueue = xQueueCreate(2, sizeof(struct ButtonMessage));
 	}
 }
 
 void gpio_int_handler(int buttonNumber)
 {
-	uint32_t now = xTaskGetTickCountFromISR();
-
 	struct ButtonMessage btnMsg;
 
-	btnMsg.now 			= now;
+	btnMsg.now = xTaskGetTickCountFromISR();
 	btnMsg.buttonNumber = buttonNumber;
 
-	xQueueSendToBackFromISR(tsqueue, &btnMsg, NULL);
+	printf(" [interrupt %d] ", buttonNumber); fflush(stdout);
+	if (pdPASS != xQueueSendToBackFromISR(tsqueue, &btnMsg, NULL)) {
+		// TODO: fill the queue easy by...
+		// GPIO_INTTYPE_LEVEL_LOW  = 4 or GPIO_INTTYPE_LEVEL_HIGH = 5,    
+		printf("\n\n%%gpio_int_handler.ERROR: queue is FULL! interrupt ignored!\n\n");
+	}
 }
 
 // could refactor these 16 functions as instances of a macro

@@ -222,8 +222,6 @@ int clock_ms() {
 // issue:
 //   https://github.com/SuperHouse/esp-open-rtos/issues/75
 
-void interrupt_init(int pins[], int changeType);
-
 void user_init(void) {
     lastTick = xTaskGetTickCount();
     startMem = lastMem = xPortGetFreeHeapSize();
