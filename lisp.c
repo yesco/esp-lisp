@@ -2697,7 +2697,10 @@ lisp serializeLisp(lisp x, lisp* buffer, int *n) {
         // maybe make all symbol strings in linked list as local symbol table
         // This will be known for flash memory, maybe need bit to indicate?
     //}
+
+    // self representive inside pointer
     if (!x || INTP(x) || SYMP(x)) return x;
+
     if (IS(x, string)) {
         // string is simple, just serialize a "heap" object with, pointer (to next cells)
         int sz = sizeof(string);
@@ -2801,7 +2804,7 @@ PRIM flashit(lisp x) {
 
   printf("flashit.serialized [len=%d]: ", len); prin1(ret); terpri();
     lisp f = flashArray((lisp*)ret, len);
-  printf("flashit.flash [len=%d]: ", len); prin1(f); terpri();
+  printf("flashit.read using lisp[len=%d]: ", len); prin1(f); terpri();
     free(buffer);
     return f;
 }
