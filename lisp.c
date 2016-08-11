@@ -82,6 +82,8 @@
 #include <errno.h>
 #include <setjmp.h>
 
+// #include "esp/spi.h"
+
 #ifndef UNIX
   #include "FreeRTOS.h"
 
@@ -95,6 +97,8 @@
   #define LOOPS "2999999"
   #define LOOPTAIL "(tail 2999999 0)"
 #endif
+
+#include "MAX7219_font.h"
 
 // use pointer to store some tag data, use this for exteded types
 // last bits (3 as it allocates in at least 8 bytes boundaries):
@@ -820,6 +824,73 @@ PRIM interrupt(lisp pin, lisp changeType) {
     } else {
         return mkint(getInterruptCount(getint(pin), changeType ? ct : 0));
     }
+}
+
+void vTaskDelay( uint32_t xTicksToDelay );
+
+PRIM delay(lisp ticks) {
+	int delayTime = getint(ticks);
+
+	vTaskDelay(delayTime);
+
+	return ticks;
+}
+
+int random_basic(int low, int high) {
+	int r = rand() % (high - low + 1) + low;
+
+	return r;
+}
+
+PRIM random(lisp low, lisp high) {
+	int r = random_basic(getint(low), getint(high));
+
+	return mkint(r);
+}
+
+void spi_led(int, int, int, int, int);
+
+PRIM led_show(lisp init, lisp digit, lisp val, lisp decode, lisp delay) {
+	spi_led(getint(init), getint(digit), getint(val), getint(decode), getint(delay));
+
+	return mkint(1);
+}
+
+int spiData[] = { 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0 };
+
+unsigned char decodeMode = 1;
+
+PRIM led_data(lisp data, lisp offset) {
+
+	int pos = getint(offset);
+
+	int i = 0;
+
+	int val = 0;
+
+	while (data && ((i + pos) < 15)) {
+		val = getint(car(data));
+
+		// show nums and hex
+		if (decodeMode == 0) {
+			if (val > 9 && val < 16) {
+				// offset by space ascii and start of lowercase alphabet
+				val = val + 32 + 65 - 10;
+			}
+			else
+				if (val >= 0  && val < 10) {
+					val = val + 32 + 65 - 49;
+				}
+		}
+
+		spiData[pos + i] = val;
+
+		i = i + 1;
+
+        data = cdr(data);
+    }
+
+	return nil;
 }
 
 // wget functions...
@@ -2999,6 +3070,10 @@ lisp lisp_init() {
     DEFPRIM(in, 1, in);
     DEFPRIM(interrupt, 2, interrupt);
 
+    DEFPRIM (delay, 1, delay);
+    DEFPRIM (led_data, 2, led_data);
+    DEFPRIM (led_show, 5, led_show);
+
     // system stuff
     DEFPRIM(gc, -1, gc);
     DEFPRIM(test, -7, test);
@@ -3242,15 +3317,134 @@ int lispreadchar(char *chp) {
     return c < 0 ? -1 : 1;
 }
 
+char *pLightsDefines[] = {
+  "(list (define initialStateNum 1) (define mult 5))",
+  "(define stNum initialStateNum)",
+  "(define cols '(red amber green))",
+  "(list (define redl   (lambda (n) (out 12 n))) (define amberl (lambda (n) (out 0 n))) (define greenl (lambda (n) (out 5 n))))",
+  "(define redld (lambda (n o) (list (redl n) (delay (* o mult)) (clearl))))",
+  "(define amberld (lambda (n o) (list (amberl n) (delay (* o mult)) (clearl))))",
+  "(define greenld (lambda (n o) (list (greenl n) (delay (* o mult)) (clearl))))",
+  "(define redPattern (lambda (n) (list (redld 1 50) (delay (* 10 mult)) (redld 1 20) ) ))",
+  "(define amberPattern (lambda (n) (list (amberld 1 50) (delay (* 10 mult)) (amberld 1 20) ) ))",
+  "(define greenPattern (lambda (n) (list (greenld 1 50) (delay (* 10 mult)) (greenld 1 20) ) ))",
+  "(define lights (lambda (m n o) (list (redl m) (amberl n) (greenl o))))",
+  "(list (define clearl (lambda () (lights 0 0 0 ))) (define stopl  (lambda () (lights 1 0 0))) )",
+  "(list (define readyl (lambda () (lights 1 1 0))) (define gol    (lambda () (greenPattern))) (define slowl  (lambda () (lights 0 0 1))))",
+  "(list (define stopc  '(redPattern)) (define readyc '(redl amberl)))",
+  "(list (define goc    '(greenl)) (define slowc  '(amberl)))",
+  "(define states '(stopc readyc goc slowc))",
+  "(define incf (lambda (m) (let ((xx (+ (eval m) 1))) (set m xx))))",
+  "(define decf (lambda (m) (let ((xx (- (eval m) 1))) (set m xx))))",
+  "(define nth (lambda (n xs) (cond ((eq n 1) (car xs)) (t (nth (- n 1) (cdr xs))))))",
+  "(define stateItem (lambda (n) (nth n states)))",
+  "(define loopStNum (lambda () (cond ((eq stNum (length states)) (set 'stNum 1)) (t (incf 'stNum)))))",
+  "(define backStNum (lambda () (cond ((eq stNum 1) (set 'stNum (length states))) (t (decf 'stNum)))))",
+  "(define setl (lambda (s) ((eval s) 1)))",
+  "(define showLights (lambda () (mapcar setl (eval (stateItem stNum)))))",
+  "(define changeLights (lambda () (list (loopStNum) (clearl) (showLights))))",
+  "(define backLights (lambda () (list (backStNum) (clearl) (showLights))))",
+  "(define upMult   (lambda () (cond ((eq mult 10) (set 'mult 10)) (t (incf 'mult)))))",
+  "(define downMult (lambda () (cond ((eq mult 1)  (set 'mult 1))  (t (decf 'mult)))))",
+  "(list (interrupt 2 2) (interrupt 4 2))",
+  "(list (define (int02 pin clicks count ms) (downMult)) (define (int04 pin clicks count ms) (upMult)))",
+  "(at -5000 (lambda () (changeLights)))"
+};
+
+char *pNumbersDefines[] = {
+  "(define spt (lambda () (led_show 15 8 1 1 5)))",
+  "(define sptt (lambda () (led_show 15 8 1 0 5)))",
+  "(define ledd (lambda () (list (led_data '( 6 6 5 5 ) 0) (led_show 4 0 0 0 5) (led_show 1 0 0 0 5) (led_show 2 0 0 0 5) (sptt) )))",
+  "(ledd)",
+  "(define nth (lambda (n xs) (cond ((eq n 1) (car xs)) (t (nth (- n 1) (cdr xs))))))",
+  "(define drop (lambda (x xs) (cond ((eq x 0) xs) (t (drop (- x 1) (cdr xs))))))",
+  "(define take (lambda (x xs) (cond ((eq x 0) nil) (t (cons (car xs) (take (- x 1) (cdr xs)))))))",
+  "(define append (lambda (xs ys) (if (= (car xs) nil) ys (cons (car xs) (append (cdr xs) ys) ))))",
+  "(define rotate (lambda (n xs) (if (= (car xs) nil) nil (append (drop n xs) (take n xs)))))",
+  "(define incf (lambda (m) (let ((xx (+ (eval m) 1))) (set m xx))))",
+  "(define wheels 1)",
+  "(set! wheels '( ( 6 6 5 5 ) ( 2 2 4 3 ) ( 2 3 3 5 ) (10 11 12 13) ))",
+  "(define curWheel 1)",
+  "(define rotCount '(0 0 0 0))",
+  "(define srcHelper (lambda (n v) (append (take (- n 1) rotCount) (cons v (drop n rotCount)))))",
+  "(define setRotCount (lambda (n v) (let ((xx (cond ((eq n 1) (cons v (drop 1 rotCount))) ((eq n 2) (srcHelper n v)) ((eq n 3) (srcHelper n v)) (t (append (take 3 rotCount) (cons v nil))) ))) (set 'rotCount xx))))",
+  "(define loopRotDisp (lambda () (cond ((eq (nth curWheel rotCount) 3) (setRotCount curWheel 0)) (t (setRotCount curWheel (+ (nth curWheel rotCount) 1))))))",
+  "(define loopCurWheel (lambda () (cond ((eq curWheel 4) (set 'curWheel 1)) (t (incf 'curWheel)))))",
+  "(define rotDisp (lambda () (loopRotDisp)))",
+  "(define wheelDisp (lambda () (nth curWheel wheels)))",
+  "(define showDisp (lambda () (list (led_data (rotate (nth curWheel rotCount) (wheelDisp)) 0) (ans) (sptt))))",
+  "(interrupt 2 2)",
+  "(interrupt 4 2)",
+  "(define (int02 pin clicks count ms) (list (rotDisp) (showDisp)))",
+  "(define (int04 pin clicks count ms) (list (loopCurWheel) (showDisp)))",
+  "(define wheelShow (lambda (n) (rotate (nth n rotCount) (nth n wheels))))",
+  "(define zip2 (lambda (xs ys zs) (cond ((eq (car xs) nil) nil) ((eq (car ys) nil) nil) ((eq (car zs) nil) nil) (t (cons (list (car xs) (car ys) (car zs)) (zip2 (cdr xs) (cdr ys) (cdr zs) ) )) ) ))",
+  "(define sum3 (lambda (t) (+ (+ (car t) (nth 2 t)) (nth 3 t))))",
+  "(define ans (lambda () (led_data (mapcar sum3 (zip2 (wheelShow 1) (wheelShow 2) (wheelShow 3))) 4) ))",
+  ";",
+  ";",
+  ";"
+};
+
+// lights
+// int defineCount = 31;
+// numbers
+int defineCount = 29; 
+
+// char **pDefines = pLightsDefines;
+char **pDefines = pNumbersDefines;
+
+int libLoaded = 0; 
+int currentDefine = 0; 
+
+int noFree = 0;
+
+char *pComment = ";";
+
 void readeval(lisp* envp) {
     help(envp);
 
+    int last = 0;
+    
     while(1) {
         global_envp = envp; // allow idle to gc
-        char* ln = readline_int("lisp> ", READLINE_MAXLEN, lispreadchar);
+        char* ln = NULL;
+
+        // execute auto-load functions from defines array
+        if (libLoaded == 0) {
+
+       	  // default value
+       	  ln = pComment;
+          noFree = 1;
+
+          // clock check in loop creates space between executing functions
+          if ((clock_ms() - last) > 200) {
+    		  ln = pDefines[currentDefine];
+
+			  currentDefine = currentDefine + 1;
+
+			  if (currentDefine == defineCount) {
+				libLoaded = 1;
+			  }
+
+			  last = clock_ms();
+          }
+        }
+        else {
+          ln = readline_int("lisp> ", READLINE_MAXLEN, lispreadchar);
+        }
+
         global_envp = NULL;
 
+        if (ln != NULL) {
+//        	printf("ln %s", ln);
+        }
+        else {
+        	printf("ln == NULL", ln);
+        }
+
         if (!ln) {
+        	printf("break");
             break;
         } else if (strncmp(ln, ";", 1) == 0) {
             ; // comment - ignore
@@ -3305,7 +3499,13 @@ void readeval(lisp* envp) {
             //print_memory_info(1);
         }
 
-        free(ln);
+        if (noFree == 0) {
+
+          free(ln);
+        }
+        else {
+          noFree = 0;
+        }
     }
 
     printf("OK, bye!\n");
@@ -3575,6 +3775,199 @@ void lisp_run(lisp* envp) {
     init_library(envp);
     readeval(envp);
     return;
+}
+
+// hardware spi pins
+int cs_pin = 12 ;
+int clk_pin = 14;
+int data_pin = 13;
+
+#define MAXREG_DECODEMODE 0x09
+#define MAXREG_INTENSITY  0x0A
+#define MAXREG_SCANLIMIT  0x0B
+#define MAXREG_SHUTDOWN   0x0C
+#define MAXREG_DISPTEST   0x0F
+
+void shiftOut(unsigned char* data, int delay);
+unsigned char sendChar(const char data, const bool dp);
+
+void spi_led(int init, int digit, int val, int decode, int delay)
+{
+	gpio_enable(cs_pin, GPIO_OUTPUT);
+	gpio_enable(clk_pin, GPIO_OUTPUT);
+	gpio_enable(data_pin, GPIO_OUTPUT);
+
+//	bool bSpi = spi_init(0, 2, 4, true, SPI_BIG_ENDIAN, true);
+//	bool bSpi = spi_init(1, 0, 4, true, SPI_BIG_ENDIAN, true);
+
+//	const spi_settings_t my_settings = {
+//	.mode = SPI_MODE0,
+//	.freq_divider = SPI_FREQ_DIV_4M,
+//	.msb = true,
+//	.endianness = SPI_LITTLE_ENDIAN,
+//	.minimal_pins = true
+//	};
+
+//	spi_settings_t old;
+//	spi_get_settings(1, &old); // save current settings
+
+//	printf("mode %d ", old.mode);
+//	printf("dvd %d ", old.freq_divider);
+//	printf("msb %d ", old.msb);
+//	printf("end %d ", old.endianness);
+//	printf("min %d ", old.minimal_pins);
+
+	// useful comments in this code re cpol, cpha
+	//https://github.com/MetalPhreak/ESP8266_SPI_Driver/blob/master/driver/spi.c
+	// settings from spi.h, look reasonable
+//	spi_init(1, SPI_MODE0, SPI_FREQ_DIV_10M, true, SPI_LITTLE_ENDIAN, false ); //true);
+
+	// send two bytes, d15 first
+	//see pdf p6 for format
+//	Table 1. Serial-Data Format (16 Bits)
+//	D15 D14
+//	X
+//	D13 D12
+//	X X
+//	D11 D10 D9 D8
+//	ADDRESS
+//	D7 D6 D5 D4
+//	X
+//	D3 D2 D1 D0
+//	MSB DATA LSB
+
+
+	unsigned char bytes[2];
+
+	unsigned char initC = (unsigned char)init;
+
+	if (init > 0) {
+
+		if (initC & 0x04) {
+			bytes[0] = MAXREG_SHUTDOWN;
+			bytes[1] = 0x01;
+			shiftOut(bytes, delay);
+		}
+
+		if (initC & 0x01) {
+			bytes[0] = MAXREG_SCANLIMIT;
+			bytes[1] = 0x07;
+			shiftOut(bytes, delay);
+		}
+
+		if (initC & 0x02) {
+			bytes[0] = MAXREG_DECODEMODE;
+
+			if (decode > 0) {
+				bytes[1] = 0xFF;
+				decodeMode = 1;
+			}
+			else {
+				bytes[1] = 0x0;
+				decodeMode = 0;
+			}
+
+			shiftOut(bytes, delay);
+		}
+
+		if (initC & 0x08) {
+			bytes[0] = MAXREG_DISPTEST;
+			bytes[1] = 0x00;
+			shiftOut(bytes, delay);
+		}
+
+		if (initC & 0x10) {
+			bytes[0] = MAXREG_INTENSITY;
+			bytes[1] = (unsigned char)val;
+			shiftOut(bytes, delay);
+		}
+
+		if (initC & 0x20) {
+			for (unsigned char i = 0; i < 8; i++) {
+				bytes[0] = i + 1;
+				bytes[1] = 0;
+
+				shiftOut(bytes, delay);
+			}
+		}
+	}
+
+	for (unsigned char i = 0; i < digit; i++) {
+		bytes[0] = 8-i; // i+ 1;
+
+		if (decodeMode == 1) {
+			bytes[1] = spiData[i]; 
+		}
+		else {
+			bytes[1] = sendChar(spiData[i], false);
+		}
+
+		shiftOut(bytes, delay);
+	}
+
+//	spi_set_settings(1, &old); // restore saved settings
+}
+
+void send2Byte(unsigned char reg, unsigned char data);
+
+// check this page
+// http://www.instructables.com/id/MAX7219-8-Digit-LED-Display-Module-Driver-for-ESP8/step4/MAX7219-Driver-Implementation/
+// also
+// https://github.com/wayoda/LedControl/blob/master/src/LedControl.cpp
+void shiftOut(unsigned char* data, int delay)
+{
+    gpio_write(cs_pin, 0);
+
+    send2Byte(data[0], data[1]);
+
+    gpio_write(cs_pin, 1);
+
+	vTaskDelay(delay);
+    
+    return;
+}
+
+void send2Byte(unsigned char reg, unsigned char data) {
+
+    uint16_t info = reg*256+data;
+
+//	    uint16_t retVal = spi_transfer_16(1, info);
+//
+//	    printf("rv %d ", retVal);
+//
+//	    return;
+
+    char i = 16;
+
+    do {
+        gpio_write(clk_pin, 0);
+        
+        if(info & 0x8000) {
+    	    gpio_write(data_pin, 1);
+      	} 
+    	else {
+    	    gpio_write(data_pin, 0);
+    	}
+
+        gpio_write(clk_pin, 1);
+
+    	info <<= 1;
+    } while(--i);
+}
+
+unsigned char sendChar(const char data, const bool dp)
+{
+	unsigned char converted = 0b0000001;    // hyphen as default
+
+  // look up bit pattern if possible
+  if (data >= ' ' && data <= 'z')
+    converted = MAX7219_font[data - ' '];
+
+  // 'or' in the decimal point if required
+  if (dp)
+    converted |= 0b10000000;
+
+  return converted;
 }
 
 // find this display for chinese price - http://digole.com/index.php?productID=1208 (17.89 USD)
