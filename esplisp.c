@@ -13,6 +13,8 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "queue.h"
+#include <sys/time.h>
+#include <reent.h>
 
 #include "ssid_config.h"
 
@@ -143,6 +145,25 @@ int nonblock_getch() {
 int clock_ms() {
     // return xTaskGetTickCount() / portTICK_RATE_MS;
     return xTaskGetTickCount() * 10;
+}
+
+unsigned int time_ms() {
+  //#include "user_interface.h" espressif: uint32 system_get_time(void)
+  // it returns microseconds ( http://bbs.espressif.com/viewtopic.php?t=42 )
+  // also: system_get_rtc_time();
+  return sdk_system_get_time() / 1000;
+}
+
+int delay_ms(int ms) {
+  int start = time_ms();
+  vTaskDelay(ms/10);
+  return time_ms() - start;
+}
+
+unsigned int randomized() {
+  // https://twitter.com/esp8266/status/692469830834855936
+  // http://esp8266-re.foogod.com/wiki/Random_Number_Generator
+  return *(volatile uint32_t *)0x3FF20E44;
 }
 
 // //#define configMINIMAL_STACK_SIZE	( ( unsigned short )256 )

@@ -953,8 +953,18 @@ PRIM assoc(lisp name, lisp env) {
 
 PRIM evallist(lisp e, lisp* envp) {
     if (!e) return e;
-    // TODO: don't recurse!
-    return cons(eval(car(e), envp), evallist(cdr(e), envp));
+
+    lisp r = nil;
+    lisp last = r;
+    while (e) {
+      lisp a = eval(car(e), envp);
+      lisp nw = cons(a, nil);
+      if (!r) r = nw;
+      setcdr(last, nw);
+      last = nw;
+      e = cdr(e);
+    }        
+    return r;
 }
 
 // dummy function that doesn't eval, used instead of eval
@@ -1174,6 +1184,19 @@ PRIM minus(lisp a, lisp b) { return b ? mkint(getint(a) - getint(b)) : mkint(-ge
 PRIM times(lisp a, lisp b) { return mkint(getint(a) * getint(b)); }
 PRIM divide(lisp a, lisp b) { return mkint(getint(a) / getint(b)); }
 PRIM mod(lisp a, lisp b) { return mkint(getint(a) % getint(b)); }
+PRIM random_(lisp a, lisp b) {
+  // randomize
+  int ia = getint(a);
+  if ((!a && !b) || ia < 0) {
+    if (!a) ia = randomized() % 0xffffff;
+    int seed = abs(ia);
+    srand(seed);
+    return mkint(-seed);
+  }
+  if (b) return mkint(rand() % (getint(b)-ia+1) + ia);
+  if (!ia) return a;
+  return mkint(rand() % ia);
+}
 
 // TODO: http://www.gnu.org/software/emacs/manual/html_node/elisp/Input-Functions.html#Input-Functions
 // http://www.lispworks.com/documentation/HyperSpec/Body/f_rd_rd.htm#read
@@ -1321,6 +1344,7 @@ PRIM apply(lisp f, lisp args) {
 PRIM mapcar(lisp f, lisp r) {
     if (!r || !consp(r) || !funcp(f)) return nil;
     lisp v = apply(f, cons(car(r), nil));
+    // TOOD: remove recursion
     return cons(v, mapcar(f, cdr(r)));
 }
 
@@ -2223,6 +2247,7 @@ static inline lisp bindList(lisp fargs, lisp args, lisp env) {
     // TODO: not recurse!
     if (!fargs) return env;
     lisp b = cons(car(fargs), car(args));
+    // self tail recursion is "goto"
     return bindList(cdr(fargs), cdr(args), cons(b, env));
 }
 
@@ -2298,6 +2323,13 @@ PRIM time_(lisp* envp, lisp exp) {
     int ms = clock_ms() - start;
     return cons(mkint(ms), ret);
 }
+
+PRIM delay(lisp ms) {
+  return mkint(delay_ms(getint(ms)));
+}
+
+// TODO: time functions... http://naggum.no/lugm-time.html
+
 
 PRIM load(lisp* envp, lisp name) {
     void evalIt(char* s, char* filename, int startno, int endno) {
@@ -2923,6 +2955,8 @@ lisp lisp_init() {
     DEFPRIM(=, 2, eq);
     DEFPRIM(<, 2, lessthan);
 
+    DEFPRIM(random, 2, random_);
+
     // https://www.gnu.org/software/guile/manual/html_node/Pattern-Matching.html#Pattern-Matching
     DEFPRIM(if, -3, if_);
     DEFPRIM(cond, -7, cond);
@@ -3008,6 +3042,7 @@ lisp lisp_init() {
 
     DEFPRIM(ticks, 1, ticks);
     DEFPRIM(clock, 1, clock_);
+    DEFPRIM(delay, 1, delay);
     DEFPRIM(time, -1, time_);
     DEFPRIM(load, -1, load);
 

@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 #include <time.h>
+#include <sys/time.h>
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -58,6 +59,25 @@ void print_memory_info(int verbose) {
 int clock_ms() {
     static const int clocks_per_ms = CLOCKS_PER_SEC / 1000;
     return (int)(clock()) / clocks_per_ms;
+}
+
+unsigned int time_ms() {
+  struct timeval t;
+  gettimeofday(&t, NULL);
+  return t.tv_usec/1000 + t.tv_sec * 1000;
+}
+
+// TODO: make it run idle function...
+int delay_ms(int ms) {
+  int start = time_ms();
+  usleep(ms * 1000);
+  return time_ms() - start;
+}
+
+unsigned int randomized() {
+  struct timeval t;
+  gettimeofday(&t, NULL);
+  return (unsigned int)(t.tv_usec * t.tv_sec);
 }
 
 void connect_wifi(char* ssid, char* password) { /* dummy */ }

@@ -5,6 +5,9 @@ typedef unsigned int uint32;
 typedef unsigned int uint32_t;
 
 int clock_ms();
+int delay_ms(int ms);
+
+unsigned int randomized(); // return pseudorandom seeed
 
 //////////////////////////////////////////////////////////////////////
 // IO
