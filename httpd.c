@@ -18,6 +18,9 @@
 #define BUFSIZE 1024
 #define MAXQUEUE 10
 
+// consider looking at using something that handles post
+// - https://github.com/sheinz/simple-httpd/blob/master/httpd.c
+//
 // > 0, good socket: httpd_next(s)... close(s)
 //
 // < 0 error:

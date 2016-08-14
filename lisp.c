@@ -2272,14 +2272,16 @@ PRIM let_star(lisp* envp, lisp all) {
 static inline lisp bindList(lisp fargs, lisp args, lisp env) {
     // TODO: not recurse!
     if (!fargs) return env;
+    if (symbolp(fargs)) return cons(fargs, args);
     lisp b = cons(car(fargs), car(args));
-    // self tail recursion is "goto"
+    // self tail recursion is "goto" - efficient
     return bindList(cdr(fargs), cdr(args), cons(b, env));
 }
 
 static inline lisp bindEvalList(lisp fargs, lisp args, lisp* envp, lisp extend) {
     while (fargs) {
         // This eval cannot be allowed to GC! (since it's part of building a cons structure
+        if (symbolp(fargs)) return cons(cons(fargs, evallist(args, envp)), extend);
         lisp b = cons(car(fargs), eval(car(args), envp));
         extend = cons(b, extend);
         fargs = cdr(fargs);
