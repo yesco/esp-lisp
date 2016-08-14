@@ -1412,21 +1412,48 @@ PRIM length(lisp r) {
 // scheme string functions - https://www.gnu.org/software/guile/manual/html_node/Strings.html#Strings
 // common lisp string functions - http://www.lispworks.com/documentation/HyperSpec/Body/f_stgeq_.htm
 PRIM concat(lisp* envp, lisp x) {
+    // calcualate len
     int len = 1;
     lisp i = x;
     while (i) {
-        len += strlen(getstring(car(i)));
+        lisp v = car(i);
+        if (INTP(v)) {
+            int iv = getint(v);
+            // negative
+            if (iv < 0) len += 1;
+            iv = abs(iv);
+            // each digit
+            while ((iv /= 10) > 0) len++; 
+            // last digit
+            len++; 
+        } else {
+            char* s = getstring(v);
+            char ss[7] = {0};
+            if (HSYMP(v)) s = symbol_getString(v);
+            else if (SYMP(v)) s = sym2str(v, ss);
+            else if (INTP(v)) 
+            len += strlen(s);
+        }
         i = cdr(i);
     }
-    char* s = malloc(len), *p = s;;
-    *s = 0;
+    // build the string
+    char* r = malloc(len), *p = r;
+    *r = 0;
     i = x;
     while (i) {
-        p = strcat(p, getstring(car(i)));
+        lisp v = car(i);
+        if (INTP(v)) {
+            p += snprintf(p, 20, "%d", getint(v));
+        } else {
+            char* s = getstring(v);
+            char ss[7] = {0};
+            if (HSYMP(v)) s = symbol_getString(v);
+            else if (SYMP(v)) s = sym2str(v, ss);
+            p = strcat(p, s);
+        }
         i = cdr(i);
     }
-    lisp r = mklenstring(s, -len);
-    return r;
+    return mklenstring(r, -len);
 }
 
 PRIM char_(lisp i) {
