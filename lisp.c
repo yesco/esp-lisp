@@ -1177,9 +1177,25 @@ PRIM numberp(lisp a) { return IS(a, intint) ? t : nil; } // TODO: extend with fl
 PRIM integerp(lisp a) { return IS(a, intint) ? t : nil; }
 PRIM funcp(lisp a) { return IS(a, func) || IS(a, thunk) || IS(a, prim) ? t : nil; }
 
-PRIM plus(lisp a, lisp b) { return mkint(getint(a) + getint(b)); }
+PRIM plus(lisp *envp, lisp x) {
+    int s = 0;
+    while (x) {
+        s += getint(car(x));
+        x = cdr(x);
+    }
+    return mkint(s);
+}
+
+PRIM times(lisp *envp, lisp x) {
+    int p = 1;
+    while (x) {
+        p *= getint(car(x));
+        x = cdr(x);
+    }
+    return mkint(p);
+}
+
 PRIM minus(lisp a, lisp b) { return b ? mkint(getint(a) - getint(b)) : mkint(-getint(a)); }
-PRIM times(lisp a, lisp b) { return mkint(getint(a) * getint(b)); }
 PRIM divide(lisp a, lisp b) { return mkint(getint(a) / getint(b)); }
 PRIM mod(lisp a, lisp b) { return mkint(getint(a) % getint(b)); }
 PRIM random_(lisp a, lisp b) {
@@ -3004,9 +3020,9 @@ lisp lisp_init() {
     DEFPRIM(func?, 1, funcp);
 
     // mathy stuff
-    DEFPRIM(+, 2, plus);
+    DEFPRIM(+, 7, plus);
     DEFPRIM(-, 2, minus);
-    DEFPRIM(*, 2, times);
+    DEFPRIM(*, 7, times);
     DEFPRIM(/, 2, divide);
     DEFPRIM(%, 2, mod);
 
