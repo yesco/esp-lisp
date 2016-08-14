@@ -2356,22 +2356,34 @@ PRIM delay(lisp ms) {
 
 // TODO: time functions... http://naggum.no/lugm-time.html
 
+// different verbosity levels are differently chatty
+// 0 = only results of actions like print (it doesn't suppress prints)
+// 1 = 0 + print file header, echo result of each expression
+// 2 = 1 + print expression, arrow, result
+// 3 = 2 + print header with line number before each chunk. Good for debugging
+PRIM load(lisp* envp, lisp name, lisp verbosity) {
+    char* filename = getstring(evalGC(name, envp));
+    int v = getint(evalGC(verbosity, envp));
+    if (v > 0) printf("\n========================= %s\n", filename);
 
-PRIM load(lisp* envp, lisp name) {
     void evalIt(char* s, char* filename, int startno, int endno) {
         if (!s || !s[0] || s[0] == ';') return;
-        printf("\n========================= %s :%d-%d>\n%s\n", filename, startno, endno, s);
+        if (v > 1) printf("\n========================= %s :%d-%d>\n%s\n", filename, startno, endno, s);
         // TODO: way to make it silent?
         // TODO: also, abort on error?
         lisp r = reads(s);
-        print(r);
-        printf("===>\n\n");
-        prin1(evalGC(r, envp)); terpri();
-        printf("\n------------------------\n\n");
+        if (v > 1) print(r);
+        if (v > 1) printf("===>\n\n");
+        lisp o = evalGC(r, envp);
+        if (v > 0) {
+          prin1(o);
+          terpri();
+        }
+        //printf("\n------------------------\n\n");
         //gc(envp); // NOT SAFE!!!?? filename dissapears!
     }
 
-    int r = process_file(getstring(name), evalIt);
+    int r = process_file(filename, evalIt);
     return mkint(r);
 }
 
@@ -3073,7 +3085,9 @@ lisp lisp_init() {
     DEFPRIM(clock, 1, clock_);
     DEFPRIM(delay, 1, delay);
     DEFPRIM(time, -1, time_);
-    DEFPRIM(load, -1, load);
+
+    DEFPRIM(load, -3, load);
+    // DEFPRIM(directory, -1, directory);
 
     // debugging - http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Debugging-Aids.html 
     // http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Command_002dLine-Debugger.html#Command_002dLine-Debugger
@@ -3111,7 +3125,10 @@ lisp lisp_init() {
 
     dogc = 1;
 
+    load(&env, mkstring("init.lsp"), nil);
+
     print_memory_info( verbose ? 2 : 0 ); // summary of init usage
+
     return env;
 }
 
@@ -3635,6 +3652,7 @@ static PRIM test(lisp* e) {
 #else
     printf("%%Tests have been commented out.\n");
 #endif
+
     return nil;
 }
 

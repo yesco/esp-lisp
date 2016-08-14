@@ -17,6 +17,8 @@
 #include "lisp.h"
 #include "compat.h"
 
+#include <dirent.h>
+
 // dummies
 
 void gpio_enable(int pin, int state) {}
@@ -154,12 +156,11 @@ int process_file(char* filename, process_input process) {
 
     char line[MAXLINE] = {0};
     int lineno = 0;
-    int startno = 1;
+    int startno = 0;
 
     int end = 0;
     do {
-        lineno++;
-	printf("%s.%d: %s", filename, lineno, line);
+        // printf("%s.%d: %s", filename, lineno, line);
 
 	// chunk finished (non-empty line with some input)
 	if (end || !isspace(line[0])) {
@@ -183,6 +184,7 @@ int process_file(char* filename, process_input process) {
         }
 
 	end = !fgets(line, sizeof(line) - 1, file);
+        lineno++;
     } while(1);
 
     free(input);
