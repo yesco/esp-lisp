@@ -67,8 +67,8 @@ static lisp str2sym(char* s, int len) {
     return (lisp) ((n << 2) | 3);
 }
 
-void sym2str(lisp s, char name[7]) {
-    if (!s) return;
+char* sym2str(lisp s, char name[7]) {
+    if (!s) return NULL;
     // 3ASCII?
     unsigned int n = (unsigned int) s;
     if (n % 128 == 127) {
@@ -76,7 +76,7 @@ void sym2str(lisp s, char name[7]) {
         name[1] = (n >> (32-2*7)) % 128;
         name[2] = (n >> (32-3*7)) % 128;
         name[3] = 0;
-        return;
+        return &name[0];
     }
     n /= 4;
     int i;
@@ -87,6 +87,7 @@ void sym2str(lisp s, char name[7]) {
         n /= 32;
     }
     name[6] = 0;
+    return &name[0];
 }
 
 lisp symbol_len(char *s, int len) {

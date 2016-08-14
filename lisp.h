@@ -113,7 +113,7 @@ lisp symbol_len(char* start, int len);
 void syms_mark();
 PRIM syms(lisp f);
 
-void sym2str(lisp s, char name[7]); // be aware this only fork for SYMP(s)
+char* sym2str(lisp s, char name[7]); // be aware this only fork for SYMP(s)
 char* symbol_getString(lisp s); // be aware this only works for !SYMP(s) && IS(s, symboll)
 
 // TODO: inline or macro

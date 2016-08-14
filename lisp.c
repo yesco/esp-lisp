@@ -1177,8 +1177,6 @@ PRIM numberp(lisp a) { return IS(a, intint) ? t : nil; } // TODO: extend with fl
 PRIM integerp(lisp a) { return IS(a, intint) ? t : nil; }
 PRIM funcp(lisp a) { return IS(a, func) || IS(a, thunk) || IS(a, prim) ? t : nil; }
 
-PRIM lessthan(lisp a, lisp b) { return getint(a) < getint(b) ?  t : nil; }
-
 PRIM plus(lisp a, lisp b) { return mkint(getint(a) + getint(b)); }
 PRIM minus(lisp a, lisp b) { return b ? mkint(getint(a) - getint(b)) : mkint(-getint(a)); }
 PRIM times(lisp a, lisp b) { return mkint(getint(a) * getint(b)); }
@@ -1219,6 +1217,7 @@ PRIM _env(lisp* e, lisp all) { return *e; }
 // longer functions
 PRIM eq(lisp a, lisp b) {
     if (a == b) return t;
+    // TODO: revisit, if no values on the heap then just return false;
     char ta = TAG(a);
     char tb = TAG(b);
     if (ta != tb) return nil;
@@ -1228,20 +1227,47 @@ PRIM eq(lisp a, lisp b) {
     return nil;
 }
 
-PRIM equal(lisp a, lisp b) {
+// We implement a generlized <=> compare function for all types, including "list"
+// this means we don't need to duplicate code for equal, <, string<, (=, <=, ==, >=, etc)
+// -1 means <
+//  0 means equal
+// +1 means >
+// -2 means tagtype < 
+// +2 means tagtype >
+// -3 means not cons/can't compare
+int cmp(lisp a, lisp b) {
     while (a != b) {
         lisp r = eq(a, b);
-        if (r) return r;
+        if (r) return 0;
         char taga = TAG(a), tagb = TAG(b);
-        if (taga != tagb) return nil;
-        if (taga == string_TAG)
-            return strcmp(getstring(a), getstring(b)) == 0 ? t : nil;
-        if (taga != conss_TAG) return nil;
+        if (taga != tagb) return taga < tagb ? -2 : +2;
+        if (taga == intint_TAG) return a < b ? -1 : a > b ? +1 : 0;
+        if (taga == string_TAG) return strcmp(getstring(a), getstring(b));
+        if (SYMP(a) && SYMP(b)) {
+          char as[7] = {0}, bs[7] = {0}, *ap = NULL, *bp = NULL;
+          ap = HSYMP(a) ? symbol_getString(a) : sym2str(a, as);
+          bp = HSYMP(b) ? symbol_getString(b) : sym2str(b, bs);
+          return strcmp(ap, bp);
+        }          
+        if (taga != conss_TAG) return -3;
         // cons, iterate
-        if (!eq(car(a), car(b))) return nil;
+        int v = cmp(car(a), car(b));
+        if (v) return v;
         a = cdr(a); b = cdr(b);
     }
-    return t;
+    return 0;
+}
+
+PRIM cmp_(lisp a, lisp b) {
+    return mkint(cmp(a, b));
+}
+
+PRIM equal(lisp a, lisp b) {
+    return cmp(a, b) ? nil : t;
+}
+
+PRIM lessthan(lisp a, lisp b) {
+    return cmp(a, b) < 0 ? t : nil;
 }
 
 inline lisp getBind(lisp* envp, lisp name, int create) {
@@ -2951,9 +2977,12 @@ lisp lisp_init() {
     DEFPRIM(%, 2, mod);
 
     DEFPRIM(eq, 2, eq);
-    DEFPRIM(equal, 2, equal);
     DEFPRIM(=, 2, eq);
+    DEFPRIM(cmp, 2, cmp_);
+    DEFPRIM(equal, 2, equal);
     DEFPRIM(<, 2, lessthan);
+
+    // all other <= > >= can be made from cmp
 
     DEFPRIM(random, 2, random_);
 

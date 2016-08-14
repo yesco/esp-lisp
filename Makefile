@@ -1,4 +1,4 @@
 # Simple makefile for eps-lisp
-PROGRAM=*.c
+PROGRAM=esp-lisp
 include ../esp-open-rtos/common.mk
 

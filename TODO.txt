@@ -1,0 +1,2 @@
+todo: how to make an "app", how to include lisp code, and c code? currently modify lisp.c
+
