@@ -1,6 +1,6 @@
 /* Distributed under Mozilla Public Licence 2.0   */
 /* https://www.mozilla.org/en-US/MPL/2.0/         */
-/* 2016-03-15 (C) Jonas S Karlsson, jsk@yesco.org */
+/* 2016-08-14 (C) Jonas S Karlsson, jsk@yesco.org */
 /* A mini "lisp machine", main                    */
 
 // http://stackoverflow.com/questions/3482389/how-many-primitives-does-it-take-to-build-a-lisp-machine-ten-seven-or-five
