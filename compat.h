@@ -99,6 +99,8 @@ void httpd_loop(int s);
 // gpio/esp8266 hardware stuff
 
 #ifdef UNIX
+  #include <dirent.h>
+
   // dummy
   #define GPIO_OUTPUT 1
   #define GPIO_INPUT 0
@@ -120,6 +122,17 @@ void httpd_loop(int s);
 
 #else
   #define flash_memory ((unsigned char*)(0x40200000 + FS_ADDRESS))
+
+  typedef struct DIR {
+  } DIR;
+
+  struct dirent {
+      char d_name[20];
+  };
+
+  DIR* opendir(char* path);
+  struct dirent* readdir(DIR* dp);
+  int closedir(DIR* dp);
 
 #endif
 

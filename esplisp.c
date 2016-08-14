@@ -261,6 +261,21 @@ void user_init(void) {
     xTaskCreate(lispTask, (signed char *)"lispTask", 2048, NULL, 2, NULL);
 }
 
+DIR dir;
+struct dirent dirent;
+
+DIR* opendir(char* path) {
+    return &dir;
+}
+
+struct dirent* readdir(DIR* dp) {
+    return NULL;
+}
+
+int closedir(DIR* dp) {
+    return 0;
+}
+
 int process_file(char* filename, process_input process) {
     error("process_file: not implemented!");
     return -1;

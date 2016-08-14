@@ -2387,6 +2387,26 @@ PRIM load(lisp* envp, lisp name, lisp verbosity) {
     return mkint(r);
 }
 
+PRIM directory(lisp name) {
+    DIR *dp;
+    struct dirent *ep;
+    char* nm = getstring(name);
+    printf("DIR>%s<\n", nm);
+    if (!name || !nm || !*nm) nm = "./";
+
+    dp = opendir(nm);
+    if (!dp) {
+        perror("Couldn't open directory");
+        return nil;
+    }
+
+    lisp r = nil;
+    while ((ep = readdir(dp)))
+        r = cons(mkstring(ep->d_name), r);
+    (void)closedir(dp);
+    return r;
+}
+
 PRIM at(lisp* envp, lisp spec, lisp f) {
     int c = clock_ms();
     int w = getint(spec);
@@ -3087,7 +3107,7 @@ lisp lisp_init() {
     DEFPRIM(time, -1, time_);
 
     DEFPRIM(load, -3, load);
-    // DEFPRIM(directory, -1, directory);
+    DEFPRIM(directory, 1, directory);
 
     // debugging - http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Debugging-Aids.html 
     // http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Command_002dLine-Debugger.html#Command_002dLine-Debugger
