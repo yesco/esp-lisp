@@ -155,6 +155,10 @@ static inline lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval);
 void error(char* msg);
 void run(char* s, lisp* envp);
 
+PRIM fundef(lisp f);
+PRIM funenv(lisp f);
+PRIM funame(lisp f);
+
 lisp* global_envp = NULL;
 
 // big value ok as it's used mostly no inside evaluation but outside at toplevel
@@ -164,6 +168,14 @@ lisp* global_envp = NULL;
 // adding real debugging - http://software-lab.de/doc/tut.html#dbg
 static int traceGC = 0;
 static int trace = 0;
+
+static int level = 0;
+static int trace_level = 0;
+
+static void indent(int n) {
+    n *= 2;
+    while (n-- > 0) putchar(' ');
+}
 
 // handle errors, break
 jmp_buf lisp_break = {0};
@@ -976,68 +988,75 @@ PRIM primapply(lisp ff, lisp args, lisp* envp, lisp all, int noeval) {
     lisp (*e)(lisp x, lisp* envp) = (noeval && n > 0) ? noEval : evalGC;
     int an = abs(n);
 
-    // these special cases are redundant, can be done at general solution
-    // but for optimization we extracted them, it improves speed quite a lot
-    if (n == 2) { // eq/plus etc
-        lisp (*fp)(lisp,lisp) = GETPRIMFUNC(ff);
-        return (*fp)(e(car(args), envp), e(car(cdr(args)), envp)); // safe!
-    }
-    if (n == -3) { // if...
-        lisp (*fp)(lisp*,lisp,lisp,lisp) = GETPRIMFUNC(ff);
-        return (*fp)(envp, car(args), car(cdr(args)), car(cdr(cdr(args))));
-    }
-    if (n == -1) { // quote...
-        lisp (*fp)(lisp*,lisp) = GETPRIMFUNC(ff);
-        return (*fp)(envp, car(args));
-    }
-    if (n == 1) {
-        lisp (*fp)(lisp) = GETPRIMFUNC(ff);
-        return (*fp)(e(car(args), envp));
-    }
-    if (n == 3) {
-        lisp (*fp)(lisp,lisp,lisp) = GETPRIMFUNC(ff);
-        return (*fp)(e(car(args), envp), e(car(cdr(args)), envp), e(car(cdr(cdr(args))),envp));
-    }
-    if (n == -7) { // lambda, quite uncommon
-        lisp (*fp)(lisp*,lisp,lisp) = GETPRIMFUNC(ff);
-        return (*fp)(envp, args, all);
-    }
-
-    // don't do evalist, but allocate array, better for GC
-    if (1 && an > 0 && an <= 6) {
-        if (n < 0) an++; // add one for neval and initial env
-        lisp argv[an];
-        int i;
-        for(i = 0; i < an; i++) {
-            // if noeval, put env first
-            if (i == 0 && n < 0) { 
-  	        argv[0] = (lisp)envp;
-                continue;
-            }
-            lisp a = car(args);
-            if (a && n > 0) a = e(a, envp);
-            argv[i] = a;
-            args = cdr(args);
+    int dotrace = tracep(ff);
+    if (!dotrace) {
+        // For optimization these special cases improve speed a lot!
+        if (n == 2) { // eq/plus etc
+            lisp (*fp)(lisp,lisp) = GETPRIMFUNC(ff);
+            return (*fp)(e(car(args), envp), e(car(cdr(args)), envp)); // safe!
         }
-        lisp (*fp)() = GETPRIMFUNC(ff);
-        switch (an) {
-        case 1: return fp(argv[0]);
-        case 2: return fp(argv[0], argv[1]);
-        case 3: return fp(argv[0], argv[1], argv[2]);
-        case 4: return fp(argv[0], argv[1], argv[2], argv[3]);
-        case 5: return fp(argv[0], argv[1], argv[2], argv[3], argv[4]);
-        case 6: return fp(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
+        if (n == -3) { // if...
+            lisp (*fp)(lisp*,lisp,lisp,lisp) = GETPRIMFUNC(ff);
+            return (*fp)(envp, car(args), car(cdr(args)), car(cdr(cdr(args))));
+        }
+        if (n == -1) { // quote...
+            lisp (*fp)(lisp*,lisp) = GETPRIMFUNC(ff);
+            return (*fp)(envp, car(args));
+        }
+        if (n == 1) {
+            lisp (*fp)(lisp) = GETPRIMFUNC(ff);
+            return (*fp)(e(car(args), envp));
+        }
+        if (n == 3) {
+            lisp (*fp)(lisp,lisp,lisp) = GETPRIMFUNC(ff);
+            return (*fp)(e(car(args), envp), e(car(cdr(args)), envp), e(car(cdr(cdr(args))),envp));
+        }
+        if (n == -7) { // lambda, quite uncommon
+            lisp (*fp)(lisp*,lisp,lisp) = GETPRIMFUNC(ff);
+            return (*fp)(envp, args, all);
+        }
+
+        // don't do evalist, but allocate array, better for GC
+        if (1 && an > 0 && an <= 6) {
+            if (n < 0) an++; // add one for neval and initial env
+            lisp argv[an];
+            int i;
+            for(i = 0; i < an; i++) {
+                // if noeval, put env first
+                if (i == 0 && n < 0) { 
+                    argv[0] = (lisp)envp;
+                    continue;
+                }
+                lisp a = car(args);
+                if (a && n > 0) a = e(a, envp);
+                argv[i] = a;
+                args = cdr(args);
+            }
+            lisp (*fp)() = GETPRIMFUNC(ff);
+            switch (an) {
+            case 1: return fp(argv[0]);
+            case 2: return fp(argv[0], argv[1]);
+            case 3: return fp(argv[0], argv[1], argv[2]);
+            case 4: return fp(argv[0], argv[1], argv[2], argv[3]);
+            case 5: return fp(argv[0], argv[1], argv[2], argv[3], argv[4]);
+            case 6: return fp(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
+            }
         }
     }
     // above is all optimiziations
-
     // this is the old fallback solution, simple and works but expensive
+
     // prepare arguments
     if (n >= 0) {
         args = noeval ? args : evallist(args, envp);
     } else if (n > -7) { // -1 .. -7 no-eval lambda, put env first
         // TODO: for NLAMBDA this may not work...  may need a new lisp type
         args = cons(*envp, args);
+    }
+
+    if (dotrace) {
+        indent(trace_level++); printf("---> "); princ(funame(ff));
+        prin1(args); terpri();
     }
 
     lisp r;
@@ -1049,6 +1068,11 @@ PRIM primapply(lisp ff, lisp args, lisp* envp, lisp all, int noeval) {
         // with C calling convention it's ok, but maybe not most efficient...
         lisp (*fp)(lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp, lisp) = GETPRIMFUNC(ff);
         r = fp(car(a), car(b), car(c), car(d), car(e), car(f), car(g), car(h), car(i), car(j));
+    }
+
+    if (dotrace) {
+        indent(--trace_level); princ(r); printf(" <--- ");
+        prin1(funame(ff)); terpri();
     }
 
     return r;
@@ -1327,10 +1351,10 @@ PRIM _setqq_(lisp* envp, lisp name, lisp v) { return _setqq(envp, name, v); }
 
 inline PRIM _setbang(lisp* envp, lisp name, lisp v) {
     if (!symbolp(name)) { printf("set! of non symbol="); prin1(name); terpri(); error("set! of non atom: "); }
+    v = eval(v, envp);
     lisp bind = _setqqbind(envp, name, nil, 0);
     // TODO: evalGC? probably safe as steqqbind changed an existing env
     // eval using our own named binding to enable recursion
-    v = eval(v, envp);
     setcdr(bind, v);
 
     return v;
@@ -1955,11 +1979,6 @@ PRIM pp(lisp e) {
     return symbol("");
 }
 
-static void indent(int n) {
-    n *= 2;
-    while (n-- > 0) putchar(' ');
-}
-
 static lisp funcapply(lisp f, lisp args, lisp* envp, int noeval);
 
 // get value of var, or complain if not defined
@@ -2014,7 +2033,7 @@ inline lisp reduce_immediate(lisp x) {
     while (x && IS(x, immediate)) {
         lisp tofree = x;
 
-        if (trace) // make it visible
+        if (trace > 0) // make it visible
             x = evalGC(ATTR(thunk, x, e), &ATTR(thunk, x, env));
         else
             x = eval_hlp(ATTR(thunk, x, e), &ATTR(thunk, x, env));
@@ -2082,8 +2101,6 @@ static struct stack {
     lisp e;
     lisp* envp;
 } stack[MAX_STACK];
-
-static int level = 0;
 
 // TODO: because of tail call optimization, we can't tell where the error occurred as it's not relevant on the stack???
 PRIM print_detailed_stack() {
@@ -2175,6 +2192,35 @@ void print_env(lisp env) {
     terpri();
 }
 
+// prints env and stops at (nil . nil) binding (hides "globals")
+void print_args(lisp env, lisp f) {
+    printf(" (");
+    princ(funame(f));
+    lisp fargs = car(fundef(f));
+    // find varargs name
+    lisp varargs = fargs;
+    while (varargs && !symbolp(varargs)) varargs = cdr(varargs);
+
+    lisp xx = env;
+    while (xx && car(car(xx))) {
+        lisp b = car(xx);
+        lisp name = car(b);
+        if ((name && member(name, fargs)) || name == varargs) {
+            putchar(' ');
+            princ(name); putchar('='); princ(cdr(b));
+        }
+	xx = cdr(xx);
+    }
+    printf(") ");
+}
+
+// TODO: measure overhead!
+int tracep(lisp f) {
+    static lisp vb = 0;
+    if (!vb && global_envp) vb = getBind(global_envp, symbol("*TR"), 0);
+    return vb && cdr(vb) && member(funame(f), cdr(vb));
+}
+
 PRIM evalGC(lisp e, lisp* envp) {
     if (!e) return e;
     char tag = TAG(e);
@@ -2190,18 +2236,18 @@ PRIM evalGC(lisp e, lisp* envp) {
     // TODO: move this to function
     if (!blockGC && needGC()) {
         mymark(*envp);
-        if (trace) printf("%d STACK: ", level);
+        if (trace > 2) printf("%d STACK: ", level);
         int i;
         for(i=0; i<64; i++) {
             if (!stack[i].e) break;
             mymark(stack[i].e);
             mymark(*stack[i].envp);
-            if (trace) {
+            if (trace > 2) {
                 printf(" %d: ", i);
                 princ(stack[i].e);
             }
         }
-        if (trace) terpri();
+        if (trace > 2) terpri();
         mygc();
         // TODO: address growth?
         if (needGC()) {
@@ -2211,16 +2257,17 @@ PRIM evalGC(lisp e, lisp* envp) {
         kbhit();
     }
 
-    if (trace) { indent(level); printf("---> "); princ(e); terpri(); }
+    if (trace > 0) { indent(level); printf("---> "); princ(e); }
     level++;
     //if (trace) { indent(level+1); printf(" ENV= "); princ(env); terpri(); }
-    if (trace) print_env(*envp);
+    if (trace > 0) { print_args(*envp, car(e)); terpri(); }
 
     lisp r = eval_hlp(e, envp);
     r = reduce_immediate(r);
 
     --level;
-    if (trace) { indent(level); princ(r); printf(" <--- "); princ(e); terpri(); }
+    if (trace > 0) { indent(level); princ(r); printf(" <--- "); princ(e); }
+    if (trace > 0) { print_args(*envp, car(e)); terpri(); terpri(); }
 
     stack[level].e = nil;
     stack[level].envp = NULL;
@@ -2360,10 +2407,24 @@ static inline lisp funcapply(lisp f, lisp args, lisp* envp, int noeval) {
     lisp l = ATTR(thunk, f, e);
     //printf("FUNCAPPLY:"); princ(f); printf(" body="); princ(l); printf(" args="); princ(args); printf(" env="); princ(lenv); terpri();
     lisp fargs = car(l);
+
     // TODO: check if NLAMBDA!
     lenv = noeval ? bindList(fargs, args, lenv) : bindEvalList(fargs, args, envp, lenv);
     //printf("NEWENV: "); princ(lenv); terpri();
-    return progn(&lenv, cdr(l)); // tail recurse on rest
+
+    int dotrace = tracep(f);
+    if (dotrace) {
+        indent(trace_level++); printf("--->"); print_args(lenv, f); terpri();
+    }
+
+    if (!dotrace) return progn(&lenv, cdr(l)); // tail recurse on rest
+
+    lisp r = reduce_immediate(progn(&lenv, cdr(l)));
+    if (dotrace) {
+        indent(--trace_level); princ(r); printf(" <--- ");
+        prin1(funame(f)); terpri();
+    }
+    return r;
 }
 
 // TODO: evals it's arguments, shouldn't... 

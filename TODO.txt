@@ -1,2 +1,3 @@
 todo: how to make an "app", how to include lisp code, and c code? currently modify lisp.c
+todo: define one function that uses future defined function - some issue with scoping?
 
