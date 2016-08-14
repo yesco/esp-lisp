@@ -2977,9 +2977,9 @@ lisp lisp_init() {
     DEFPRIM(%, 2, mod);
 
     DEFPRIM(eq, 2, eq);
-    DEFPRIM(=, 2, eq);
     DEFPRIM(cmp, 2, cmp_);
     DEFPRIM(equal, 2, equal);
+    DEFPRIM(=, 2, equal);
     DEFPRIM(<, 2, lessthan);
 
     // all other <= > >= can be made from cmp
