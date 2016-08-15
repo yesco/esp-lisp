@@ -968,14 +968,17 @@ PRIM evallist(lisp e, lisp* envp) {
 
     lisp r = nil;
     lisp last = r;
+    lisp ee = cons(symbol("*GC"), r);
+    lisp safeenv = cons(ee, *envp);
     while (e) {
-      lisp a = eval(car(e), envp);
+      setcdr(ee, r);
+      lisp a = evalGC(car(e), &safeenv);
       lisp nw = cons(a, nil);
       if (!r) r = nw;
       setcdr(last, nw);
       last = nw;
       e = cdr(e);
-    }        
+    }
     return r;
 }
 
@@ -1204,16 +1207,17 @@ PRIM funcp(lisp a) { return IS(a, func) || IS(a, thunk) || IS(a, prim) ? t : nil
 PRIM plus(lisp *envp, lisp x) {
     int s = 0;
     while (x) {
-        s += getint(car(x));
+        s += getint(evalGC(car(x), envp));
         x = cdr(x);
     }
     return mkint(s);
 }
-
+// because evallist is expensive, these can be quite expensive
+// better not build up intermidate structure... thats why -7 (no eval)
 PRIM times(lisp *envp, lisp x) {
     int p = 1;
     while (x) {
-        p *= getint(car(x));
+        p *= getint(evalGC(car(x), envp));
         x = cdr(x);
     }
     return mkint(p);
@@ -2397,8 +2401,9 @@ static inline lisp bindList(lisp fargs, lisp args, lisp env) {
 
 static inline lisp bindEvalList(lisp fargs, lisp args, lisp* envp, lisp extend) {
     while (fargs) {
-        // This eval cannot be allowed to GC! (since it's part of building a cons structure
         if (symbolp(fargs)) return cons(cons(fargs, evallist(args, envp)), extend);
+        // This eval cannot be allowed to GC! (since it's part of building a cons structure
+        // TODO: protect ala evallist
         lisp b = cons(car(fargs), eval(car(args), envp));
         extend = cons(b, extend);
         fargs = cdr(fargs);
@@ -2410,8 +2415,9 @@ static inline lisp bindEvalList(lisp fargs, lisp args, lisp* envp, lisp extend) 
 static inline lisp letevallist(lisp args, lisp* envp, lisp extend) {
     while (args) {
         lisp one = car(args);
-        lisp r = eval(car(cdr(one)), envp);
         // This eval cannot be allowed to GC! (since it's part of building a cons structure
+        // TODO: protect ala evallist
+        lisp r = eval(car(cdr(one)), envp);
         extend = cons(cons(car(one), r), extend);
         args = cdr(args);
     }
@@ -3135,9 +3141,9 @@ lisp lisp_init() {
     DEFPRIM(func?, 1, funcp);
 
     // mathy stuff
-    DEFPRIM(+, 7, plus);
+    DEFPRIM(+, -7, plus);
     DEFPRIM(-, 2, minus);
-    DEFPRIM(*, 7, times);
+    DEFPRIM(*, -7, times);
     DEFPRIM(/, 2, divide);
     DEFPRIM(%, 2, mod);
 
