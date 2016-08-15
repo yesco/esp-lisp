@@ -1,11 +1,30 @@
-;; lisp envirnoment function/debugging
+;; lisp envirnoment functions
+;; consider moving to C as it takes no heap space!
 
-(de filter (p l)
-  (cond ((null? l) l)
-        ((p (car l)) (cons (car l) (filter p (cdr l))))
-        (t (filter p (cdr l))) ) )
-  
-(de intern (s) (read s))
+(define intern read)
+
+; tail recursive "efficent" recurse
+(de reverse (l a)
+  (if (null? l) a
+     (reverse (cdr l) (cons (car l) a))))
+
+; fixes: (append2 '(a) 'b) => (a b)
+(de fixend (a) 
+  (cond ((null? a) a)
+        ((atom? a) (cons a))
+        (t a)))
+
+(de append2 (a b)
+  (cond ((null? a) (fixend b))
+        ((null? b) a)
+        ((atom? a) (cons a (fixend b)))
+        (t (cons (car a) (append2 (cdr a) b)))))
+
+(de append L
+  (if (null? L) nil
+     (append2 (car L) (apply append (cdr L)))))
+
+;; tracing functions
 
 (define *TR)
 (de trace (f)

@@ -1071,8 +1071,8 @@ PRIM primapply(lisp ff, lisp args, lisp* envp, lisp all, int noeval) {
     }
 
     if (dotrace) {
-        indent(--trace_level); princ(r); printf(" <--- ");
-        prin1(funame(ff)); terpri();
+        indent(--trace_level); printf("<--- ");
+        prin1(funame(ff)); printf(" ==> "); princ(r); terpri();
     }
 
     return r;
@@ -1393,7 +1393,6 @@ PRIM de(lisp* envp, lisp namebody) {
 
 lisp reduce_immediate(lisp x);
 
-// not apply does not evaluate it's arguments
 PRIM apply(lisp f, lisp args) {
     // TODO: for now, block GC as args could have been built out of thin air!
     blockGC++; 
@@ -1420,6 +1419,34 @@ PRIM map(lisp f, lisp r) {
         r = cdr(r);
     }
     return nil;
+}
+
+PRIM filter(lisp p, lisp l) {
+    if (!l || !p) return l;
+    lisp a = car(l); l = cdr(l);
+    if (p && apply(p, cons(a, nil))) return cons(a, filter(p, l));
+    return filter(p, l);
+}
+PRIM mapc(lisp m, lisp l) {
+    if (!l || !m) return l;
+    lisp a = car(l); l = cdr(l);
+    a = apply(m, cons(a, nil));
+    return cons(a, mapc(m, l));
+}
+PRIM reduce(lisp r, lisp l) {
+    if (!l || !r) return l;
+    lisp a = car(l); l = cdr(l);
+    if (!l) return a;
+    lisp b = car(l); l = cdr(l);
+    lisp v = apply(r, cons(a, cons(b, nil)));
+    return reduce(r, cons(v, l));
+}
+
+// efficent implementation of filtermapfilterreduce that doesn't build
+// intermidiate lists...
+// TODO: do it by merging, filter+mapc+filter+reduce into one function!
+PRIM filtermapfilterreduce(lisp p, lisp m, lisp mp, lisp r, lisp l) {
+    return reduce(r, filter(mp, mapc(m, filter(p, l))));
 }
 
 PRIM length(lisp r) {
@@ -2362,7 +2389,7 @@ PRIM let_star(lisp* envp, lisp all) {
 static inline lisp bindList(lisp fargs, lisp args, lisp env) {
     // TODO: not recurse!
     if (!fargs) return env;
-    if (symbolp(fargs)) return cons(fargs, args);
+    if (symbolp(fargs)) return cons(cons(fargs, args), env);
     lisp b = cons(car(fargs), car(args));
     // self tail recursion is "goto" - efficient
     return bindList(cdr(fargs), cdr(args), cons(b, env));
@@ -2420,9 +2447,10 @@ static inline lisp funcapply(lisp f, lisp args, lisp* envp, int noeval) {
     if (!dotrace) return progn(&lenv, cdr(l)); // tail recurse on rest
 
     lisp r = reduce_immediate(progn(&lenv, cdr(l)));
+
     if (dotrace) {
-        indent(--trace_level); princ(r); printf(" <--- ");
-        prin1(funame(f)); terpri();
+        indent(--trace_level); printf("<--- ");
+        prin1(funame(f)); printf(" ==> "); princ(r); terpri();
     }
     return r;
 }
@@ -2477,12 +2505,11 @@ PRIM load(lisp* envp, lisp name, lisp verbosity) {
         if (v > 1) printf("\n========================= %s :%d-%d>\n%s\n", filename, startno, endno, s);
         // TODO: way to make it silent?
         // TODO: also, abort on error?
-        lisp r = reads(s);
-        if (v > 1) print(r);
+        lisp e = reads(s);
         if (v > 1) printf("===>\n\n");
-        lisp o = evalGC(r, envp);
+        lisp r = evalGC(e, envp);
         if (v > 0) {
-          prin1(o);
+          prin1(r);
           terpri();
         }
         //printf("\n------------------------\n\n");
@@ -3161,6 +3188,9 @@ lisp lisp_init() {
     DEFPRIM(member, 2, member);
     DEFPRIM(mapcar, 2, mapcar);
     DEFPRIM(map, 2, map);
+    DEFPRIM(filter, 2, filter);
+    DEFPRIM(reduce, 2, reduce);
+    DEFPRIM(filtermapfilterreduce, 5, filtermapfilterreduce);
     DEFPRIM(quote, -1, _quote);
     // DEFPRIM(quote, -7, quote); // TODO: consider it to quote list?
     // DEFPRIM(list, 7, listlist);
