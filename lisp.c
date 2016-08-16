@@ -3151,7 +3151,7 @@ lisp lisp_init() {
 
     // enable to observer startup sequence
     if (1) {
-        char* f = readline("start lisp>", 2);
+        char* f = readline("PRESS RETURN>", 2);
         if (f) {
             verbose = (f[0] != 0);
             free(f);
@@ -3353,11 +3353,15 @@ lisp lisp_init() {
     return env;
 }
 
+void about() {
+    printf("\n2016 (c) Jonas S Karlsson under MPL 2.0\n");
+    printf("Read more on https://github.com/yesco/esp-lisp/\n");
+    printf("Welcome to esp-lisp! Type 'help' for help.\n");
+}
+
 void help(lisp* envp) {
-    printf("\n\nWelcome to esp-lisp!\n");
-    printf("2016 (c) Jonas S Karlsson under MPL 2.0\n");
-    printf("Read more on https://github.com/yesco/esp-lisp/\n\n");
-    printf("Global/SYMBOLS: ");
+    about();
+    printf("\nGlobal/SYMBOLS: ");
     PRINT((syms (lambda (x) (princ x) (princ " "))));
     printf("\nCOMMANDS: help/trace on/trace off/gc on/gc off/wifi SSID PSWD/wget SERVER URL/mem EXPR/quit/exit\n\n");
     printf("CTRL-C: to break execution, CTRL-T: shows current time/load status, CTRL-D: to exit\n\n");
@@ -3548,8 +3552,7 @@ int lispreadchar(char *chp) {
 }
 
 void readeval(lisp* envp) {
-    help(envp);
-
+    about();
     while(1) {
         global_envp = envp; // allow idle to gc
         char* ln = readline_int("lisp> ", READLINE_MAXLEN, lispreadchar);
