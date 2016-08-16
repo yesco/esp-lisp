@@ -1375,9 +1375,9 @@ static inline int tracep(lisp f) {
 // 3. setq ??? (allow to define?)
 inline lisp _setqqbind(lisp* envp, lisp name, lisp v, int create) {
     lisp bind = getBind(envp, name, create);
-    printf("SETQBIND: found "); princ(name); putchar(' '); princ(bind); terpri();
+    //    printf("SETQBIND: found "); princ(name); putchar(' '); princ(bind); terpri();
     if (!bind) {
-        printf("SETQBIND: "); princ(name); putchar(' '); princ(bind); terpri();
+        //printf("SETQBIND: "); princ(name); putchar(' '); princ(bind); terpri();
         bind = cons(name, nil);
         *envp = cons(bind, *envp);
     }
