@@ -1356,9 +1356,8 @@ lisp getBind(lisp* envp, lisp name, int create);
 // - if function return 0 directly still 5% overhead
 // ==> other sourced of changes that slowed down... (like evallist)
 static inline int tracep(lisp f) {
-    return 0;
     static lisp vb = 0;
-    if (!vb && global_envp) vb = getBind(global_envp, symbol("*TR"), 0);
+    if (!vb && global_envp) vb = getBind(global_envp, symbol("*TR"), 1);
     lisp x = cdr(vb);
     if (!vb || !x) return 0;
     lisp fn = funame(f);
