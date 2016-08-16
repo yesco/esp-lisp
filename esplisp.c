@@ -26,7 +26,11 @@
 
 #include <esp/uart.h>
 
+#include "esp_spiffs.h"
+#include "spiffs.h"
+
 #include "lisp.h"
+
 
 int startTask, afterInit;
 
@@ -249,6 +253,11 @@ void user_init(void) {
 
     sdk_uart_div_modify(0, UART_CLK_FREQ / 115200);
     
+    // enable file system
+    esp_spiffs_init();
+    esp_spiffs_mount();
+
+    // disable buffering
     setbuf(stdin, NULL);
     setbuf(stdout, NULL);
 
@@ -274,11 +283,6 @@ struct dirent* readdir(DIR* dp) {
 
 int closedir(DIR* dp) {
     return 0;
-}
-
-int process_file(char* filename, process_input process) {
-    error("process_file: not implemented!");
-    return -1;
 }
 
 void exit(int e) {

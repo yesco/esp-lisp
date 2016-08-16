@@ -55,6 +55,8 @@ lisp quote(lisp x);
 lisp nil;
 lisp t;
 lisp LAMBDA;
+
+// TODO: move out
 lisp _FREE_;
 lisp ATSYMBOL;
 

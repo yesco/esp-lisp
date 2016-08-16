@@ -1,8 +1,8 @@
 /* Distributed under Mozilla Public Licence 2.0   */
 /* https://www.mozilla.org/en-US/MPL/2.0/         */
 /* 2016-08-14 (C) Jonas S Karlsson, jsk@yesco.org */
-/* "test" driver for "unix"                       */
-/* provides alt implementations to esplisp.c      */
+/*            "test" driver for "unix"            */
+/*    provides alt implementations to esplisp.c   */
 
 #include <stdio.h>
 #include <time.h>
@@ -134,62 +134,6 @@ int nonblock_getch() {
     }
 
     return r;
-}
-
-#define MAXLINE 1024
-
-int iscomment(char* s) {
-    while (s && *s && isspace(*s++));
-    return (s && *s == ';');
-}
-
-int process_file(char* filename, process_input process) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        perror(filename);
-        return -1;
-    }
-
-    char* input = calloc(MAXLINE, 1);
-    int sz = 0;
-    int len = 0;
-
-    char line[MAXLINE] = {0};
-    int lineno = 0;
-    int startno = 0;
-
-    int end = 0;
-    do {
-        // printf("%s.%d: %s", filename, lineno, line);
-
-	// chunk finished (non-empty line with some input)
-	if (end || !isspace(line[0])) {
-            process(input, filename, startno, lineno - 1);
-	    input[0] = 0;
-            len = 0;
-	    startno = lineno; 
-        }
-
-	if (end) break;
-
-        // append line
-	// TODO: move comment handling to reader!!!
-	if (line[0] && !iscomment(line)) {
-            if (sz < len + strlen(line) + 1) {
-                sz += 1024; 
-                input = realloc(input, sz);
-	    }
-            strcat(input+len, line); // safe!
-            len += strlen(line);
-        }
-
-	end = !fgets(line, sizeof(line) - 1, file);
-        lineno++;
-    } while(1);
-
-    free(input);
-    fclose(file);
-    return 0;
 }
 
 //////////////////////////////////////////////////////////////////////

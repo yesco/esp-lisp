@@ -1,9 +1,16 @@
+/* Distributed under Mozilla Public Licence 2.0   */
+/* https://www.mozilla.org/en-US/MPL/2.0/         */
+/* 2016-08-16 (C) Jonas S Karlsson, jsk@yesco.org */
+/*         common code for all platforms          */
+
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <errno.h>
 #include <sys/types.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <ctype.h>
 
 #ifndef UNIX
  #include "FreeRTOS.h"
@@ -317,3 +324,59 @@ int wget(wget_data* data, char* url, char* server) {
     return 0;
 }
 
+int iscomment(char* s) {
+    while (s && *s && isspace(*s++));
+    return (s && *s == ';');
+}
+
+// line is increased in increments of this
+#define MAXLINE 1024
+
+int process_file(char* filename, process_input process) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        perror(filename);
+        return -1;
+    }
+
+    char* input = calloc(MAXLINE, 1);
+    int sz = 0;
+    int len = 0;
+
+    char line[MAXLINE] = {0};
+    int lineno = 0;
+    int startno = 0;
+
+    int end = 0;
+    do {
+        // printf("%s.%d: %s", filename, lineno, line);
+
+	// chunk finished (non-empty line with some input)
+	if (end || !isspace(line[0])) {
+            process(input, filename, startno, lineno - 1);
+	    input[0] = 0;
+            len = 0;
+	    startno = lineno; 
+        }
+
+	if (end) break;
+
+        // append line
+	// TODO: move comment handling to reader!!!
+	if (line[0] && !iscomment(line)) {
+            if (sz < len + strlen(line) + 1) {
+                sz += MAXLINE; 
+                input = realloc(input, sz);
+	    }
+            strcat(input+len, line); // safe!
+            len += strlen(line);
+        }
+
+	end = !fgets(line, sizeof(line) - 1, file);
+        lineno++;
+    } while(1);
+
+    free(input);
+    fclose(file);
+    return 0;
+}

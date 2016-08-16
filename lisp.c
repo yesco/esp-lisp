@@ -1333,7 +1333,7 @@ inline lisp getBind(lisp* envp, lisp name, int create) {
 
     // if we're at top level create a global binding and entry in the hashtable
     if (create && envp == global_envp) return hashsym(name, NULL, 0, create);
-    //    if (create) return nil;
+    if (create) return nil;
 
     // first search local lexical env
     lisp bind = assoc(name, *envp);
@@ -1356,6 +1356,7 @@ lisp getBind(lisp* envp, lisp name, int create);
 // - if function return 0 directly still 5% overhead
 // ==> other sourced of changes that slowed down... (like evallist)
 static inline int tracep(lisp f) {
+    return 0;
     static lisp vb = 0;
     if (!vb && global_envp) vb = getBind(global_envp, symbol("*TR"), 0);
     lisp x = cdr(vb);
@@ -2560,8 +2561,26 @@ PRIM load(lisp* envp, lisp name, lisp verbosity) {
     }
 
     int r = process_file(filename, evalIt);
-    return mkint(r);
+    return r ? nil : name;
 }
+
+PRIM docs() {
+    FILE* f = fopen("lisp.hlp", "r");
+    if (!f) {
+        perror("lisp.hlp");
+        return nil;
+    }
+
+    char line[257];
+    do {
+        if (!fgets(line, sizeof(line)-1, f)) break;
+        puts(line);
+    } while (1);
+
+    fclose(f);
+    return t;
+}
+
 
 PRIM directory(lisp name) {
     DIR *dp;
@@ -3290,6 +3309,7 @@ lisp lisp_init() {
 
     DEFPRIM(load, -3, load);
     DEFPRIM(directory, 1, directory);
+    DEFPRIM(docs, 0, docs);
 
     // debugging - http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Debugging-Aids.html 
     // http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Command_002dLine-Debugger.html#Command_002dLine-Debugger
