@@ -48,6 +48,18 @@
 //
 //   slight increase if change the MAX_ALLOC to 512 but it keeps 17K free! => 4180ms
 
+// We've slowed down some with adding the evallist/plus/times
+// and trace functionality:
+// > git checkout f871de73834340edb3fa5b26d49e43e373647f9b
+//   ./opt
+//   lisp> (time (fibo 34))
+//   3 times, avg = 7015
+// NOW
+//   ./opt
+//   lisp> (time (fibo 34))
+//   3 times, avg = 7671
+
+
 // 20151121: (time (fibo 24)) (5170 . xxx)
 // 
 // (fibo 24)
@@ -982,6 +994,8 @@ PRIM evallist(lisp e, lisp* envp) {
     return r;
 }
 
+static inline int tracep(lisp f);
+
 // dummy function that doesn't eval, used instead of eval
 static PRIM noEval(lisp x, lisp* envp) { return x; }
 
@@ -1099,7 +1113,6 @@ static inline lisp mkimmediate(lisp e, lisp env) {
     r->env = env;
     return (lisp)r;
 }
-
 
 // these are formed by evaluating a lambda
 PRIM mkfunc(lisp e, lisp env) {
@@ -1310,22 +1323,51 @@ PRIM equal(lisp a, lisp b) {
     return cmp(a, b) ? nil : t;
 }
 
-PRIM lessthan(lisp a, lisp b) {
-    return cmp(a, b) < 0 ? t : nil;
-}
+PRIM lt (lisp a, lisp b) { return cmp(a, b) <  0 ? t : nil; }
+PRIM lte(lisp a, lisp b) { return cmp(a, b) <= 0 ? t : nil; }
+PRIM gt (lisp a, lisp b) { return cmp(a, b) >  0 ? t : nil; }
+PRIM gte(lisp a, lisp b) { return cmp(a, b) >= 0 ? t : nil; }
 
 inline lisp getBind(lisp* envp, lisp name, int create) {
     //printf("GETBIND: envp=%u global_envp=%u ", (unsigned int)envp, (unsigned int)global_envp); princ(name); terpri();
-    if (create && envp == global_envp) return hashsym(name, NULL, 0, create);
-    if (create) return nil;
 
+    // if we're at top level create a global binding and entry in the hashtable
+    if (create && envp == global_envp) return hashsym(name, NULL, 0, create);
+    //    if (create) return nil;
+
+    // first search local lexical env
     lisp bind = assoc(name, *envp);
     if (bind) return bind;
 
-    // check "global"
+    // second search global env (stored in a hashtable)
     return hashsym(name, NULL, 0, 0); // not create, read only
 }
+// magic, this "instantiates" an inline function!
 lisp getBind(lisp* envp, lisp name, int create);
+
+// TODO: measure overhead! (compare to: f871de73834340edb3fa5b26d49e43e373647f9b)
+// (time (fibo 34))
+// - before: 6973
+// - after but nothing in list: 7729
+// - 3 items check make it 600 ms slower
+// - 6 items -> 1300 ms slower...
+//
+// - this function adds maybe 10% overhead
+// - if function return 0 directly still 5% overhead
+// ==> other sourced of changes that slowed down... (like evallist)
+static inline int tracep(lisp f) {
+    static lisp vb = 0;
+    if (!vb && global_envp) vb = getBind(global_envp, symbol("*TR"), 0);
+    lisp x = cdr(vb);
+    if (!vb || !x) return 0;
+    lisp fn = funame(f);
+    // inlined member 3 items 3000 ms overhead -> 600 ms!
+    while (x) {
+        if (fn == car(x)) return 1;
+        x = cdr(x);
+    }
+    return 0;
+}
 
 // like setqq but returns binding, used by setXX
 // 1. define, de - create binding in current environment
@@ -1333,7 +1375,9 @@ lisp getBind(lisp* envp, lisp name, int create);
 // 3. setq ??? (allow to define?)
 inline lisp _setqqbind(lisp* envp, lisp name, lisp v, int create) {
     lisp bind = getBind(envp, name, create);
+    printf("SETQBIND: found "); princ(name); putchar(' '); princ(bind); terpri();
     if (!bind) {
+        printf("SETQBIND: "); princ(name); putchar(' '); princ(bind); terpri();
         bind = cons(name, nil);
         *envp = cons(bind, *envp);
     }
@@ -2052,7 +2096,7 @@ static inline lisp eval_hlp(lisp e, lisp* envp) {
         // maybe must search all list till find null, then can look on symbol :-(
         // but that's everytime? actually, not it's a lexical scope!
         // TODO: only replace if not found in ENV and is on an SYMBOL!
-        if (symbolp(orig) && eq(funame(f), orig))
+        if (SYMP(orig) && eq(funame(f), orig))
             setcar(e, f);
     }
 
@@ -2245,13 +2289,6 @@ void print_args(lisp env, lisp f) {
     printf(") ");
 }
 
-// TODO: measure overhead!
-int tracep(lisp f) {
-    static lisp vb = 0;
-    if (!vb && global_envp) vb = getBind(global_envp, symbol("*TR"), 0);
-    return vb && cdr(vb) && member(funame(f), cdr(vb));
-}
-
 PRIM evalGC(lisp e, lisp* envp) {
     if (!e) return e;
     char tag = TAG(e);
@@ -2393,7 +2430,7 @@ PRIM let_star(lisp* envp, lisp all) {
 static inline lisp bindList(lisp fargs, lisp args, lisp env) {
     // TODO: not recurse!
     if (!fargs) return env;
-    if (symbolp(fargs)) return cons(cons(fargs, args), env);
+    if (SYMP(args)) return cons(cons(fargs, args), env);
     lisp b = cons(car(fargs), car(args));
     // self tail recursion is "goto" - efficient
     return bindList(cdr(fargs), cdr(args), cons(b, env));
@@ -2401,7 +2438,7 @@ static inline lisp bindList(lisp fargs, lisp args, lisp env) {
 
 static inline lisp bindEvalList(lisp fargs, lisp args, lisp* envp, lisp extend) {
     while (fargs) {
-        if (symbolp(fargs)) return cons(cons(fargs, evallist(args, envp)), extend);
+        if (SYMP(fargs)) return cons(cons(fargs, evallist(args, envp)), extend);
         // This eval cannot be allowed to GC! (since it's part of building a cons structure
         // TODO: protect ala evallist
         lisp b = cons(car(fargs), eval(car(args), envp));
@@ -2427,8 +2464,9 @@ static inline lisp letevallist(lisp args, lisp* envp, lisp extend) {
 static inline lisp letstarevallist(lisp args, lisp* envp, lisp extend) {
     while (args) {
         lisp one = car(args);
-        lisp r = eval(car(cdr(one)), &extend);
         // This eval cannot be allowed to GC! (since it's part of building a cons structure
+        // TODO: protect ala evallist
+        lisp r = eval(car(cdr(one)), &extend);
         extend = cons(cons(car(one), r), extend);
         args = cdr(args);
     }
@@ -2461,7 +2499,6 @@ static inline lisp funcapply(lisp f, lisp args, lisp* envp, int noeval) {
     return r;
 }
 
-// TODO: evals it's arguments, shouldn't... 
 // TODO: prim apply/funcapply may return immediate... (so users should call apply instead)
 static inline lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval) {
     int tag = TAG(f);
@@ -3151,7 +3188,10 @@ lisp lisp_init() {
     DEFPRIM(cmp, 2, cmp_);
     DEFPRIM(equal, 2, equal);
     DEFPRIM(=, 2, equal);
-    DEFPRIM(<, 2, lessthan);
+    DEFPRIM(<, 2, lt);
+    DEFPRIM(<=, 2, lte);
+    DEFPRIM(>, 2, gt);
+    DEFPRIM(>=, 2, gte);
 
     // all other <= > >= can be made from cmp
 

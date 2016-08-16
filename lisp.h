@@ -34,7 +34,7 @@ typedef struct {
 #define GETCONS(x) ((conss*)(((unsigned int)x) & ~2))
 #define MKCONS(x) ((lisp)(((unsigned int)x) | 2))
 
-#define SYMP(x) ((((unsigned int)x) & 3) == 3)
+#define SYMP(x) ((((unsigned int)x) & 3) == 3) // true for HSYMP too!
 #define HSYMP(x) ((((unsigned int)x) & 0xff) == 0xff)
 
 lisp mkprim(char* name, int n, void *f);

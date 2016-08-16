@@ -1,10 +1,5 @@
 ;; Scheme compatibly layer
 
-; math functions
-(de <= (a b) (< (cmp a b) 1)
-(de > (a b) (< (cmp b a) 0)
-(de >= (a b) (< (cmp b a) 1)
-
 ; string functions
 (define string< <)
 (define string> >)
