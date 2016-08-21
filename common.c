@@ -348,13 +348,16 @@ int process_file(void* envp, char* filename, process_input process, int verbosit
     int startno = 0;
 
     int end = 0;
+    int ret = 0;
     do {
         // printf("%s.%d: %s", filename, lineno, line);
 
 	// chunk finished (non-empty line with some input)
 	if (end || !isspace(line[0])) {
             if (startno > 0)
-                process(envp, input, filename, startno, lineno - 1, verbosity);
+                ret = process(envp, input, filename, startno, lineno - 1, verbosity);
+            //printf("\n--------------RET=%d\n", ret);
+            if (ret == -1) break;
 	    input[0] = 0;
             len = 0;
 	    startno = lineno; 
@@ -379,5 +382,5 @@ int process_file(void* envp, char* filename, process_input process, int verbosit
 
     free(input);
     fclose(file);
-    return 0;
+    return ret;
 }

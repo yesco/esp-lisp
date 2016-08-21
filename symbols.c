@@ -259,7 +259,6 @@ lisp hashsym(lisp sym, char* optionalString, int len, int create_binding) {
         return MKCONS(s);
     } else if (!create_binding) {
         printf("%% Symbol unbound: "); princ(sym);
-        printf("\nUse (define var val) to define binding in relevant scope first!\n");
         error("%% Symbol unbound"); // this will show stack and go back toplevel
         return nil;
     } else {

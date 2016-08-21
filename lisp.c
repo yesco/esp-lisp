@@ -662,6 +662,11 @@ PRIM cons(lisp a, lisp b) {
     return MKCONS(c);
 }
 
+PRIM recons(lisp a, lisp b, lisp ab) {
+    if (a == car(ab) && b == cdr(ab)) return ab;
+    return cons(a, b);
+}
+
 // inline works on both unix/gcc and c99 for esp8266
 inline PRIM car(lisp x) { return CONSP(x) ? GETCONS(x)->car : nil; }
 inline PRIM cdr(lisp x) { return CONSP(x) ? GETCONS(x)->cdr : nil; }
@@ -1353,7 +1358,7 @@ inline lisp getBind(lisp* envp, lisp name, int create) {
     //printf("GETBIND: envp=%u global_envp=%u ", (unsigned int)envp, (unsigned int)global_envp); princ(name); terpri();
 
     // if we're at top level create a global binding and entry in the hashtable
-    if (create && envp == global_envp) return hashsym(name, NULL, 0, create);
+    if (create && envp && global_envp && *envp == *global_envp) return hashsym(name, NULL, 0, create);
     if (create) return nil;
 
     // first search local lexical env
@@ -2554,25 +2559,43 @@ PRIM delay(lisp ms) {
 // 3 = 2 + print header with line number before each chunk. Good for debugging
 
 PRIM load(lisp* envp, lisp name, lisp verbosity) {
+    lisp* savedenvp = global_envp;
+    global_envp = envp;
+
     char* filename = getstring(evalGC(name, envp));
     verbosity = evalGC(verbosity, envp);
     int v = getint(verbosity);
     if (v > 0) printf("\n========================= %s\n", filename);
 
     // no gcc style innner functions with outer variables.. .:-(
-    void evalIt(void* p, char* s, char* filename, int startno, int endno, int v) {
+    int evalIt(void* p, char* s, char* filename, int startno, int endno, int v) {
         if (!s || !s[0] || s[0] == ';') return;
         if (v > 1) printf("\n========================= %s :%d-%d>\n%s\n", filename, startno, endno, s);
         lisp* envp = p;
-        lisp e = reads(s);
-        lisp r = evalGC(e, envp);
-        if (v > 0) {
-          prin1(r);
-          terpri();
+        jmp_buf saved;
+        memcpy(&saved, &lisp_break, sizeof(saved));
+        if (setjmp(lisp_break) == 0) {
+            lisp e = reads(s);
+            lisp r = evalGC(e, envp);
+            if (v > 0) {
+                prin1(r);
+                terpri();
+            }
+            memcpy(&lisp_break, &saved, sizeof(saved));
+        } else {
+            fprintf(stderr, "\n%%======ERROR IN SCRIPT/LOAD====== %s :%d-%d>\n%s", filename, startno, endno, s);
+            memcpy(&lisp_break, &saved, sizeof(saved));
+            return -1;
         }
+        return 0;
     }
 
     int r = process_file(envp, filename, evalIt, v);
+    global_envp = savedenvp;
+
+    if (v > 0 && !r) printf("\n==========DONE=========== %s\n", filename);
+    if (r < 0) error("%%failure running script, aborted...");
+
     return r ? nil : name;
 }
 
@@ -3252,6 +3275,7 @@ lisp lisp_init() {
 
     // cons/list
     DEFPRIM(cons, 2, cons);
+    DEFPRIM(recons, 3, recons);
     DEFPRIM(car, 1, car_);
     DEFPRIM(cdr, 1, cdr_);
     DEFPRIM(set-car!, 2, setcar);
@@ -3396,8 +3420,6 @@ lisp lisp_init() {
 
     dogc = 1;
 
-    load(&env, mkstring("init.lsp"), nil);
-
     print_memory_info( verbose ? 2 : 0 ); // summary of init usage
 
     return env;
@@ -3427,18 +3449,17 @@ void error(char* msg) {
     // restore output to stdout, if error inside print function we're screwed otherwise!
     writeputc = origputc;
 
+    terpri();
     if (error_level == 0) {
         error_level++;
-        if (level) { printf("\n%%%s\nBacktrace: ", msg); print_stack(); terpri(); }
+        if (level) { printf("%%%s\nBacktrace: ", msg); print_stack(); terpri(); }
         print_detailed_stack();
-        printf("\n%% %s\n", msg);
+        printf("%s -- see above!\n", msg);
         error_level--;
     } else {
         error_level = 0;
-        printf("\n%% error(): error inside error... recovering...\n");
+        printf("%% error(): error inside error... recovering...\n");
     }
-
-    printf("\n%%%% type 'help' to get help\n");
 
     if (memcmp(lisp_break, empty, sizeof(empty))) { // contains valid value
         // reset stack
@@ -3449,7 +3470,8 @@ void error(char* msg) {
         longjmp(lisp_break, 1);
         // does not continue!
     } else {
-        printf("\n%%%% error(): didn't get here as setjmp not called, continuing... possibly bad\n");
+        printf("%%%% error(): NOT inside setjmp, continuing, ...possibly bad\n");
+        // exit(77);
     }
 }
 
@@ -3465,6 +3487,8 @@ void run(char* s, lisp* envp) {
         // enableGC and kill stack
         blockGC = 0;
         level = 0;
+        trace_level = 0;
+        printf("%%%% type 'help' to get help\n");
     }
     // disable longjmp
     memset(lisp_break, 0, sizeof(lisp_break));
@@ -3602,7 +3626,9 @@ int lispreadchar(char *chp) {
 }
 
 void readeval(lisp* envp) {
+    run("(load \"init.lsp\")", envp);
     about();
+
     while(1) {
         global_envp = envp; // allow idle to gc
         char* ln = readline_int("lisp> ", READLINE_MAXLEN, lispreadchar);

@@ -19,7 +19,7 @@ void clear();
 char* readline(char* prompt, int maxlen);
 char* readline_int(char* prompt, int maxlen, int (*myreadchar)(char*));
 
-typedef void (*process_input)(void* envp, char* input, char* filename, int startno, int endno, int verbosity);
+typedef int (*process_input)(void* envp, char* input, char* filename, int startno, int endno, int verbosity);
 int process_file(void* envp, char* filename, process_input process, int verbosity);
 
 //////////////////////////////////////////////////////////////////////

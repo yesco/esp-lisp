@@ -42,15 +42,6 @@
 
 (de list-ref (clist i) (nth i clist))
 
-(de drop (xs n)
-  (if (eq n 0) xs
-    (drop (cdr xs) (- n 1))))
-
-(de take (xs n)
-  (cond ((null? xs) nil)
-        ((eq n 0) nil)
-        (t (cons (car xs) (take (cdr xs) (- n 1))))))
-
 (de or-list (L)
   (cond ((atom? L) L)
         ((null? (car L)) (or-list (cdr L)))
