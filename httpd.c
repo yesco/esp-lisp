@@ -152,6 +152,7 @@ static void response(int req, char* method, char* path) {
     static char* hello = "HELLO DUDE!\n";
     // TODO: loop until all of the string written?
     int ignore = write(req, hello, strlen(hello));
+    ignore++; // use it!
     printf("------------------------------ %s %s\n\n", method, path);
 }
 

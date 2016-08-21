@@ -2580,12 +2580,12 @@ PRIM cat(lisp fn) {
     return t;
 }
 
-PRIM directory(lisp name) {
+PRIM dir(lisp name) {
+    char* nm = getstring(name);
+    if (!name || !nm || !*nm) nm = "./";
+
     DIR *dp;
     struct dirent *ep;
-    char* nm = getstring(name);
-    printf("DIR>%s<\n", nm);
-    if (!name || !nm || !*nm) nm = "./";
 
     dp = opendir(nm);
     if (!dp) {
@@ -3306,8 +3306,41 @@ lisp lisp_init() {
     DEFPRIM(time, -1, time_);
 
     DEFPRIM(load, -3, load); // -3 to get env?
-    DEFPRIM(directory, 1, directory);
-    DEFPRIM(cat, 0, cat);
+    DEFPRIM(dir, 1, dir);
+    DEFPRIM(cat, 1, cat);
+
+/* TODO: http://clhs.lisp.se/Front/X_Mast_W.htm
+
+    // DEFPRIM(make-string-input-stream, 1, );
+    // DEFPRIM(with-input-from-string, 1, );
+    // DEFPRIM(with-open-file, 1, );
+    // DEFPRIM(with-open-stream, 1, );
+    // DEFPRIM(with-output-to-string, 1, );
+    // DEFPRIM(with-output-to-string, 1, );
+    DEFPRIM(open, 2, open_); // r, r+ w, w+, a, a+
+    // SCHEME
+    DEFPRIM(open-input-file, );
+    DEFPRIM(open-output-file, );
+    DEFPRIM(display);
+    DEFPRIM(newline);
+
+    DEFPRIM(close, 1, close_);
+    DEFPRIM(flush, 1, flush_);
+    //DEFPRIM(delete, 1, delete_);
+    //DEFPRIM(rename, 2, rename_);
+    DEFPRIM(seek, 2, seek_);    
+    DEFPRIM(pos, 1, pos_);    
+    DEFPRIM(fsinfo, 2, fsinfo);    
+
+    DEFPRIM(read-line, 1, readline_);
+    // maybe one write function? char/byte/lisp object
+    DEFPRIM(write-char, 1, writechar_);
+    DEFPRIM(write-byte, 1, writebyte_);
+    DEFPRIM(write-line, 1, writeline_);
+    DEFPRIM(write-string, 1, writeline_);
+    DEFPRIM(write-to-string, 1, write-to-string_);
+    DEFPRIM(read, 1, read_);
+*/
 
     // debugging - http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Debugging-Aids.html 
     // http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Command_002dLine-Debugger.html#Command_002dLine-Debugger

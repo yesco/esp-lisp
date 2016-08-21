@@ -123,12 +123,20 @@ void httpd_loop(int s);
 #else
   #define flash_memory ((unsigned char*)(0x40200000 + FS_ADDRESS))
 
-  typedef struct DIR {
-  } DIR;
+  #include "esp_spiffs.h"
+  #include "spiffs.h"
 
   struct dirent {
-      char d_name[20];
-  };
+      struct spiffs_dirent e;
+      char* d_name;
+      size_t fileSize;
+  } dirent;
+
+  typedef struct DIR {
+      spiffs_DIR d;
+      struct dirent dirent;
+  } DIR;
+
 
   DIR* opendir(char* path);
   struct dirent* readdir(DIR* dp);

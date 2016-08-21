@@ -270,18 +270,26 @@ void user_init(void) {
     xTaskCreate(lispTask, (signed char *)"lispTask", 2048, NULL, 2, NULL);
 }
 
-DIR dir;
-struct dirent dirent;
+// TODO malloc? otherwise can't open two at same time ;-)
 
 DIR* opendir(char* path) {
-    return &dir;
+    DIR* dir = malloc(sizeof(DIR));
+    SPIFFS_opendir(&fs, path, &dir->d);
+    return dir;
 }
 
 struct dirent* readdir(DIR* dp) {
-    return NULL;
+    struct spiffs_dirent *pe = &dp->dirent.e;
+    if (((pe = SPIFFS_readdir(&dp->d, pe)))) {
+       //  printf("%s [%04x] size:%i\n", pe->name, pe->obj_id, pe->size);
+       dp->dirent.d_name = (char*)pe->name;
+       dp->dirent.fileSize = pe->size;
+    }
+    return pe ? &dp->dirent : NULL;
 }
 
 int closedir(DIR* dp) {
+    SPIFFS_closedir(&dp->d);
     return 0;
 }
 
