@@ -75,10 +75,13 @@ During evalation
 
 ## how to build
 
+In the example below I "assume" you have a directory GIT where you checkout all your projects.
+
 ### I want to run it on my linux/cygwin, I have GCC
 
-- Get https://github.com/yesco/esp-lisp
-- esp-lisp> ./run
+- unix:GIT> git clone http://github.com/yesco/esp-lisp.git --recursive
+- unix:GIT> cd esp-lisp
+- unix:GIT/esp-lisp> ./run
 
 It'll compile and run it for you, you'll have a lisp prompt.
 
@@ -106,6 +109,13 @@ In a directory:
 - Get https://github.com/yesco/esp-lisp
 
 These will now be in the same directory.
+
+Create a file path-add-esp (one level up from esp-lisp).
+It should contain something like:
+
+          unix:GIT> cat path-add-esp
+          export PATH=/home/USER/...GIT/esp-open-sdk/xtensa-lx106-elf/bin:$PATH
+          unix:GIT> source path-add-esp
 
 - unix:esp-lisp> ./run
 
