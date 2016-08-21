@@ -37,10 +37,6 @@
 
 #include "compat.h"
 
-void clear() { // vt100
-     printf("[H[2J"); fflush(stdout);
-}
-
 char* readline_int(char* prompt, int maxlen, int (*myreadchar)(char*)) {
     if (prompt) {
         printf("%s", prompt);
@@ -383,4 +379,29 @@ int process_file(void* envp, char* filename, process_input process, int verbosit
     free(input);
     fclose(file);
     return ret;
+}
+
+#undef CTRL // shadows something from ttyefault.h (included termios.h)
+#define NO_MAIN
+#ifndef UNIX
+  #define OTA
+#endif
+#define BUFF_SIZE 1024
+#include "imacs/imacs.c"
+
+char* editor(char* s, char* title) {
+    imacs_buffer b;
+    imacs_init(&b, s, 0);
+    b.filename = title ? title : "esp-lisp-data";
+
+    maineditor(&b);
+    clear();
+
+    s = strdup(b.buff);
+
+    // TODO: a imacs_clean()?
+    free(b.buff);
+    b.buff = NULL;
+
+    return s;
 }

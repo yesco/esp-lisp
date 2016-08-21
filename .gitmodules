@@ -1,0 +1,3 @@
+[submodule "imacs"]
+	path = imacs
+	url = https://github.com/yesco/imacs.git

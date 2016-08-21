@@ -1298,6 +1298,10 @@ PRIM read_(lisp s) {
     }
 }
 
+PRIM edit(lisp s, lisp title) {
+    return mkstring(editor(getstring(s), getstring(title)));
+}
+
 // TODO: consider http://picolisp.com/wiki/?ArticleQuote
 PRIM _quote(lisp* envp, lisp x) { return x; }
 PRIM quote(lisp x) { return list(symbol("quote"), x, END); } // TODO: optimize
@@ -3332,6 +3336,7 @@ lisp lisp_init() {
     DEFPRIM(env, -7, _env);
 
     DEFPRIM(read, 1, read_);
+    DEFPRIM(edit, 1, edit);
 
     // TODO: consider introducting these that will create local bindings if no global exists, hmm bad?
     DEFPRIM(set, -2, _set);

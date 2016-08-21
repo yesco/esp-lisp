@@ -23,12 +23,12 @@ stty sane
 #cp tlisp.ccc tlisp.c && gcc -m32 -g -pg -DUNIX=1 tlisp.c common.c httpd.c symbols.c lisp.c imacs.c && time ./a.out ; rm tlisp.c
 
 echo "--- compiling ---"
-rm a.out opt
-cp tlisp.ccc tlisp.c && gcc -m32 -g -DUNIX=1 tlisp.c common.c httpd.c symbols.c lisp.c ; rm tlisp.c
+rm a.out opt esp-lisp
+cp tlisp.ccc tlisp.c && gcc -m32 -g -DUNIX=1 tlisp.c common.c httpd.c symbols.c lisp.c -o esp-lisp ; rm tlisp.c
 
 echo "--- running ---"
 pushd SPIFFS
-time ../a.out $*
+time ../esp-lisp $*
 stty sane
 popd
 
