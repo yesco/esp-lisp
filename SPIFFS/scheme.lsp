@@ -10,7 +10,7 @@
 (define symbol->string concat)
 (define string-append concat)
 (define string-concatenate concat)
-(define symbol?< string<)
+(define symbol< string<)
 
 ; misc/test
 (define else t)
@@ -40,21 +40,6 @@
 (define (cdaar x) (cdr (car (car x))))
 (define (cddar x) (cdr (cdr (car x))))
 
-(de sort (l lt)
-  (cond ((null? l) l)
-        (t (let* ((ab (split l lt (car l)))
-                  (a (sort (car ab)))
-                  (b (sort (cdr ab))) )
-              (merge a b lt)))))
-
-(de merge (a b lt)
-  (cond ((null? a) b)
-        ((null? b) a)
-        ((lt (car a) (car b))
-         (cons (car a) (merge (cdr a) b lt)) )
-        (t
-         (cons (car b) (merge a (cdr b) lt)) ) ) )
-
 (de list-ref (clist i) (nth i clist))
 
 (de drop (xs n)
@@ -65,5 +50,17 @@
   (cond ((null? xs) nil)
         ((eq n 0) nil)
         (t (cons (car xs) (take (cdr xs) (- n 1))))))
+
+(de or-list (L)
+  (cond ((atom? L) L)
+        ((null? (car L)) (or-list (cdr L)))
+        (t (car L))))
+
+; (map list '(1) '(a b c) '(d e f g h i))
+(de maphlp (f L)
+  (if (not (or-list L)) nil
+     (cons (apply f (mapcar car L)) (maphlp f (mapcar cdr L)))))
+
+(de map fL (maphlp (car fL) (cdr fL)))
 
 ; IO

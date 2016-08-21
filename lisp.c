@@ -1231,6 +1231,13 @@ PRIM numberp(lisp a) { return IS(a, intint) ? t : nil; } // TODO: extend with fl
 PRIM integerp(lisp a) { return IS(a, intint) ? t : nil; }
 PRIM funcp(lisp a) { return IS(a, func) || IS(a, thunk) || IS(a, prim) ? t : nil; }
 
+PRIM iota(lisp count, lisp start, lisp step) {
+    int c = getint(count);
+    if (c <= 0) return nil;
+    return cons(start?start:mkint(0),
+                iota(mkint(c-1), mkint(getint(start) + (step?getint(step):1)), step));
+}
+
 PRIM plus(lisp *envp, lisp x) {
     int s = 0;
     while (x) {
@@ -1371,7 +1378,7 @@ lisp getBind(lisp* envp, lisp name, int create);
 // ==> other sourced of changes that slowed down... (like evallist)
 static inline int tracep(lisp f) {
     static lisp vb = 0;
-    if (!vb && global_envp) vb = getBind(global_envp, symbol("*TR"), 0);
+    if (!vb && global_envp) vb = getBind(global_envp, symbol("*TR"), 1);
     lisp x = cdr(vb);
     if (!vb || !x) return 0;
     lisp fn = funame(f);
@@ -1468,14 +1475,7 @@ PRIM apply(lisp f, lisp args) {
     return x;
 }
 
-PRIM mapcar(lisp f, lisp r) {
-    if (!r || !consp(r) || !funcp(f)) return nil;
-    lisp v = apply(f, cons(car(r), nil));
-    // TOOD: remove recursion
-    return cons(v, mapcar(f, cdr(r)));
-}
-
-PRIM map(lisp f, lisp r) {
+PRIM mapc(lisp f, lisp r) {
     while (r && consp(r) && funcp(f)) {
         apply(f, cons(car(r), nil));
         r = cdr(r);
@@ -1489,11 +1489,11 @@ PRIM filter(lisp p, lisp l) {
     if (p && apply(p, cons(a, nil))) return cons(a, filter(p, l));
     return filter(p, l);
 }
-PRIM mapc(lisp m, lisp l) {
+PRIM mapcar(lisp m, lisp l) {
     if (!l || !m) return l;
     lisp a = car(l); l = cdr(l);
     a = apply(m, cons(a, nil));
-    return cons(a, mapc(m, l));
+    return cons(a, mapcar(m, l));
 }
 PRIM reduce(lisp r, lisp l) {
     if (!l || !r) return l;
@@ -1508,7 +1508,7 @@ PRIM reduce(lisp r, lisp l) {
 // intermidiate lists...
 // TODO: do it by merging, filter+mapc+filter+reduce into one function!
 PRIM filtermapfilterreduce(lisp p, lisp m, lisp mp, lisp r, lisp l) {
-    return reduce(r, filter(mp, mapc(m, filter(p, l))));
+    return reduce(r, filter(mp, mapcar(m, filter(p, l))));
 }
 
 PRIM length(lisp r) {
@@ -3209,6 +3209,7 @@ lisp lisp_init() {
     DEFPRIM(func?, 1, funcp);
 
     // mathy stuff
+    DEFPRIM(iota, 3, iota);
     DEFPRIM(+, -7, plus);
     DEFPRIM(-, 2, minus);
     DEFPRIM(*, -7, times);
@@ -3266,7 +3267,7 @@ lisp lisp_init() {
     DEFPRIM(assoc, 2, assoc);
     DEFPRIM(member, 2, member);
     DEFPRIM(mapcar, 2, mapcar);
-    DEFPRIM(map, 2, map);
+    DEFPRIM(mapc, 2, mapc);
     DEFPRIM(filter, 2, filter);
     DEFPRIM(reduce, 2, reduce);
     DEFPRIM(filtermapfilterreduce, 5, filtermapfilterreduce);

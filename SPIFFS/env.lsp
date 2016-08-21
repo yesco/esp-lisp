@@ -25,25 +25,13 @@
      (append2 (car L) (apply append (cdr L)))))
 
 ;; sorting
-
-(de merge (a b cmp)
+(de merge (a b lt)
   (cond ((null? a) b)
         ((null? b) a)
-        ((cmp (car a) (car b)) (cons (car a) (merge (cdr a) b cmp)))
-        (t (cons (car b) (merge a (cdr b) cmp)))))
-
-(define sort)
-
-(de qsort (a L cmp)
-  (if (null? L) (cons a)
-    (append
-      (sort (filter (lambda (x) (cmp x a)) L) cmp)
-      (list a)
-      (sort (filter (lambda (x) (not (cmp x a))) L) cmp))))
-
-(de sort (L f)
-  (if (null? L) nil
-    (qsort (car L) (cdr L) (or f <))))
+        ((lt (car a) (car b))
+         (cons (car a) (merge (cdr a) b lt)) )
+        (t
+         (cons (car b) (merge a (cdr b) lt)) ) ) )
 
 ;; tracing functions
 
@@ -55,4 +43,3 @@
 (de untrace (f)
   (if (func? f) (untrace (funame f))
      (set! *TR (filter (lambda (x) (not (eq f x))) *TR))))
-
