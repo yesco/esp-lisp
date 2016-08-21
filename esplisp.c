@@ -29,15 +29,29 @@
 #include "esp_spiffs.h"
 #include "spiffs.h"
 
-#include "lisp.h"
-
-
-int startTask, afterInit;
-
+#include "dht.h"
 #include "compat.h"
 
-void lispTask(void *pvParameters)
-{
+#include "lisp.h"
+
+int dht_read(int pin, int* temp, int* humid) {
+    // DHT sensors that come mounted on a PCB generally have
+    // pull-up resistors on the data pin.  It is recommended
+    // to provide an external pull-up resistor otherwise...
+    int16_t t = 0;
+    int16_t h = 0;
+                 
+    gpio_set_pullup(pin, false, false);
+
+    if (!dht_read_data(pin, &h, &t)) return -1;
+    printf("Humidity: %d%% Temp: %dC\n", h, t);
+    *temp = t;
+    *humid = h;
+    return 0;
+}
+
+int startTask, afterInit;
+void lispTask(void *pvParameters) {
     startTask = xPortGetFreeHeapSize();
 
     lisp env = lisp_init();
@@ -62,8 +76,7 @@ void lispTask(void *pvParameters)
     }
 }
 
-void recvTask(void *pvParameters)
-{
+void recvTask(void *pvParameters) {
     printf("Hello from recvTask!\r\n");
     xQueueHandle *queue = (xQueueHandle *)pvParameters;
     while(1) {

@@ -99,6 +99,9 @@ void httpd_loop(int s);
 // gpio/esp8266 hardware stuff
 
 #ifdef UNIX
+
+  #define dht_read(a,b,c) (1)
+
   #include <dirent.h>
 
   // dummy
@@ -121,6 +124,8 @@ void httpd_loop(int s);
   int sdk_spi_flash_read(int addr, uint32* data, int len);
 
 #else
+  int dht_read(int pin, int* temp, int* humid);
+
   #define flash_memory ((unsigned char*)(0x40200000 + FS_ADDRESS))
 
   #include "esp_spiffs.h"

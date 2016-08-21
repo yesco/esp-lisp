@@ -827,6 +827,12 @@ PRIM in(lisp pin) {
     return mkint(gpio_read(getint(pin)));
 }
 
+PRIM dht(lisp pin) {
+    int t, h;
+    if (dht_read(pin, &t, &h)) return nil;
+    return cons(mkint(t), mkint(h));
+}
+
 // CONTROL INTERRUPTS:
 // -------------------
 // (interrupt PIN 0)  : disable
@@ -2423,6 +2429,10 @@ PRIM lambda(lisp* envp, lisp all) {
     return mkfunc(all, *envp);
 }
 
+PRIM nlambda(lisp* envp, lisp all) {
+    return mkfunc(all, nil);
+}
+
 PRIM progn(lisp* envp, lisp all) {
     while (all && cdr(all)) {
         evalGC(car(all), envp);
@@ -2497,6 +2507,16 @@ static inline lisp funcapply(lisp f, lisp args, lisp* envp, int noeval) {
     lisp l = ATTR(thunk, f, e);
     //printf("FUNCAPPLY:"); princ(f); printf(" body="); princ(l); printf(" args="); princ(args); printf(" env="); princ(lenv); terpri();
     lisp fargs = car(l);
+
+    if (!lenv) { // !lenv) {
+        //printf("[funcapply NLAMBDA: "); prin1(f); putchar(' '); prin1(args);
+        //printf(" LENV="); prin1(lenv);
+        //printf(" ENV="); prin1(*envp);
+        //printf("]\n");
+        noeval = 1;
+        // put env of caller in front, similary to PRIM -7 function
+        args = cons(*envp, args);
+    }
 
     // TODO: check if NLAMBDA!
     lenv = noeval ? bindList(fargs, args, lenv) : bindEvalList(fargs, args, envp, lenv);
@@ -3214,12 +3234,15 @@ lisp lisp_init() {
     gc_cons_init();
     gc(NULL);
 
+    global_envp = envp;
+
     t = symbol("t");
     DEFINE(t, 1);
     ATSYMBOL = symbol("*at*");
     DEFINE(ATSYMBOL, nil);
 
     DEFPRIM(lambda, -7, lambda);
+    DEFPRIM(nlambda, -7, nlambda);
 
     // types
     DEFPRIM(null?, 1, nullp);
@@ -3336,6 +3359,7 @@ lisp lisp_init() {
     // hardware
     DEFPRIM(out, 2, out);
     DEFPRIM(in, 1, in);
+    DEFPRIM(dht, 1, dht);
     DEFPRIM(interrupt, 2, interrupt);
 
     // system stuff
