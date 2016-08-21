@@ -93,19 +93,22 @@
 #include <stdio.h>
 #include <errno.h>
 #include <setjmp.h>
-
 #ifndef UNIX
   #include "FreeRTOS.h"
 
   #define LOOP 99999
   #define LOOPS "99999"
   #define LOOPTAIL "(tail 99999 0)"
+
+// #include "esp/spi.h"
+
 #endif
 
 #ifdef UNIX
   #define LOOP 2999999
   #define LOOPS "2999999"
   #define LOOPTAIL "(tail 2999999 0)"
+
 #endif
 
 // use pointer to store some tag data, use this for exteded types
@@ -662,6 +665,17 @@ PRIM cons(lisp a, lisp b) {
 // inline works on both unix/gcc and c99 for esp8266
 inline PRIM car(lisp x) { return CONSP(x) ? GETCONS(x)->car : nil; }
 inline PRIM cdr(lisp x) { return CONSP(x) ? GETCONS(x)->cdr : nil; }
+
+PRIM nthcdr(lisp n, lisp l) {
+    int in = getint(n);
+    while (in-- > 0) l = cdr(l);
+    return l;
+}
+
+PRIM nth(lisp n, lisp l) {
+    if (getint(n) < 0) return nil;
+    return car(nthcdr(n, l));
+}
 
 int cons_count; // forward
 
@@ -3241,6 +3255,8 @@ lisp lisp_init() {
     DEFPRIM(cdr, 1, cdr_);
     DEFPRIM(set-car!, 2, setcar);
     DEFPRIM(set-cdr!, 2, setcdr);
+    DEFPRIM(nth, 2, nth);
+    DEFPRIM(nthcdr, 2, nthcdr);
 
     DEFPRIM(list, 7, _quote);
     DEFPRIM(length, 1, length);
@@ -3258,6 +3274,7 @@ lisp lisp_init() {
     // DEFPRIM(quote, -7, quote); // TODO: consider it to quote list?
     // DEFPRIM(list, 7, listlist);
 
+    // TODO: consider some functions - http://srfi.schemers.org/srfi-1/srfi-1.html
     DEFPRIM(let, -7, let);
     DEFPRIM(let*, -7, let_star);
     DEFPRIM(progn, -7, progn);
