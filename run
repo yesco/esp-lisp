@@ -27,8 +27,10 @@ rm a.out opt
 cp tlisp.ccc tlisp.c && gcc -m32 -g -DUNIX=1 tlisp.c common.c httpd.c symbols.c lisp.c ; rm tlisp.c
 
 echo "--- running ---"
-time ./a.out $*
+pushd SPIFFS
+time ../a.out $*
 stty sane
+popd
 
 echo "--- compiling opt ---"
 cp tlisp.ccc tlisp.c && gcc -m32 -O2 -DUNIX=1 tlisp.c common.c httpd.c symbols.c lisp.c -o opt ; rm tlisp.c

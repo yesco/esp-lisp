@@ -1298,7 +1298,7 @@ int cmp(lisp a, lisp b) {
         if (r) return 0;
         char taga = TAG(a), tagb = TAG(b);
         if (taga != tagb) return taga < tagb ? -2 : +2;
-        if (taga == intint_TAG) return a < b ? -1 : a > b ? +1 : 0;
+        if (taga == intint_TAG) return getint(a) < getint(b) ? -1 : a > b ? +1 : 0;
         if (taga == string_TAG) return strcmp(getstring(a), getstring(b));
         if (SYMP(a) && SYMP(b)) {
           char as[7] = {0}, bs[7] = {0}, *ap = NULL, *bp = NULL;
@@ -1357,7 +1357,7 @@ lisp getBind(lisp* envp, lisp name, int create);
 // ==> other sourced of changes that slowed down... (like evallist)
 static inline int tracep(lisp f) {
     static lisp vb = 0;
-    if (!vb && global_envp) vb = getBind(global_envp, symbol("*TR"), 1);
+    if (!vb && global_envp) vb = getBind(global_envp, symbol("*TR"), 0);
     lisp x = cdr(vb);
     if (!vb || !x) return 0;
     lisp fn = funame(f);
@@ -2538,35 +2538,35 @@ PRIM delay(lisp ms) {
 // 1 = 0 + print file header, echo result of each expression
 // 2 = 1 + print expression, arrow, result
 // 3 = 2 + print header with line number before each chunk. Good for debugging
+
 PRIM load(lisp* envp, lisp name, lisp verbosity) {
     char* filename = getstring(evalGC(name, envp));
-    int v = getint(evalGC(verbosity, envp));
+    verbosity = evalGC(verbosity, envp);
+    int v = getint(verbosity);
     if (v > 0) printf("\n========================= %s\n", filename);
 
-    void evalIt(char* s, char* filename, int startno, int endno) {
+    // no gcc style innner functions with outer variables.. .:-(
+    void evalIt(void* p, char* s, char* filename, int startno, int endno, int v) {
         if (!s || !s[0] || s[0] == ';') return;
         if (v > 1) printf("\n========================= %s :%d-%d>\n%s\n", filename, startno, endno, s);
-        // TODO: way to make it silent?
-        // TODO: also, abort on error?
+        lisp* envp = p;
         lisp e = reads(s);
-        if (v > 1) printf("===>\n\n");
         lisp r = evalGC(e, envp);
         if (v > 0) {
           prin1(r);
           terpri();
         }
-        //printf("\n------------------------\n\n");
-        //gc(envp); // NOT SAFE!!!?? filename dissapears!
     }
 
-    int r = process_file(filename, evalIt);
+    int r = process_file(envp, filename, evalIt, v);
     return r ? nil : name;
 }
 
-PRIM docs() {
-    FILE* f = fopen("lisp.hlp", "r");
+PRIM cat(lisp fn) {
+    char* filename = getstring(fn);
+    FILE* f = fopen(filename, "r");
     if (!f) {
-        perror("lisp.hlp");
+        perror(filename);
         return nil;
     }
 
@@ -2579,7 +2579,6 @@ PRIM docs() {
     fclose(f);
     return t;
 }
-
 
 PRIM directory(lisp name) {
     DIR *dp;
@@ -3306,9 +3305,9 @@ lisp lisp_init() {
     DEFPRIM(delay, 1, delay);
     DEFPRIM(time, -1, time_);
 
-    DEFPRIM(load, -3, load);
+    DEFPRIM(load, -3, load); // -3 to get env?
     DEFPRIM(directory, 1, directory);
-    DEFPRIM(docs, 0, docs);
+    DEFPRIM(cat, 0, cat);
 
     // debugging - http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Debugging-Aids.html 
     // http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Command_002dLine-Debugger.html#Command_002dLine-Debugger

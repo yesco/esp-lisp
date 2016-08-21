@@ -332,7 +332,7 @@ int iscomment(char* s) {
 // line is increased in increments of this
 #define MAXLINE 1024
 
-int process_file(char* filename, process_input process) {
+int process_file(void* envp, char* filename, process_input process, int verbosity) {
     FILE *file = fopen(filename, "r");
     if (!file) {
         perror(filename);
@@ -353,7 +353,8 @@ int process_file(char* filename, process_input process) {
 
 	// chunk finished (non-empty line with some input)
 	if (end || !isspace(line[0])) {
-            process(input, filename, startno, lineno - 1);
+            if (startno > 0)
+                process(envp, input, filename, startno, lineno - 1, verbosity);
 	    input[0] = 0;
             len = 0;
 	    startno = lineno; 
