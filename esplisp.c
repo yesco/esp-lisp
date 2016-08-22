@@ -112,7 +112,7 @@ void print_memory_info(int verbose) {
         // The value returned is the high water mark in words (for example,
         // on a 32 bit machine a return value of 1 would indicate that
         // 4 bytes of stack were unused)
-        printf("stackUsed=%lu ", uxTaskGetStackHighWaterMark(NULL));
+        printf("stackLeft=%lu ", uxTaskGetStackHighWaterMark(NULL));
         if (startMem) printf("startMem=%u ", startMem);
         if (startTask) printf("startTask=%u ", startTask);
         if (afterInit) printf("afterInit=%u ", afterInit);
@@ -236,6 +236,8 @@ unsigned int randomized() {
 
 // stack = 2048
 // used_count=73 cons_count=333 free=21896 USED=16 bytes startMem=37636 startTask=28360 startTask=22604 
+// stack = 2048 @ 2016-08-22:
+// used_count=11 cons_count=1734 free=5336 USED=12 bytes stackUsed=1525 startMem=38780 startTask=26416 afterInit=6460
 
 // stack = 1024
 // used_count=72 cons_count=354 free=26612 USED=16 bytes startMem=37636 startTask=32456 startTask=26700 
@@ -244,8 +246,8 @@ unsigned int randomized() {
 // used_count=72 cons_count=354 free=28660 USED=16 bytes startMem=37636 startTask=34504 startTask=28748
 // a recurse -> 52 deep
 
-//(- 31768 28748) = 3020 cost of a task of 512 bytes
-//(- 31768 22604) = 9164 cost of a task with 2048 bytes
+//(- 31768 28748) = 3020 cost of a task with  512 entries (*  512 4) = 2048 bytes (1k extra)
+//(- 31768 22604) = 9164 cost of a task with 2048 entries (* 2048 4) = 8192 bytes (1k extra)
 //
 //(- 37636 31768) = 5668
 //(- 37636 34504) = 3132 for  512

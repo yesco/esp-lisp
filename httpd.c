@@ -15,7 +15,7 @@
 
 #include "compat.h"
 
-#define BUFSIZE 1024
+#define BUFSIZE 512
 #define MAXQUEUE 10
 
 // consider looking at using something that handles post

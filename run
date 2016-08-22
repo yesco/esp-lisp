@@ -33,13 +33,13 @@ stty sane
 popd
 
 echo "--- compiling opt ---"
-cp tlisp.ccc tlisp.c && gcc -m32 -O2 -DUNIX=1 tlisp.c common.c httpd.c symbols.c lisp.c -o opt ; rm tlisp.c
+#cp tlisp.ccc tlisp.c && gcc -m32 -O2 -DUNIX=1 tlisp.c common.c httpd.c symbols.c lisp.c -o opt ; rm tlisp.c
 
 ###cp tlisp.ccc tlisp.c && gcc --enable-checking -v -da -Q -g -O0 -DTEST=1 tlisp.c lisp.c && ./a.out ; rm tlisp.c
 
-echo "--- compile for ESP8266 ---"
-echo
-echo "----------------------------------------------------------------------"
-source add-path && make
-echo "----------------------------------------------------------------------"
-echo
+#echo "--- compile for ESP8266 ---"
+#echo
+#echo "----------------------------------------------------------------------"
+#source add-path && make
+#echo "----------------------------------------------------------------------"
+#echo

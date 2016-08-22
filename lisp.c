@@ -177,7 +177,7 @@ PRIM funame(lisp f);
 lisp* global_envp = NULL;
 
 // big value ok as it's used mostly no inside evaluation but outside at toplevel
-#define READLINE_MAXLEN 1024
+#define READLINE_MAXLEN 512
 
 // set to 1 to get GC tracing messages
 // adding real debugging - http://software-lab.de/doc/tut.html#dbg

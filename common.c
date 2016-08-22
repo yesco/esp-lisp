@@ -326,7 +326,7 @@ int iscomment(char* s) {
 }
 
 // line is increased in increments of this
-#define MAXLINE 1024
+#define MAXLINE 256
 
 int process_file(void* envp, char* filename, process_input process, int verbosity) {
     FILE *file = fopen(filename, "r");
@@ -381,15 +381,21 @@ int process_file(void* envp, char* filename, process_input process, int verbosit
     return ret;
 }
 
+#define IMACS
+
 #undef CTRL // shadows something from ttyefault.h (included termios.h)
 #define NO_MAIN
 #ifndef UNIX
   #define OTA
 #endif
 #define BUFF_SIZE 1024
+
+#ifdef IMACS
 #include "imacs/imacs.c"
+#endif
 
 char* editor(char* s, char* title) {
+#ifdef IMACS
     imacs_buffer b;
     imacs_init(&b, s, 0);
     b.filename = title ? title : "esp-lisp-data";
@@ -402,6 +408,6 @@ char* editor(char* s, char* title) {
     // TODO: a imacs_clean()?
     free(b.buff);
     b.buff = NULL;
-
+#endif
     return s;
 }
