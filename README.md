@@ -33,11 +33,11 @@ A more detailed presentation takes place/took place in Hong Kong Functional Prog
 
 ## status
 
-The core is about 1000 lines of code. Total less than 3000 with xml/web server support.
+The core is about 1000 lines of code. Total around 4000 with extentions functions and xml/web server support.
 
-I just have the first  working [relase](https://github.com/yesco/esp-lisp/releases), got a editable readline interface! See the docs in [wiki](https://github.com/yesco/esp-lisp/wiki) for simple examples.
+It is now at it's 4th release [relase](https://github.com/yesco/esp-lisp/releases), it now even got a full screen editor functions (ala emacs), got a editable readline interface! See the docs in [wiki](https://github.com/yesco/esp-lisp/wiki) for simple examples.
 
-Lot's of stuff is missing...
+The esp-lisp has been used to build some smaller game devices by other persons, still things being added.
 
 ## features
 
@@ -49,9 +49,12 @@ Lot's of stuff is missing...
 - efficient storage of conses, with no overhead per cell, no tag word needed
 - inline (no overhead at all!) small ints, short symbols (&lt;=6 chars) stored INSIDE POINTER!
 - tail recursion optimization using "immediate" thunks, handles mutual/self recursion
-- eval/neval primitive functions, no need for macros, no code explosion
+- eval/neval LAMBDA/NLAMBDA primitive functions, no need for macros, no code explosion [reddit](https://www.reddit.com/r/lisp/comments/4u19sf/esp_lisp/)
 - readline, with limited editing (backspace), similar to nodemcu lua
+- full screen editor function, like emacs implemented in ~500 lines single file [imacs](https://github.com/yesco/imacs).
 - interpreted
+- in/out/dht functions
+- interrupt (counting) api and callback functions
 
 ## performace
 
@@ -67,7 +70,17 @@ In the read-eval loop:
 - CTRL-L will reprint line cleanly
 - CTRL-T print current status time/load
 
-During evalation
+### Full screen emacs-style editing
+
+Uses the [imacs](https://github.com/yesco/imacs) minimal editor implementation as a sub-project.
+
+    lisp> (define txt "foobar")
+    lisp> (set! txt (edit txt))
+    ... edit in fullscreen! ...
+
+    (+ 3 4) ctrl-x ctrl-e  ==> 7
+
+### During evalation
 - CTRL-T print current status time/load and a compressed stack (names of functions only)
 - CTRL-C will "break" the code and print the stack, cleanup and go to top-level
 - 'kill -20 <pid>' in another will clear screen and print the current stack
@@ -119,7 +132,7 @@ It should contain something like:
 
 - unix:esp-lisp> ./run
 
-That will compile and run it on your desktop, it will also make the flash for the esp.
+That will compile and run it on your desktop.
 
 - unix:esp-lisp> make flash
 
@@ -127,7 +140,7 @@ Flashes it to your esp-8266 device.
 
 - unix:esp-lisp> ./mcu
 
-To connect to it and run it.
+To connect to it and run it. Requires screen.
 
 ## Memory optimizations
 
