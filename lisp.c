@@ -833,6 +833,11 @@ PRIM dht(lisp pin) {
     return cons(mkint(t), mkint(h));
 }
 
+PRIM adc() {
+    int v = sdk_system_adc_read();
+    return mkint(v);
+}
+
 // CONTROL INTERRUPTS:
 // -------------------
 // (interrupt PIN 0)  : disable
@@ -3366,6 +3371,7 @@ lisp lisp_init() {
     DEFPRIM(in, 1, in);
     DEFPRIM(dht, 1, dht);
     DEFPRIM(interrupt, 2, interrupt);
+    DEFPRIM(adc, 0, adc);
 
     // system stuff
     DEFPRIM(gc, -1, gc);

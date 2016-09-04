@@ -24,6 +24,7 @@
 void gpio_enable(int pin, int state) {}
 void gpio_write(int pin, int value) {}
 int gpio_read(int pin) { return 0; }
+int sdk_system_adc_read() { return 777; }
 
 void interrupt_init (int pin, int changeType) {}
 int getInterruptCount(int pin, int mode) { return -1; }
