@@ -2001,6 +2001,7 @@ PRIM printf_(lisp *envp, lisp all) {
             char type = *p++ = *f++;
             switch (type) {
             case '%':
+                putchar('%'); break;
             case 's':
                 princ(car(all)); break;
             case 'S':
