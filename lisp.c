@@ -1540,7 +1540,7 @@ PRIM length(lisp r) {
 // scheme string functions - https://www.gnu.org/software/guile/manual/html_node/Strings.html#Strings
 // common lisp string functions - http://www.lispworks.com/documentation/HyperSpec/Body/f_stgeq_.htm
 PRIM concat(lisp* envp, lisp x) {
-    // calcualate len
+    // calculate len
     int len = 1;
     lisp i = x;
     while (i) {
@@ -1551,7 +1551,7 @@ PRIM concat(lisp* envp, lisp x) {
             if (iv < 0) len += 1;
             iv = abs(iv);
             // each digit
-            while ((iv /= 10) > 0) len++; 
+            while ((iv /= 10) > 0) len++;
             // last digit
             len++; 
         } else {
@@ -1559,7 +1559,6 @@ PRIM concat(lisp* envp, lisp x) {
             char ss[7] = {0};
             if (HSYMP(v)) s = symbol_getString(v);
             else if (SYMP(v)) s = sym2str(v, ss);
-            else if (INTP(v)) 
             len += strlen(s);
         }
         i = cdr(i);
@@ -1688,7 +1687,7 @@ static lisp readString() {
     if (!c) error("string.not_terminated");
     int len = input - start - 1;
 
-   // we modify the copied string as the string above may be constant
+    // we modify the copied string as the string above may be constant
     lisp r = mklenstring(start, len);
     // remove '\', this may waste a byte or two if any
     char* from = getstring(r);
