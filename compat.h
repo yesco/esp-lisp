@@ -111,6 +111,7 @@ void httpd_loop(int s);
   void gpio_enable(int pin, int state);
   void gpio_write(int pin, int value);
   int gpio_read(int pin);
+  int sdk_system_adc_read();
 
   // flash simulation in RAM
   #define SPI_FLASH_RESULT_OK 0
@@ -128,6 +129,8 @@ void httpd_loop(int s);
 
   #define flash_memory ((unsigned char*)(0x40200000 + FS_ADDRESS))
 
+  #include <stdbool.h>
+  #include <espressif/esp_system.h>
   #include "esp_spiffs.h"
   #include "spiffs.h"
 
