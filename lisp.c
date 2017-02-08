@@ -3489,7 +3489,7 @@ void error(char* msg) {
         error_level++;
         if (level) { printf("%%%s\nBacktrace: ", msg); print_stack(); terpri(); }
         print_detailed_stack();
-        printf("%s -- see above!\n", msg);
+        printf("%s!\n", msg);
         error_level--;
     } else {
         error_level = 0;
@@ -3505,7 +3505,7 @@ void error(char* msg) {
         longjmp(lisp_break, 1);
         // does not continue!
     } else {
-        printf("%%%% error(): NOT inside setjmp, continuing, ...possibly bad\n");
+        //printf("%% At toplevel\n");
         // exit(77);
     }
 }
@@ -3633,6 +3633,8 @@ int kbhit() {
         if (thechar == 'C'-64) {
             int c = thechar;
             thechar = 0;
+            printf("^C\n");
+            // This will longjmp back if there is is a stack
             error("CTRL-C");
             // error only returns if couln't longjmp to setjmp position, so keep the ctrl-c
             thechar = c;
@@ -3727,7 +3729,7 @@ void readeval(lisp* envp) {
         free(ln);
     }
 
-    printf("OK, bye!\n");
+    printf("^D\nOK, bye!\n");
 }
 
 void treads(char* s) {
