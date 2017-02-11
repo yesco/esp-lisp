@@ -167,7 +167,11 @@
 void gc_conses();
 int kbhit();
 static inline lisp callfunc(lisp f, lisp args, lisp* envp, lisp e, int noeval);
+int lispreadchar(char *chp);
+
+PRIM breakpoint();
 void error(char* msg);
+
 void run(char* s, lisp* envp);
 
 PRIM fundef(lisp f);
@@ -1800,7 +1804,7 @@ PRIM with_putc(lisp* envp, lisp args) {
     int myputc(int c) {
         recurse++;
         if (recurse > 1) error("with-putc called with function that calls putc - prohibited!");
-        lisp r= callfunc(fn, cons(mkint(c), nil), envp, nil, 1);
+        lisp r = callfunc(fn, cons(mkint(c), nil), envp, nil, 1);
         recurse--;
         return getint(r);
     }
@@ -2598,7 +2602,7 @@ PRIM load(lisp* envp, lisp name, lisp verbosity) {
 
     // no gcc style innner functions with outer variables.. .:-(
     int evalIt(void* p, char* s, char* filename, int startno, int endno, int v) {
-        if (!s || !s[0] || s[0] == ';') return;
+        if (!s || !s[0] || s[0] == ';') return 0;
         if (v > 1) printf("\n========================= %s :%d-%d>\n%s\n", filename, startno, endno, s);
         lisp* envp = p;
         jmp_buf saved;
@@ -3423,7 +3427,21 @@ lisp lisp_init() {
     // http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Command_002dLine-Debugger.html#Command_002dLine-Debugger
     // TODO: set-trace! set-break! http://www.lilypond.org/doc/v2.19/Documentation/contributor/debugging-scheme-code
     DEFPRIM(pstack, 0, print_detailed_stack); 
-
+    DEFPRIM(break, 0, breakpoint);
+    // unbound: foo
+    //   (restart 3) ask and return other value
+    //   (restart 2) ask for value and set it
+    //   (restart 1) return to top-level
+    // (bkpt datum arg...) breakpoint
+    // (pa) print actual arguments
+    // (apropos "str") list matching functions
+    // (where) one letter command loop
+    //   u(p) d(own) g(o)N 
+    // (continue)
+    // (break) (break func)
+    // *proc* *args* *result*
+    // Single stepping: e(val), RETURN, d(ebug)
+    
     // flash stuff - experimental
     DEFPRIM(flash, 2, flash);
     DEFPRIM(flashit, 1, flashit);
@@ -3475,6 +3493,10 @@ void help(lisp* envp) {
     printf("Type 'help' to get this message again\n");
 }
 
+PRIM breakpoint() {
+    error(NULL);
+    return nil;
+}
 // TODO: make it take one lisp parameter?
 // TODO: https://groups.csail.mit.edu/mac/ftpdir/scheme-7.4/doc-html/scheme_17.html#SEC153
 void error(char* msg) {
@@ -3483,13 +3505,52 @@ void error(char* msg) {
 
     // restore output to stdout, if error inside print function we're screwed otherwise!
     writeputc = origputc;
-
     terpri();
+
+    // make sure that we don't blow the stack if we get error in the error function!
     if (error_level == 0) {
         error_level++;
-        if (level) { printf("%%%s\nBacktrace: ", msg); print_stack(); terpri(); }
-        print_detailed_stack();
-        printf("%s!\n", msg);
+        if (!msg) { // breakpoint
+            int elsave = error_level; error_level = 0;
+            print_stack(); terpri();
+            int l = level > 0 ? level - 1 : 0;
+            void print_env(int d) {
+                l += d;
+                if (l < 0) l = 0;
+                if (!stack[l].envp) l -= d;
+                if (stack[l].envp) print(_env(stack[l].envp, nil)); terpri();
+            }
+            print(stack[l].e); terpri();
+            char* ln = NULL;
+            while (1) {
+                if (ln) free(ln);
+                printf("debug %d] ", l - 1); fflush(stdout);
+                char* ln = readline_int("", READLINE_MAXLEN, lispreadchar);
+                if (!ln) break;
+                if (!strcmp(ln, "q")) break;
+                if (!strcmp(ln, "e")) { print_env(0); continue; }
+                if (!strcmp(ln, "u")) { print_env(-1); continue; }
+                if (!strcmp(ln, "d")) { print_env(+1); continue; }
+                if (!strcmp(ln, "bt")) { print_detailed_stack(); continue; }
+                lisp r = reads(ln);
+                jmp_buf save;
+                memcpy(save, lisp_break, sizeof(save));
+                if (setjmp(lisp_break) == 0) {
+                    // TODO(jsk): this zeroes level/trace_level
+                    prin1(evalGC(r, stack[l].envp)); terpri();
+                } else {
+                    // TODO() if any error above (like aslfkjasdf) it'll mess up the stack?
+                    printf("\n%%back....from error/break\n");
+                    memcpy(lisp_break, save, sizeof(save));
+                }
+            }
+            if (ln) free(ln);
+            error_level = elsave;
+        } else {
+            if (level) { printf("%%%s\nBacktrace: ", msg); print_stack(); terpri(); }
+            print_detailed_stack();
+            printf("%s!\n", msg);
+        }
         error_level--;
     } else {
         error_level = 0;
@@ -3497,11 +3558,11 @@ void error(char* msg) {
     }
 
     if (memcmp(lisp_break, empty, sizeof(empty))) { // contains valid value
-        // reset stack
-        level = 0;
-        stack[0].e = nil;
-        stack[0].envp = NULL;
-
+        // Don't reset stack here, where we return could possibly where
+        // TODO: reset stack - cleanup? this doesn't handle recursive errors/debug
+        //   level = 0;
+        //   stack[0].e = nil;
+        //   stack[0].envp = NULL;
         longjmp(lisp_break, 1);
         // does not continue!
     } else {
@@ -3523,7 +3584,7 @@ void run(char* s, lisp* envp) {
         blockGC = 0;
         level = 0;
         trace_level = 0;
-        printf("%%%% type 'help' to get help\n");
+        printf("\n%%%% type 'help' to get help\n");
     }
     // disable longjmp
     memset(lisp_break, 0, sizeof(lisp_break));
@@ -3613,7 +3674,7 @@ int kbhit() {
 
     int ms = clock_ms();
     int update = 0;
-    // update every s
+    // update every s for printing status
     if (ms - last_ms > 1000) {
         int tms = (lisp_ticks - last_ticks) / (ms - last_ms);
         if (tms > max_ticks_per_ms) max_ticks_per_ms = tms;
@@ -3671,6 +3732,7 @@ void readeval(lisp* envp) {
         char* ln = readline_int("lisp> ", READLINE_MAXLEN, lispreadchar);
         global_envp = NULL;
 
+        // TODO: get rid of special unquoted commands at toplevel?
         if (!ln) {
             break;
         } else if (strncmp(ln, ";", 1) == 0) {
