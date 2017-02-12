@@ -171,6 +171,7 @@ int lispreadchar(char *chp);
 
 PRIM breakpoint();
 void error(char* msg);
+static inline int tracep(lisp f);
 
 void run(char* s, lisp* envp);
 
@@ -1028,13 +1029,19 @@ PRIM evallist(lisp e, lisp* envp) {
     return r;
 }
 
-static inline int tracep(lisp f);
+#define MAX_STACK 80
+
+static struct stack {
+    lisp e;
+    lisp* envp;
+} stack[MAX_STACK];
+
 
 // dummy function that doesn't eval, used instead of eval
 static PRIM noEval(lisp x, lisp* envp) { return x; }
 
 PRIM primapply(lisp ff, lisp args, lisp* envp, lisp all, int noeval) {
-    //printf("PRIMAPPLY "); princ(ff); princ(args); terpri();
+    //printf("PRIMAPPLY "); princ(ff); putchar(' '); princ(args); putchar(' '); princ(*envp); terpri();
     int n = GETPRIMNUM(ff);
     lisp (*e)(lisp x, lisp* envp) = (noeval && n > 0) ? noEval : evalGC;
     int an = abs(n);
@@ -2123,7 +2130,12 @@ static inline lisp eval_hlp(lisp e, lisp* envp) {
     }
 
     // This may return a immediate, this allows tail recursion evalGC will reduce it.
+
+    stack[level].e = f;
+    stack[level].envp = envp;
     lisp r = callfunc(f, cdr(e), envp, e, 0);
+    stack[level].e = nil;
+    stack[level].envp = nil;
 
     // we replace it after as no error was generated...
     if (f != orig) {
@@ -2208,25 +2220,20 @@ int needGC();
 // #772 0x08052d58 in readeval ()
 // #773 0x08048b57 in main ()
 
-#define MAX_STACK 80
-
-static struct stack {
-    lisp e;
-    lisp* envp;
-} stack[MAX_STACK];
-
 // TODO: because of tail call optimization, we can't tell where the error occurred as it's not relevant on the stack???
-PRIM print_detailed_stack() {
+PRIM print_detailed_stack(int curr) {
     int l;
     // TODO: DONE but too much: using fargs of f can use .envp to print actual arguments!
     for(l = 0; l < level + 5; l++) {
         if (!stack[l].e && !stack[l].envp) break;
 
         if (!l) terpri();
+        if (curr && l == curr-1) printf("==>");
         printf("%4d : ", l);
-        prin1(stack[l].e); printf(" ==> ");
+        prin1(stack[l].e); printf(" ENV: ");
 
         lisp f = car(stack[l].e);
+        if (!f) f = stack[l].e;
         lisp* envp = stack[l].envp;
         lisp env = envp ? *envp : nil; // env before
         while (f && IS(f, symboll) && !IS(f, func) && !IS(f, thunk) && !IS(f, prim) && !IS(f, immediate)) {
@@ -2255,7 +2262,7 @@ PRIM print_detailed_stack() {
             printf(" ... ] ");
         } else {
             printf(" ... ] ");
-            printf(" ...car did not evaluate to a function... (it's an %s)\n", f ? tag_name[TAG(f)] : "nil");
+            printf(" ...car did not evaluate to a function... (it's %s)\n", f ? tag_name[TAG(f)] : "nil");
             break;
         }
         terpri();
@@ -3513,31 +3520,43 @@ void error(char* msg) {
         if (!msg) { // breakpoint
             int elsave = error_level; error_level = 0;
             print_stack(); terpri();
-            int l = level > 0 ? level - 1 : 0;
+            int l = level > 0 ? level : 0;
             void print_env(int d) {
                 l += d;
                 if (l < 0) l = 0;
                 if (!stack[l].envp) l -= d;
-                if (stack[l].envp) print(_env(stack[l].envp, nil)); terpri();
+                printf("  STACK: "); print_stack(); terpri();
+                printf("CURRENT: "); prin1(stack[l].e); terpri();
+                if (stack[l].envp) {
+                    printf("    ENV: ");
+                    prin1(_env(stack[l].envp, nil)); terpri();
+                }
             }
             print(stack[l].e); terpri();
             char* ln = NULL;
             while (1) {
                 if (ln) free(ln);
-                printf("debug %d] ", l - 1); fflush(stdout);
+                printf("debug %d] ", l-1); fflush(stdout);
                 char* ln = readline_int("", READLINE_MAXLEN, lispreadchar);
+                printf("---------\n");
                 if (!ln) break;
                 if (!strcmp(ln, "q")) break;
-                if (!strcmp(ln, "e")) { print_env(0); continue; }
+                if (!strcmp(ln, "h") || !strcmp(ln, "?")) {
+                    printf("Debug help: q(uit) h(elp) p(rint env) u(p) d(own) b(ack)t(race) EXPR\n");
+                    continue;
+                }
+                if (!strcmp(ln, "p")) { print_env(0); continue; }
                 if (!strcmp(ln, "u")) { print_env(-1); continue; }
                 if (!strcmp(ln, "d")) { print_env(+1); continue; }
-                if (!strcmp(ln, "bt")) { print_detailed_stack(); continue; }
+                if (!strcmp(ln, "bt")) { print_detailed_stack(l); continue; }
                 lisp r = reads(ln);
                 jmp_buf save;
                 memcpy(save, lisp_break, sizeof(save));
                 if (setjmp(lisp_break) == 0) {
-                    // TODO(jsk): this zeroes level/trace_level
+                    // continue deeper on the stack
+                    level++;
                     prin1(evalGC(r, stack[l].envp)); terpri();
+                    level--;
                 } else {
                     // TODO() if any error above (like aslfkjasdf) it'll mess up the stack?
                     printf("\n%%back....from error/break\n");
@@ -3548,7 +3567,7 @@ void error(char* msg) {
             error_level = elsave;
         } else {
             if (level) { printf("%%%s\nBacktrace: ", msg); print_stack(); terpri(); }
-            print_detailed_stack();
+            print_detailed_stack(0);
             printf("%s!\n", msg);
         }
         error_level--;
@@ -3584,6 +3603,8 @@ void run(char* s, lisp* envp) {
         blockGC = 0;
         level = 0;
         trace_level = 0;
+        stack[0].e = nil;
+        stack[0].envp = NULL;
         printf("\n%%%% type 'help' to get help\n");
     }
     // disable longjmp
