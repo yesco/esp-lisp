@@ -1434,6 +1434,20 @@ lisp _setqqbind(lisp* envp, lisp name, lisp v, int create);
     
 inline PRIM _setqq(lisp* envp, lisp name, lisp v) {
     _setqqbind(envp, name, nil, 0);
+
+    // NOTE - this code has been added to fully support scheduled tasks    
+    if (eq (symbol("*at*"), name) ) {
+        lisp bind = assoc(name, *envp);
+
+        if (!bind) {
+          bind = cons(name, nil);
+
+          *envp = cons(bind, *envp);
+        }
+
+        setcdr(bind, v);
+    }
+
     return v;
 }
 // magic, this "instantiates" an inline function!
@@ -2723,7 +2737,13 @@ PRIM atrun(lisp* envp) {
         }
         prev = lst;
         lst = cdr(lst);
-        //if (!lst) terpri();
+
+        if (!lst) {
+          // As the code is now, this blanks out the screen.
+          // The code could be adjusted so that this prints once only, 
+          // after a scheduled event has been executed.
+          //terpri();
+        }
     }
     return nil;
 }
