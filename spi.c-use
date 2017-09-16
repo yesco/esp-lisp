@@ -1,0 +1,205 @@
+/* 2016-08-14 (C) Jonas S Karlsson, jsk@yesco.org */
+
+// TODO: use
+
+// #include "esp/spi.h"
+
+> void spi_led(int, int, int, int, int);
+> 
+> PRIM led_show(lisp init, lisp digit, lisp val, lisp decode, lisp delay) {
+>       spi_led(getint(init), getint(digit), getint(val), getint(decode), getint(delay));
+> 
+>       return mkint(1);
+> }
+> 
+> int spiData[] = { 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0 };
+> 
+unsigned char decodeMode = 1;
+ 
+PRIM led_data(lisp data, lisp offset) {
+    int pos = getint(offset);
+    int i = 0;
+    int val = 0;
+    while (data && ((i + pos) < 15)) {
+        val = getint(car(data));
+        // show nums and hex
+        if (decodeMode == 0) {
+            if (val > 9 && val < 16) {
+                // offset by space ascii and start of lowercase alphabet
+                val = val + 32 + 65 - 10;
+            } else if (val >= 0  && val < 10) {
+                val = val + 32 + 65 - 49;
+            }
+        }
+
+        spiData[pos + i] = val;
+        i = i + 1;
+        data = cdr(data);
+    }
+    return nil;
+}
+
+    DEFPRIM (delay, 1, delay);
+    DEFPRIM (led_data, 2, led_data);
+    DEFPRIM (led_show, 5, led_show);
+ 
+    DEFPRIM(delay, 1, delay);
+
+    DEFPRIM(load, -3, load); // -3 to get env?
+    DEFPRIM(dir, 1, dir);
+    DEFPRIM(cat, 1, cat);
+
+// hardware spi pins
+int cs_pin = 12 ;
+int clk_pin = 14;
+int data_pin = 13;
+ 
+#define MAXREG_DECODEMODE 0x09
+#define MAXREG_INTENSITY  0x0A
+#define MAXREG_SCANLIMIT  0x0B
+#define MAXREG_SHUTDOWN   0x0C
+#define MAXREG_DISPTEST   0x0F
+ 
+void shiftOut(unsigned char* data, int delay);
+unsigned char sendChar(const char data, const bool dp);
+
+void spi_led(int init, int digit, int val, int decode, int delay) {
+    gpio_enable(cs_pin, GPIO_OUTPUT);
+    gpio_enable(clk_pin, GPIO_OUTPUT);
+    gpio_enable(data_pin, GPIO_OUTPUT);
+ 
+//    bool bSpi = spi_init(0, 2, 4, true, SPI_BIG_ENDIAN, true);
+//    bool bSpi = spi_init(1, 0, 4, true, SPI_BIG_ENDIAN, true);
+ 
+//    const spi_settings_t my_settings = {
+//    .mode = SPI_MODE0,
+//    .freq_divider = SPI_FREQ_DIV_4M,
+//    .msb = true,
+//    .endianness = SPI_LITTLE_ENDIAN,
+//    .minimal_pins = true
+//    };
+ 
+//    spi_settings_t old;
+//    spi_get_settings(1, &old); // save current settings
+
+//    printf("mode %d ", old.mode);
+//    printf("dvd %d ", old.freq_divider);
+//    printf("msb %d ", old.msb);
+//    printf("end %d ", old.endianness);
+//    printf("min %d ", old.minimal_pins);
+ 
+// useful comments in this code re cpol, cpha
+//https://github.com/MetalPhreak/ESP8266_SPI_Driver/blob/master/driver/spi.c
+// settings from spi.h, look reasonable
+//    spi_init(1, SPI_MODE0, SPI_FREQ_DIV_10M, true, SPI_LITTLE_ENDIAN, false ); //true);
+ 
+// send two bytes, d15 first
+// see pdf p6 for format
+//   Table 1. Serial-Data Format (16 Bits)
+//    D15 D14
+//    X
+//    D13 D12
+//    X X
+//    D11 D10 D9 D8
+//    ADDRESS
+//    D7 D6 D5 D4
+//    X
+//    D3 D2 D1 D0
+//    MSB DATA LSB
+    unsigned char bytes[2];
+    unsigned char initC = (unsigned char)init;
+    if (init > 0) {
+        if (initC & 0x04) {
+            bytes[0] = MAXREG_SHUTDOWN;
+            bytes[1] = 0x01;
+            shiftOut(bytes, delay);
+        }
+        if (initC & 0x01) {
+            bytes[0] = MAXREG_SCANLIMIT;
+            bytes[1] = 0x07;
+            shiftOut(bytes, delay);
+        }
+        if (initC & 0x02) {
+            bytes[0] = MAXREG_DECODEMODE;
+            if (decode > 0) {
+                bytes[1] = 0xFF;
+                decodeMode = 1;
+            } else {
+                bytes[1] = 0x0;
+                decodeMode = 0;
+            }
+            shiftOut(bytes, delay);
+        }
+        if (initC & 0x08) {
+            bytes[0] = MAXREG_DISPTEST;
+            bytes[1] = 0x00;
+            shiftOut(bytes, delay);
+        }
+        if (initC & 0x10) {
+            bytes[0] = MAXREG_INTENSITY;
+            bytes[1] = (unsigned char)val;
+            shiftOut(bytes, delay);
+        }
+        if (initC & 0x20) {
+            for (unsigned char i = 0; i < 8; i++) {
+                bytes[0] = i + 1;
+                bytes[1] = 0;
+                shiftOut(bytes, delay);
+            }
+        }
+    }
+    for (unsigned char i = 0; i < digit; i++) {
+        bytes[0] = 8-i; // i+ 1;
+        if (decodeMode == 1) {
+            bytes[1] = spiData[i]; 
+        } else {
+            bytes[1] = sendChar(spiData[i], false);
+        }
+        shiftOut(bytes, delay);
+    }
+    //    spi_set_settings(1, &old); // restore saved settings
+}
+
+//        uint16_t retVal = spi_transfer_16(1, info);
+//
+//        printf("rv %d ", retVal);
+//
+//        return;
+void send2Byte(unsigned char reg, unsigned char data) {
+    uint16_t info = reg*256+data;
+    char i = 16;
+    do {
+        gpio_write(clk_pin, 0);
+        if (info & 0x8000) {
+            gpio_write(data_pin, 1);
+        } else {
+            gpio_write(data_pin, 0);
+        }
+        gpio_write(clk_pin, 1);
+        info <<= 1;
+    } while(--i);
+}
+
+// check this page
+// http://www.instructables.com/id/MAX7219-8-Digit-LED-Display-Module-Driver-for-ESP8/step4/MAX7219-Driver-Implementation/
+// also
+// https://github.com/wayoda/LedControl/blob/master/src/LedControl.cpp
+
+void shiftOut(unsigned char* data, int delay) {
+    gpio_write(cs_pin, 0);
+    send2Byte(data[0], data[1]);
+    gpio_write(cs_pin, 1);
+    vTaskDelay(delay);
+    return;
+}
+ 
+unsigned char sendChar(const char data, const bool dp) {
+    unsigned char converted = 0b0000001;    // hyphen as default
+    // look up bit pattern if possible
+    if (data >= ' ' && data <= 'z')
+        converted = MAX7219_font[data - ' '];
+    // 'or' in the decimal point if required
+    if (dp)
+        converted |= 0b10000000;
+    return converted;
+}
