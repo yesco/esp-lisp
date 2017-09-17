@@ -2586,7 +2586,12 @@ PRIM time_(lisp* envp, lisp exp) {
 }
 
 PRIM delay(lisp ms) {
-  return mkint(delay_ms(getint(ms)));
+    return mkint(delay_ms(getint(ms)));
+}
+
+PRIM baud(lisp speed) {
+    set_baud(getint(speed));
+    return nil;
 }
 
 // TODO: time functions... http://naggum.no/lugm-time.html
@@ -3389,6 +3394,7 @@ lisp lisp_init() {
 
     DEFPRIM(ticks, 1, ticks);
     DEFPRIM(clock, 1, clock_);
+    DEFPRIM(baud, 1, baud);
     DEFPRIM(delay, 1, delay);
     DEFPRIM(time, -1, time_);
 

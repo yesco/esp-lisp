@@ -164,6 +164,10 @@ int clock_ms() {
     return xTaskGetTickCount() * 10;
 }
 
+void set_baud(int speed) {
+    sdk_uart_div_modify(0, UART_CLK_FREQ / speed);
+}
+
 unsigned int time_ms() {
   //#include "user_interface.h" espressif: uint32 system_get_time(void)
   // it returns microseconds ( http://bbs.espressif.com/viewtopic.php?t=42 )
@@ -266,7 +270,7 @@ void user_init(void) {
     lastTick = xTaskGetTickCount();
     startMem = lastMem = xPortGetFreeHeapSize();
 
-    sdk_uart_div_modify(0, UART_CLK_FREQ / 115200);
+    set_baud(115200);
     
     // enable file system
     esp_spiffs_init();

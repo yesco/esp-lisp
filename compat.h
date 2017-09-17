@@ -6,6 +6,7 @@ typedef unsigned int uint32_t;
 
 int clock_ms();
 int delay_ms(int ms);
+void set_baud(int speed);
 
 unsigned int randomized(); // return pseudorandom seeed
 

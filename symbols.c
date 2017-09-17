@@ -99,6 +99,7 @@ lisp symbol_len(char *s, int len) {
     unsigned long h = larsons_hash(s, len);
     h = (h ^ (h >> 16) ^ (h << 16)) & 0xffffff; // 24 bits
     sym = (lisp)(h << 8 | 0xfff); // lower 8 bits all set! (and one 0)
+    // TODO: detect collission!!!!
     hashsym(sym, s, len, 1); // create binding
     return sym;
 }

@@ -64,6 +64,10 @@ int clock_ms() {
     return (int)(clock()) / clocks_per_ms;
 }
 
+void set_baud(int speed) {
+    // dummy
+}
+
 unsigned int time_ms() {
   struct timeval t;
   gettimeofday(&t, NULL);
