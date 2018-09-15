@@ -70,6 +70,103 @@ In the read-eval loop:
 - CTRL-L will reprint line cleanly
 - CTRL-T print current status time/load
 
+### Debugging
+
+When your code is running you can press CTRL-T to get a compressed stackview.
+
+	lisp> (define (fib n) (if (< n 1) 1 (+ (fib (- n 1)) (fib (- n 2)))))
+	#fib
+	lisp> (fib 30)
+       each time you press CTRL-T it'll print the stack: 21 nested fib
+	[% 0:07 load: 0.99  @ 21 #fib]
+	[% 0:07 load: 0.99  @ 21 #fib]
+	[% 0:07 load: 0.99  @ 20 #fib]
+	[% 0:07 load: 0.98  @ 23 #fib]
+	[% 0:07 load: 0.98  @ 23 #fib]
+	[% 0:08 load: 0.99  @ 19 #fib]
+	[% 0:08 load: 0.99  @ 20 #fib]
+	[% 0:08 load: 0.99  @ 23 #fib]
+	[% 0:08 load: 0.98  @ 20 #fib]
+	[% 0:08 load: 0.98  @ 21 #fib]
+	[% 0:08 load: 0.97  @ 19 #fib]
+	[% 0:08 load: 0.96  @ 22 #fib]
+	[% 0:11 load: 0.99  @ 20 #fib]
+	2178309
+	lisp> 
+
+CTRL-C to break the execution and do some debugging:
+
+	lisp> (define (fib n) (if (< n 1) 1 (+ (fib (- n 1)) (fib (- n 2)))))
+	(define (fib n) (if (< n 1) 1 (+ (fib (- n 1)) (fib (- n 2)))))
+	#fib
+	lisp> (fib 30)
+	(fib 30)
+	
+	^C
+
+	 @ 22 #fib
+
+	(#< n 1) 
+	debug 22] 
+	---------
+	nil
+	debug 22] p
+	p
+	---------
+	  STACK:  @ 22 #fib
+	CURRENT: (#< n 1)
+		ENV: ((n . 0) (nil))
+	debug 22] bt
+	bt
+	---------
+
+	   0 : (#fib 30) ENV: [#fib n=30]
+	   1 : (#fib (#- n 1)) ENV: [#fib n=29]
+	   2 : (#fib (#- n 1)) ENV: [#fib n=28]
+	   3 : (#fib (#- n 2)) ENV: [#fib n=26]
+	   4 : (#fib (#- n 1)) ENV: [#fib n=25]
+	   5 : (#fib (#- n 2)) ENV: [#fib n=23]
+	   6 : (#fib (#- n 1)) ENV: [#fib n=22]
+	   7 : (#fib (#- n 2)) ENV: [#fib n=20]
+	   8 : (#fib (#- n 1)) ENV: [#fib n=19]
+	   9 : (#fib (#- n 2)) ENV: [#fib n=17]
+	  10 : (#fib (#- n 2)) ENV: [#fib n=15]
+	  11 : (#fib (#- n 1)) ENV: [#fib n=14]
+	  12 : (#fib (#- n 2)) ENV: [#fib n=12]
+	  13 : (#fib (#- n 1)) ENV: [#fib n=11]
+	  14 : (#fib (#- n 1)) ENV: [#fib n=10]
+	  15 : (#fib (#- n 1)) ENV: [#fib n=9]
+	  16 : (#fib (#- n 1)) ENV: [#fib n=8]
+	  17 : (#fib (#- n 1)) ENV: [#fib n=7]
+	  18 : (#fib (#- n 2)) ENV: [#fib n=5]
+	  19 : (#fib (#- n 1)) ENV: [#fib n=4]
+	  20 : (#fib (#- n 1)) ENV: [#fib n=3]
+	  21 : (#fib (#- n 1)) ENV: [#fib n=2]
+	==>  22 : (#fib (#- n 2)) ENV: [#fib n=0]
+	  23 : (#< n 1) ENV: [#< ... ] 
+	debug 22] h
+	h
+	---------
+	Debug help: q(uit) h(elp) p(rint env) u(p) d(own) b(ack)t(race) EXPR
+	debug 22] u
+	u
+	---------
+	  STACK:  @ 22 #fib
+	CURRENT: (#fib (#- n 2))
+		ENV: ((n . 2) (nil))
+	debug 22] u
+	u
+	---------
+	  STACK:  @ 22 #fib
+	CURRENT: (#fib (#- n 2))
+		ENV: ((n . 2) (nil))
+	debug 21] u
+	u
+	---------
+	  STACK:  @ 22 #fib
+	CURRENT: (#fib (#- n 1))
+		ENV: ((n . 3) (nil))
+
 ### Full screen emacs-style editing
 
 Uses the [imacs](https://github.com/yesco/imacs) minimal editor implementation as a sub-project.
