@@ -3722,7 +3722,7 @@ int kbhit() {
             thechar = 0;
             printf("^C\n");
             // This will longjmp back if there is is a stack
-            error("CTRL-C");
+            error(NULL); // NULL enables it get into debug mode // error("CTRL-C");
             // error only returns if couln't longjmp to setjmp position, so keep the ctrl-c
             thechar = c;
         }
