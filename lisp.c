@@ -2227,7 +2227,7 @@ PRIM print_detailed_stack(int curr) {
         if (!stack[l].e && !stack[l].envp) break;
 
         if (!l) terpri();
-        if (curr && l == curr-1) printf("==>");
+        if (curr && l == curr-1) printf("==>"); else printf("   ");
         printf("%4d : ", l);
         prin1(stack[l].e); printf(" ENV: ");
 
@@ -3439,7 +3439,7 @@ lisp lisp_init() {
     // http://www.gnu.org/software/mit-scheme/documentation/mit-scheme-user/Command_002dLine-Debugger.html#Command_002dLine-Debugger
     // TODO: set-trace! set-break! http://www.lilypond.org/doc/v2.19/Documentation/contributor/debugging-scheme-code
     DEFPRIM(pstack, 0, print_detailed_stack); 
-    DEFPRIM(break, 0, breakpoint);
+    DEFPRIM(break, 1, breakpoint);
     // unbound: foo
     //   (restart 3) ask and return other value
     //   (restart 2) ask for value and set it
@@ -3505,9 +3505,14 @@ void help(lisp* envp) {
     printf("Type 'help' to get this message again\n");
 }
 
-PRIM breakpoint() {
+// make an blocking mygetchar() that waits for kbhit() to be true 
+// and meanwhile calls idle() continously.
+static int thechar = 0;
+
+PRIM breakpoint(lisp r) {
     error(NULL);
-    return nil;
+    printf("%%%% RETURN from breakpoint!\n");
+    return r;
 }
 // TODO: make it take one lisp parameter?
 // TODO: https://groups.csail.mit.edu/mac/ftpdir/scheme-7.4/doc-html/scheme_17.html#SEC153
@@ -3522,6 +3527,7 @@ void error(char* msg) {
     // make sure that we don't blow the stack if we get error in the error function!
     if (error_level == 0) {
         error_level++;
+        printf("%%%% enter breakpoint, h for help\n");
         if (!msg) { // breakpoint
             int elsave = error_level; error_level = 0;
             print_stack(); terpri();
@@ -3530,6 +3536,8 @@ void error(char* msg) {
                 l += d;
                 if (l < 0) l = 0;
                 if (!stack[l].envp) l -= d;
+                printf("  ERROR: %d\n", error_level);
+                printf("  LEVEL: %d\n", l-1);
                 printf("  STACK: "); print_stack(); terpri();
                 printf("CURRENT: "); prin1(stack[l].e); terpri();
                 if (stack[l].envp) {
@@ -3539,33 +3547,52 @@ void error(char* msg) {
             }
             print(stack[l].e); terpri();
             char* ln = NULL;
-            while (1) {
+            while (l > 0) {
                 if (ln) free(ln);
                 printf("debug %d] ", l-1); fflush(stdout);
                 char* ln = readline_int("", READLINE_MAXLEN, lispreadchar);
                 printf("---------\n");
+
+                // handle commands
                 if (!ln) break;
+                if (!strcmp(ln, "c")) return; // continue
                 if (!strcmp(ln, "q")) break;
                 if (!strcmp(ln, "h") || !strcmp(ln, "?")) {
-                    printf("Debug help: q(uit) h(elp) p(rint env) u(p) d(own) b(ack)t(race) EXPR\n");
+                    printf("Debug help: c(continue) q(uit) h(elp) p(rint env) u(p) d(own) b(ack)t(race) EXPR\n");
                     continue;
                 }
                 if (!strcmp(ln, "p")) { print_env(0); continue; }
-                if (!strcmp(ln, "u")) { print_env(-1); continue; }
+                if (!strcmp(ln, "u")) { if (l > 1) print_env(-1); continue; }
                 if (!strcmp(ln, "d")) { print_env(+1); continue; }
                 if (!strcmp(ln, "bt")) { print_detailed_stack(l); continue; }
+                if (!strcmp(ln, "c")) { break; }
+                // TODO: step? if (!strcmp(ln, "s")) { thechar = 'C'-64; break; }
+
+                // not command - eval expression
                 lisp r = reads(ln);
                 jmp_buf save;
                 memcpy(save, lisp_break, sizeof(save));
-                if (setjmp(lisp_break) == 0) {
+                if (!l) {
+                    printf("\n%%eval - toplevel no stack/environment - ignored!\n"); 
+                } else if (setjmp(lisp_break) == 0) {
                     // continue deeper on the stack
                     level++;
+
+                    printf("??? level=%d l=%d r=>", level, l);
+                    prin1(r); terpri();
+                    
                     prin1(evalGC(r, stack[l].envp)); terpri();
                     level--;
                 } else {
                     // TODO() if any error above (like aslfkjasdf) it'll mess up the stack?
-                    printf("\n%%back....from error/break\n");
+                    printf("\n%%back....from error/break ERRORLEVEL=%d\n", error_level);
+                    // restore last break point state, as it'd be recursive called
                     memcpy(lisp_break, save, sizeof(save));
+                    //memset(save, 0, sizeof(save));
+                    memset(lisp_break, 0, sizeof(save));
+                    level--;
+                    stack[l].e = 0;
+                    stack[l].envp = 0;
                 }
             }
             if (ln) free(ln);
@@ -3577,6 +3604,7 @@ void error(char* msg) {
         }
         error_level--;
     } else {
+        // TODO: just one level? or total break out
         error_level = 0;
         printf("%% error(): error inside error... recovering...\n");
     }
@@ -3603,7 +3631,7 @@ void run(char* s, lisp* envp) {
         // mark(r); // keep history?
     } else {
         // escaped w ctrl-c (longjmp)
-
+        printf("%%%% back to top level\n");
         // enableGC and kill stack
         blockGC = 0;
         level = 0;
@@ -3688,10 +3716,6 @@ void print_status(long last_ticks, long ticks, int last_ms, int ms, int max_tick
     printf("]\n");
 }
 
-// make an blocking mygetchar() that waits for kbhit() to be true 
-// and meanwhile calls idle() continously.
-static int thechar = 0;
-
 // called from idle in tight loop, also called each time we gc() during execution
 int kbhit() {
     static int last_ms = 0;
@@ -3713,6 +3737,8 @@ int kbhit() {
     if (!thechar) {
         thechar = nonblock_getch();
         if (thechar < 0) thechar = 0;
+    }
+    if (1) {
         if (thechar == 'T'-64) {
             print_status(last_ticks, lisp_ticks++, last_ms, ms, max_ticks_per_ms);
             thechar = 0;
@@ -3723,6 +3749,7 @@ int kbhit() {
             printf("^C\n");
             // This will longjmp back if there is is a stack
             error(NULL); // NULL enables it get into debug mode // error("CTRL-C");
+            printf("%%%% return from error(NULL); // ctrl-c\n");
             // error only returns if couln't longjmp to setjmp position, so keep the ctrl-c
             thechar = c;
         }

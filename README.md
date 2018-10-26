@@ -147,7 +147,7 @@ CTRL-C to break the execution and do some debugging:
 	debug 22] h
 	h
 	---------
-	Debug help: q(uit) h(elp) p(rint env) u(p) d(own) b(ack)t(race) EXPR
+	Debug help: c(ontiue) q(uit) h(elp) p(rint env) u(p) d(own) b(ack)t(race) EXPR
 	debug 22] u
 	u
 	---------
@@ -166,6 +166,23 @@ CTRL-C to break the execution and do some debugging:
 	  STACK:  @ 22 #fib
 	CURRENT: (#fib (#- n 1))
 		ENV: ((n . 3) (nil))
+
+#### Commands in debugger
+
+- c: continue executing where left off (one breakpoint up)
+- q: quit expression and return nothing (one breakpoint up)
+- h: print help
+- p: print env (bindings) at this level
+- u: go up in stack
+- d: go down in stack
+- bt: backtrace, show full stack and bindings
+- s: TODO: single step (not implemented)
+- e: TODO: enter next expression in debugger (not implemented)
+- r: TODO: return given value from this frame (not implemented)
+- EXPR: just type expression, you can start with a space to avoid it being a command
+
+- (pstack) - prints the detailed stack
+- (break [r]) - sets a breakpoint that will enter the debugger, c will return the value r if given
 
 ### Full screen emacs-style editing
 
